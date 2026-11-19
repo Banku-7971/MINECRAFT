@@ -1,3 +1,4 @@
+#![cfg_attr(not(windows), allow(dead_code))]
 //! Procedural sound: a tiny software mixer with Minecraft-style effects and a
 //! calm looping soundtrack. Pure Rust, no assets, so the .exe stays self-contained.
 
@@ -248,7 +249,7 @@ fn render_music() -> Vec<i16> {
         7, 9, 12, 9, 7, 4, 0, -1,
     ];
 
-    let mut add_tone = |buf: &mut Vec<f32>, start: usize, freq: f32, dur: f32, vol: f32, bright: f32| {
+    let add_tone = |buf: &mut Vec<f32>, start: usize, freq: f32, dur: f32, vol: f32, bright: f32| {
         let n = (dur * SAMPLE_RATE as f32) as usize;
         for i in 0..n {
             let idx = start + i;
@@ -289,22 +290,3 @@ fn render_music() -> Vec<i16> {
     buf.iter().map(|v| (v.clamp(-1.0, 1.0) * 26000.0) as i16).collect()
 }
 
-/// Wrap PCM samples in a WAV container (unused by the mixer, handy for debugging).
-pub fn wav_bytes(samples: &[i16], rate: u32) -> Vec<u8> {
-    let data_len = (samples.len() * 2) as u32;
-    let mut out = Vec::with_capacity(44 + samples.len() * 2);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 2).to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data_len.to_le_bytes());
-    for s in samples { out.extend_from_slice(&s.to_le_bytes()); }
-    out
-}

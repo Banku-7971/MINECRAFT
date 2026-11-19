@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Platform layer: the game talks to the OS only through this trait.
 //! `win32` implements it for Windows, `harness` implements it for headless tests.
 
@@ -8,6 +9,7 @@ pub const VK_BACK: u32 = 0x08;
 pub const VK_TAB: u32 = 0x09;
 pub const VK_RETURN: u32 = 0x0D;
 pub const VK_SHIFT: u32 = 0x10;
+pub const VK_CONTROL: u32 = 0x11;
 pub const VK_ESCAPE: u32 = 0x1B;
 pub const VK_SPACE: u32 = 0x20;
 pub const VK_PRIOR: u32 = 0x21;

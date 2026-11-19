@@ -51,6 +51,7 @@ pub const ENDER_PEARL: u16 = 302;
 pub const BLAZE_ROD: u16 = 303;
 pub const NETHER_STAR: u16 = 304;
 pub const XP_BOTTLE: u16 = 305;
+pub const GUNPOWDER: u16 = 306;
 
 pub fn name(id: u16) -> &'static str {
     match id {
@@ -71,6 +72,7 @@ pub fn name(id: u16) -> &'static str {
         FIREWORK => "Firework Rocket", SHIELD => "Shield", TOTEM => "Totem of Undying",
         ENDER_PEARL => "Ender Pearl", BLAZE_ROD => "Blaze Rod", NETHER_STAR => "Nether Star",
         XP_BOTTLE => "Bottle o' Enchanting",
+        GUNPOWDER => "Gunpowder",
         _ => world::block_name(id),
     }
 }

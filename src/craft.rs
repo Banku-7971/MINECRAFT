@@ -13,13 +13,6 @@ impl Stack {
     pub const EMPTY: Stack = Stack { id: 0, count: 0 };
     pub fn new(id: u16, count: u32) -> Self { Stack { id, count } }
     pub fn is_empty(&self) -> bool { self.id == 0 || self.count == 0 }
-    pub fn take(&mut self, n: u32) -> u16 {
-        let id = self.id;
-        if self.count <= n { *self = Stack::EMPTY; id } else { self.count -= n; id }
-    }
-    pub fn merge(&mut self, id: u16, n: u32) -> u32 {
-        if self.id == id { self.count += n; 0 } else if self.is_empty() { self.id = id; self.count = n; 0 } else { n }
-    }
 }
 
 pub struct Recipe {
@@ -54,7 +47,6 @@ pub fn recipes() -> Vec<Recipe> {
         shaped!(world::FURNACE, 1, [c, c, c; c, 0, c; c, c, c]),
         shaped!(world::CHEST, 1, [p, p, p; p, 0, p; p, p, p]),
         shaped!(world::TORCH, 4, [0, COAL, 0; 0, s, 0; 0, 0, 0]),
-        shaped!(world::TORCH, 4, [0, world::COAL_ORE, 0; 0, s, 0; 0, 0, 0]),
         shaped!(world::BED, 1, [world::WOOL_WHITE, world::WOOL_WHITE, world::WOOL_WHITE; p, p, p; 0, 0, 0]),
         shaped!(world::BOOKSHELF, 1, [p, p, p; world::WOOL_WHITE, world::WOOL_WHITE, world::WOOL_WHITE; p, p, p]),
         shaped!(world::LANTERN, 1, [0, 0, 0; ir, world::TORCH, ir; 0, 0, 0]),
@@ -67,9 +59,9 @@ pub fn recipes() -> Vec<Recipe> {
         shaped!(world::REDSTONE_TORCH, 1, [0, world::REDSTONE_DUST, 0; 0, s, 0; 0, 0, 0]),
         shaped!(world::LEVER, 1, [0, s, 0; 0, c, 0; 0, 0, 0]),
         shaped!(world::PRESSURE_PLATE, 1, [c, c, 0; 0, 0, 0; 0, 0, 0]),
-        shaped!(world::LAMP, 1, [world::REDSTONE_DUST, world::REDSTONE_DUST, world::REDSTONE_DUST;
+        shaped!(world::LAMP, 1, [0, world::REDSTONE_DUST, 0;
                                 world::REDSTONE_DUST, world::GLOWSTONE, world::REDSTONE_DUST;
-                                world::REDSTONE_DUST, world::REDSTONE_DUST, world::REDSTONE_DUST]),
+                                0, world::REDSTONE_DUST, 0]),
         // --- tools ---
         shaped!(WOOD_PICK, 1, [p, p, p; 0, s, 0; 0, s, 0]),
         shaped!(STONE_PICK, 1, [c, c, c; 0, s, 0; 0, s, 0]),
@@ -94,8 +86,7 @@ pub fn recipes() -> Vec<Recipe> {
         shaped!(world::HAY, 1, [world::WHEAT, world::WHEAT, world::WHEAT; world::WHEAT, world::WHEAT, world::WHEAT; world::WHEAT, world::WHEAT, world::WHEAT]),
         shaped!(COMPASS, 1, [0, ir, 0; ir, world::REDSTONE_DUST, ir; 0, ir, 0]),
         shaped!(CLOCK, 1, [0, GOLD_INGOT, 0; GOLD_INGOT, world::REDSTONE_DUST, GOLD_INGOT; 0, GOLD_INGOT, 0]),
-        shaped!(world::TNT, 1, [world::GRAVEL, world::SAND, world::GRAVEL; world::SAND, world::REDSTONE_DUST, world::SAND; world::GRAVEL, world::SAND, world::GRAVEL]),
-        shaped!(world::TNT, 1, [world::REDSTONE_DUST, world::SAND, 0; world::SAND, world::REDSTONE_DUST, 0; 0, 0, 0]),
+        shaped!(world::TNT, 1, [GUNPOWDER, world::SAND, GUNPOWDER; world::SAND, GUNPOWDER, world::SAND; GUNPOWDER, world::SAND, GUNPOWDER]),
     ]
 }
 

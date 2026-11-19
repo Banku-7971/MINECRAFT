@@ -1,5 +1,5 @@
 // Software renderer: pixel textures, raycast voxel lighting, sprite billboards and HUD.
-use crate::entities::{self, Mob, MobKind, Drop};
+use crate::entities::{self, MobKind};
 use crate::world::{self, World, Biome, Hit};
 use std::f32::consts::PI;
 
@@ -45,7 +45,7 @@ pub struct Textures { data: Vec<Vec<u8>> }
 impl Textures {
     pub fn new() -> Self {
         let mut data = Vec::with_capacity(65);
-        for k in 0..70 { data.push(Self::generate(k)); }
+        for k in 0..71 { data.push(Self::generate(k)); }
         Self { data }
     }
 
@@ -67,7 +67,7 @@ impl Textures {
             world::FARMLAND => 38, world::WHEAT => 39, world::CHEST => 40,
             world::CRAFTING => 41, world::FURNACE => 42, world::BIRCH_LOG => 5,
             world::BIRCH_LEAVES => 7, world::BROWN_MUSHROOM => 26, world::RED_MUSHROOM => 27,
-            world::PUMPKIN => 44, world::HAY => 45, world::TNT => 52, world::OBSIDIAN => 35,
+            world::PUMPKIN => 44, world::HAY => 45, world::TNT => 70, world::OBSIDIAN => 35,
             world::GLOWSTONE => 46, world::SEA_LANTERN => 46, world::DARK_LOG => 47,
             world::DARK_LEAVES => 7, world::MOSSY => 4, world::COBWEB => 48, world::VINE => 25,
             world::DOOR => 12, world::IRON_BLOCK => 64, world::GOLD_BLOCK => 18,
@@ -94,7 +94,7 @@ impl Textures {
                 let r = th(x as i32, y as i32, k as i32) % 255;
                 let n = (th(x as i32 / 3, y as i32 / 3, k as i32 + 7) % 40) as f32;
                 let noise = ((r as f32 * 0.35 + n * 0.65) - 45.0) * 0.55;
-                let (cr, cg, cb, mut a) = match k {
+                let (cr, cg, cb, a) = match k {
                     0 => (135.0 + noise, 135.0 + noise, 138.0 + noise, 255.0), // stone
                     1 => (95.0 + noise, 150.0 + noise, 70.0 + noise, 255.0), // grass top
                     2 => {
@@ -275,6 +275,15 @@ impl Textures {
                         if y > 6 && y < 26 && x > 4 && x < 28 { (150.0 + noise * 0.4, 150.0 + noise * 0.4, 152.0, 255.0) }
                         else { (0.0, 0.0, 0.0, 0.0) }
                     }
+                    70 => { // TNT
+                        if y >= 11 && y <= 20 {
+                            if (x == 6 || x == 7 || x == 8 || x == 12 || x == 16 || x == 21 || x == 22 || x == 23) && y >= 13 && y <= 18 { (25.0, 25.0, 25.0, 255.0) }
+                            else { (240.0 + noise * 0.2, 240.0 + noise * 0.2, 235.0, 255.0) }
+                        } else {
+                            let stripe = if x % 4 == 0 { -18.0 } else { 0.0 };
+                            (195.0 + noise * 0.4 + stripe, 50.0 + noise * 0.2, 42.0 + noise * 0.2, 255.0)
+                        }
+                    }
                     _ => (128.0, 128.0, 128.0, 255.0),
                 };
                 out[i] = clamp255(cr);
@@ -288,12 +297,11 @@ impl Textures {
 
     pub fn sample(&self, block: u16, u: f32, v: f32, tick: u32) -> [u8; 4] {
         let k = Self::kind(block);
-        let mut x = ((u.fract().abs() * TEX as f32) as usize) % TEX;
+        let x = ((u.fract().abs() * TEX as f32) as usize) % TEX;
         let mut y = ((v.fract().abs() * TEX as f32) as usize) % TEX;
         if block == world::WATER || block == world::LAVA { y = (y + (tick / 4) as usize) % TEX; }
         let d = &self.data[k];
         let i = (y * TEX + x) * 4;
-        x += 0;
         [d[i], d[i + 1], d[i + 2], d[i + 3]]
     }
 
@@ -495,13 +503,32 @@ pub fn render_world(fb: &mut Framebuffer, tex: &Textures, world: &mut World, cam
                     } else { fb.depth[py * fb.w + px] = hit.dist; }
                 }
             }
-            // sun / moon disc
-            let sun_dir = [time * 2.0 * PI - PI / 2.0, (time * 2.0 * PI).sin() * 0.7 + 0.25];
-            let sunx = sun_dir[0].cos();
-            let suny = sun_dir[1];
-            let sd = ((dx - sunx) * (dx - sunx) + (dy - suny) * (dy - suny) + dz * dz).sqrt();
-            if sd < 0.035 && day > 0.5 { r = 255.0; g = 245.0; b = 190.0; }
-            if sd < 0.022 && day < 0.25 { r = 220.0; g = 225.0; b = 235.0; }
+            // sun, moon & stars only on unobstructed sky pixels
+            if fb.depth[py * fb.w + px].is_infinite() {
+                let ang = time * 2.0 * PI;
+                let mut sx = ang.cos();
+                let mut sy = ang.sin();
+                let mut sz = 0.22f32;
+                let sl = (sx * sx + sy * sy + sz * sz).sqrt();
+                sx /= sl; sy /= sl; sz /= sl;
+                if sy > -0.1 {
+                    let sd = ((dx - sx) * (dx - sx) + (dy - sy) * (dy - sy) + (dz - sz) * (dz - sz)).sqrt();
+                    if sd < 0.065 { r = 255.0; g = 245.0; b = 185.0; }
+                }
+                if -sy > -0.1 {
+                    let md = ((dx + sx) * (dx + sx) + (dy + sy) * (dy + sy) + (dz + sz) * (dz + sz)).sqrt();
+                    if md < 0.048 { r = 225.0; g = 230.0; b = 242.0; }
+                }
+                if day < 0.35 && dy > 0.05 {
+                    let st = th((dx * 220.0) as i32, (dz * 220.0 + dy * 140.0) as i32, 91);
+                    if st % 520 == 0 {
+                        let br = (0.35 - day) * 2.5;
+                        r = (r + 180.0 * br).min(255.0);
+                        g = (g + 190.0 * br).min(255.0);
+                        b = (b + 220.0 * br).min(255.0);
+                    }
+                }
+            }
             fb.rgba[(py * fb.w + px) * 4] = r as u8;
             fb.rgba[(py * fb.w + px) * 4 + 1] = g as u8;
             fb.rgba[(py * fb.w + px) * 4 + 2] = b as u8;
@@ -514,10 +541,9 @@ fn shade_hit(tex: &Textures, world: &mut World, h: &Hit, _time: f32, day: f32, t
     let mut t = tex.sample(h.block, h.u, h.v, tick);
     if h.ny > 0 && h.block == world::GRASS { t = tex.grass_top(h.u, h.v); }
     let mut light = face_shade(h.nx, h.ny, h.nz, day) * ao(world, h);
-    if h.block == world::TORCH || h.block == world::CAMPFIRE || h.block == world::GLOWSTONE || h.block == world::SEA_LANTERN { light = 1.25; }
+    let emit = world::emits_light(h.block);
+    if emit > 0 { light = light.max(0.95 + emit as f32 * 0.02); }
     if h.block == world::LAMP && world.lit.contains(&(h.x, h.y, h.z)) { light = 1.45; }
-    if h.block == world::REDSTONE_TORCH { light = 1.2; }
-    if h.block == world::LAVA || h.block == world::GLOWSTONE || h.block == world::SEA_LANTERN { light = 1.15; }
     (t[0] as f32 * light, t[1] as f32 * light, t[2] as f32 * light, t[3])
 }
 
@@ -532,35 +558,43 @@ fn project(cam: &Cam, x: f32, y: f32, z: f32, fb: &Framebuffer) -> Option<(f32, 
 }
 
 pub fn draw_sprite(fb: &mut Framebuffer, cam: &Cam, x: f32, y: f32, z: f32, height: f32, tick: u32, day: f32, kind: SpriteKind, front: bool) {
-    let sh = height * (fb.w as f32 / 1.56);
-    let (sx, sy, dist) = match project(cam, x, y, z, fb) { Some(v) => v, None => { if matches!(kind, SpriteKind::Steve) { eprintln!("steve behind cam"); } return } };
-    if dist > 100.0 { return; }
+    let (sx, sy, dist) = match project(cam, x, y, z, fb) { Some(v) => v, None => return };
+    if dist > 72.0 { return; }
     if matches!(kind, SpriteKind::Steve) && dist < 1.9 { return; }
     let pxh = (height / dist * (fb.w as f32 / 1.56)).max(1.0);
-    let sprite_size = match kind { SpriteKind::Steve => 32u32, SpriteKind::Drop(_) => 16, _ => 16 };
-    let pw = pxh * (if sprite_size == 32 { 1.0 } else { 1.0 });
+    let sprite_size = match kind { SpriteKind::Steve => 32u32, _ => 16 };
+    let pw = pxh;
     let left = sx - pw / 2.0;
     let top = sy - pxh;
     let light = 0.45 + day * 0.55;
-    // ground shadow
+    // ground shadow (depth-tested against solid terrain only)
     if let Some((gx, gy, gd)) = project(cam, x, y + 0.02, z, fb) {
         let rw = (0.55 / gd * (fb.w as f32 / 1.56)).max(1.0);
         for yy in -rw as i32 / 3..=rw as i32 / 3 {
+            let sy_i = gy as i32 + yy;
+            if sy_i < 0 || sy_i >= fb.h as i32 { continue; }
             for xx in -rw as i32..=rw as i32 {
+                let sx_i = gx as i32 + xx;
+                if sx_i < 0 || sx_i >= fb.w as i32 { continue; }
                 if xx * xx + yy * yy * 9 > (rw * rw) as i32 { continue; }
+                let td = fb.depth[sy_i as usize * fb.w + sx_i as usize];
+                if td >= 74.0 || gd > td + 0.8 { continue; }
                 let a = ((1.0 - day * 0.45) * 38.0) as u8;
-                fb.set(gx as i32 + xx, gy as i32 + yy, 10, 12, 16, a);
+                fb.set(sx_i, sy_i, 10, 12, 16, a);
             }
         }
     }
     for py in 0..sprite_size {
         for px in 0..sprite_size {
-            let c = match kind {
+            let mut c = match kind {
                 SpriteKind::Steve => entities::steve_pixel(px, py, tick, false),
-                SpriteKind::Mob(m) => entities::sprite_pixel(m, px, py, tick, false),
+                SpriteKind::Mob(m, _) => entities::sprite_pixel(m, px, py, tick, false),
                 SpriteKind::Drop(item) => item_pixel(item, px, py, tick),
             };
             if c[3] == 0 { continue; }
+            if let SpriteKind::Mob(_, flash) = kind {
+                if flash { c = [245, 245, 245, 255]; }
+            }
             let fx0 = left + px as f32 / sprite_size as f32 * pw;
             let fx1 = left + (px + 1) as f32 / sprite_size as f32 * pw;
             let fy0 = top + py as f32 / sprite_size as f32 * pxh;
@@ -569,18 +603,17 @@ pub fn draw_sprite(fb: &mut Framebuffer, cam: &Cam, x: f32, y: f32, z: f32, heig
             let y0 = fy0.floor() as i32; let y1 = (fy1.ceil() as i32).max(y0 + 1);
             for iy in y0..y1 {
                 if iy < 0 || iy >= fb.h as i32 { continue; }
-                if !front && dist >= fb.depth[iy as usize * fb.w + x0.clamp(0, fb.w as i32 - 1) as usize] { continue; }
                 for ix in x0..x1 {
                     if ix < 0 || ix >= fb.w as i32 { continue; }
+                    if !front && dist >= fb.depth[iy as usize * fb.w + ix as usize] { continue; }
                     fb.set(ix, iy, (c[0] as f32 * light) as u8, (c[1] as f32 * light) as u8, (c[2] as f32 * light) as u8, c[3]);
                 }
             }
         }
     }
-    let _ = sh;
 }
 
-pub enum SpriteKind { Steve, Mob(MobKind), Drop(u16) }
+pub enum SpriteKind { Steve, Mob(MobKind, bool), Drop(u16) }
 
 pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     let spin = ((tick / 8) % 4) as i32;
@@ -596,7 +629,7 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
                     _ => [75, 65, 75, 255],
                 };
                 if y >= 2 && y <= 4 && x >= 3 && x <= 12 { return head; }
-                if (x as i32 == 8 + z && y >= 4 && y <= 13) { return [120, 80, 45, 255]; }
+                if x as i32 == 8 + z && y >= 4 && y <= 13 { return [120, 80, 45, 255]; }
             }
             261..=263 => {
                 let head = match item { 261 => [165, 118, 70, 255], 262 => [215, 220, 225, 255], _ => [80, 225, 235, 255] };
@@ -645,6 +678,7 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
             302 => { if (x as i32 - 8).pow(2) + ((y as i32 - 8) as i32).pow(2) < 20 { return [50, 200, 170, 255]; } }
             304 => { if (x as i32 - 8).pow(2) + ((y as i32 - 8) as i32).pow(2) < 24 { return [250, 250, 240, 255]; } }
             305 => { if x >= 5 && x <= 10 && y >= 4 && y <= 12 { return [110, 205, 120, 255]; } if y <= 5 && x >= 6 && x <= 9 { return [190, 160, 105, 255]; } }
+            306 => { if (x as i32 - 8).pow(2) + (y as i32 - 8).pow(2) < 25 { return if (x + y) % 2 == 0 { [110, 110, 115, 255] } else { [75, 75, 80, 255] }; } }
             _ => { if x >= 4 && x <= 11 && y >= 4 && y <= 11 { return [190, 190, 195, 255]; } }
         }
         return [0, 0, 0, 0];
@@ -758,59 +792,6 @@ pub fn draw_hud(fb: &mut Framebuffer, hot: &[u16; 9], counts: &[u32; 9], selecte
     }
 }
 
-pub const INV_X: i32 = 8;
-pub const INV_Y: i32 = 18;
-pub const INV_W: i32 = 464;
-pub const INV_H: i32 = 236;
-pub fn inv_storage_rect(i: usize) -> (i32, i32, i32, i32) {
-    let col = i % 9; let row = i / 9;
-    (INV_X + 12 + col as i32 * 30, INV_Y + 52 + row as i32 * 30, 27, 27)
-}
-pub fn inv_hotbar_rect(i: usize) -> (i32, i32, i32, i32) {
-    (INV_X + 12 + i as i32 * 30, INV_Y + 146, 27, 27)
-}
-pub fn inv_list_rect(i: usize) -> (i32, i32, i32, i32) {
-    let col = i % 4; let row = i / 4;
-    (INV_X + 300 + col as i32 * 36, INV_Y + 48 + row as i32 * 26, 30, 24)
-}
-pub fn inv_prev_rect() -> (i32, i32, i32, i32) { (INV_X + 300, INV_Y + 214, 26, 20) }
-pub fn inv_next_rect() -> (i32, i32, i32, i32) { (INV_X + INV_W - 34, INV_Y + 214, 26, 20) }
-
-pub fn draw_inventory(fb: &mut Framebuffer, storage: &[u16; 27], counts: &[u32; 27], hot: &[u16; 9], hot_counts: &[u32; 9], selected: usize, list: &[u16], page: usize, tick: u32) {
-    fb.rect(0, 0, fb.w as i32, fb.h as i32, [0, 0, 0, 165]);
-    fb.rect(INV_X, INV_Y, INV_W, INV_H, [198, 198, 198, 255]);
-    fb.frame(INV_X, INV_Y, INV_W, INV_H, [80, 80, 85, 255]);
-    fb.rect(INV_X + 4, INV_Y + 4, INV_W - 8, 16, [70, 70, 75, 255]);
-    text(fb, INV_X + 10, INV_Y + 8, "CREATIVE INVENTORY  -  CLICK AN ITEM TO PUT IT IN YOUR SELECTED HOTBAR SLOT", [255, 255, 255, 255], 1);
-    text(fb, INV_X + 400, INV_Y + 8, "Steve", [220, 220, 255, 255], 1);
-    text(fb, INV_X + 12, INV_Y + 40, "STORAGE", [60, 60, 60, 255], 1);
-    for i in 0..27 {
-        let (x, y, w, h) = inv_storage_rect(i);
-        fb.rect(x, y, w, h, [140, 140, 145, 255]); fb.frame(x, y, w, h, [100, 100, 105, 255]);
-        if storage[i] != 0 { draw_item_icon(fb, x + 3, y + 3, storage[i], 21, tick); if counts[i] > 1 { text(fb, x + w - 11, y + h - 7, &counts[i].to_string(), [255, 255, 255, 255], 1); } }
-    }
-    for i in 0..9 {
-        let (x, y, w, h) = inv_hotbar_rect(i);
-        fb.rect(x, y, w, h, [140, 140, 145, 255]);
-        fb.frame(x, y, w, h, if i == selected { [255, 255, 255, 255] } else { [100, 100, 105, 255] });
-        if hot[i] != 0 { draw_item_icon(fb, x + 3, y + 3, hot[i], 21, tick); }
-    }
-    text(fb, INV_X + 300, INV_Y + 40, "ALL ITEMS", [60, 60, 60, 255], 1);
-    for i in 0..24 {
-        let idx = page * 24 + i;
-        if idx >= list.len() { break; }
-        let (x, y, w, h) = inv_list_rect(i);
-        fb.rect(x, y, w, h, [225, 225, 225, 255]); fb.frame(x, y, w, h, [120, 120, 125, 255]);
-        draw_item_icon(fb, x + 6, y + 2, list[idx], 16, tick);
-    }
-    let (px, py, pw, ph) = inv_prev_rect();
-    fb.rect(px, py, pw, ph, [160, 160, 165, 255]); text(fb, px + 7, py + 6, "<", [30, 30, 30, 255], 1);
-    let (nx, ny, nw, nh) = inv_next_rect();
-    fb.rect(nx, ny, nw, nh, [160, 160, 165, 255]); text(fb, nx + 7, ny + 6, ">", [30, 30, 30, 255], 1);
-    text(fb, INV_X + 334, INV_Y + 218, &format!("PAGE {}/{}", page + 1, (list.len() + 23) / 24), [40, 40, 40, 255], 1);
-    text(fb, INV_X + 12, INV_Y + 218, "E / ESC CLOSE", [40, 40, 40, 255], 1);
-}
-
 pub fn upscale(src: &Framebuffer, dst: &mut Framebuffer) {
     for y in 0..dst.h {
         let sy = (y * src.h / dst.h).min(src.h - 1);
@@ -824,6 +805,7 @@ pub fn upscale(src: &Framebuffer, dst: &mut Framebuffer) {
     }
 }
 
+#[cfg(not(windows))]
 pub fn encode_png(path: &std::path::Path, rgba: &[u8], w: usize, h: usize) -> std::io::Result<()> {
     fn crc32(data: &[u8]) -> u32 {
         let mut c = 0xffffffffu32;
@@ -889,15 +871,6 @@ pub fn slot(fb: &mut Framebuffer, x: i32, y: i32, size: i32, hover: bool) {
     fb.rect(x + size - 1, y, 1, size, [255, 255, 255, 255]);
     fb.rect(x, y + size - 1, size, 1, [255, 255, 255, 255]);
     if hover { fb.rect(x + 1, y + 1, size - 2, size - 2, [255, 255, 255, 65]); }
-}
-
-pub fn stack(fb: &mut Framebuffer, x: i32, y: i32, size: i32, item: u16, count: u32, tick: u32) {
-    if item == 0 || count == 0 { return; }
-    draw_item_icon(fb, x + 2, y + 2, item, size - 4, tick);
-    if count > 1 {
-        let s = format!("{}", count);
-        text(fb, x + size - (s.len() as i32 * 6) - 1, y + size - 8, &s, [255, 255, 255, 255], 1);
-    }
 }
 
 pub fn button(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32, label: &str, hover: bool) {
