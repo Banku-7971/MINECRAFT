@@ -235,10 +235,14 @@ fn ore_at(x: i32, y: i32, z: i32) -> Option<u16> {
 fn tree_center(x: i32, z: i32) -> Option<(Biome, i32)> {
     let b = biome_at(x, z);
     let density = match b {
-        Biome::Forest => 26, Biome::Jungle => 18, Biome::Taiga => 34,
-        Biome::Plains => 130, Biome::Savanna => 90, Biome::Swamp => 55, _ => return None,
+        Biome::Forest => 28, Biome::Jungle => 20, Biome::Taiga => 36,
+        Biome::Plains => 110, Biome::Savanna => 85, Biome::Swamp => 55, _ => return None,
     };
-    if hash2(x, z) % density == 0 { Some((b, surface_height(x, z))) } else { None }
+    if hash2(x, z) % density == 0 {
+        let h = surface_height(x, z);
+        if h >= SEA { return Some((b, h)); }
+    }
+    None
 }
 
 fn tree_block(x: i32, y: i32, z: i32) -> Option<u16> {
@@ -402,8 +406,35 @@ pub fn emits_light(id: u16) -> u8 {
     match id { TORCH | CAMPFIRE | LANTERN => 14, GLOWSTONE | SEA_LANTERN => 15, LAVA | MAGMA => 12, _ => 0 }
 }
 
+fn chunk_may_have_structure(cx: i32, cz: i32) -> bool {
+    let x0 = cx * CHUNK;
+    let z0 = cz * CHUNK;
+    let (vcx, vcz) = structure_cell(x0 + 8, z0 + 8, 256);
+    for ix in vcx - 1..=vcx + 1 {
+        for iz in vcz - 1..=vcz + 1 {
+            if let Some((vx, vz)) = village_center(ix, iz) {
+                if vx + 20 >= x0 && vx - 20 < x0 + CHUNK && vz + 20 >= z0 && vz - 20 < z0 + CHUNK {
+                    return true;
+                }
+            }
+        }
+    }
+    let (scx, scz) = structure_cell(x0 + 8, z0 + 8, 192);
+    for ix in scx - 1..=scx + 1 {
+        for iz in scz - 1..=scz + 1 {
+            let sx = ix * 192 + 96;
+            let sz = iz * 192 + 96;
+            if sx + 12 >= x0 && sx - 12 < x0 + CHUNK && sz + 12 >= z0 && sz - 12 < z0 + CHUNK {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn generate_chunk(cx: i32, cz: i32) -> Chunk {
     let mut c = Chunk::new();
+    let has_struct = chunk_may_have_structure(cx, cz);
     for lz in 0..CHUNK {
         for lx in 0..CHUNK {
             let x = cx * CHUNK + lx;
@@ -421,7 +452,7 @@ fn generate_chunk(cx: i32, cz: i32) -> Chunk {
                         if let Some(o) = ore_at(x, y, z) { id = o; }
                         if y > h - 4 {
                             id = match b {
-                                Biome::Desert | Biome::Beach => if y == h { SAND } else { SANDSTONE },
+                                Biome::Desert => if y == h { SAND } else { SANDSTONE },
                                 Biome::Savanna => if y == h { TERRACOTTA } else { DIRT },
                                 Biome::Snowy => if y == h { SNOW } else { DIRT },
                                 Biome::Taiga => if y == h && hash2(x, z) % 3 == 0 { PODZOL } else { DIRT },
@@ -435,8 +466,10 @@ fn generate_chunk(cx: i32, cz: i32) -> Chunk {
                     id = WATER;
                 }
                 if id == AIR || is_solid(id) {
-                    if let Some(s) = structure_block(x, y, z) { id = s; }
-                    if id == AIR && y <= h {
+                    if has_struct && y >= SEA - 4 {
+                        if let Some(s) = structure_block(x, y, z) { id = s; }
+                    }
+                    if id == AIR && y > h && y <= h + 10 {
                         if let Some(t) = tree_block(x, y, z) { id = t; }
                     }
                 }
@@ -532,10 +565,10 @@ impl World {
         if !self.edits.is_empty() {
             if let Some(v) = self.edits.get(&BPos(x, y, z)) { return *v; }
         }
-        let cx = x.div_euclid(CHUNK);
-        let cz = z.div_euclid(CHUNK);
-        let lx = x.rem_euclid(CHUNK);
-        let lz = z.rem_euclid(CHUNK);
+        let cx = x >> 4;
+        let cz = z >> 4;
+        let lx = x & 15;
+        let lz = z & 15;
         self.chunk(cx, cz).get(lx, y as usize, lz)
     }
 
@@ -548,6 +581,16 @@ impl World {
         for y in (0..WORLD_H as i32).rev() {
             let b = self.get(x, y, z);
             if is_solid(b) && b != WATER { return y + 1; }
+        }
+        SEA + 1
+    }
+
+    pub fn highest_ground(&mut self, x: i32, z: i32) -> i32 {
+        for y in (0..WORLD_H as i32).rev() {
+            let b = self.get(x, y, z);
+            if is_solid(b) && b != WATER && !matches!(b, LEAVES | SPRUCE_LEAVES | JUNGLE_LEAVES | BIRCH_LEAVES | DARK_LEAVES) {
+                return y + 1;
+            }
         }
         SEA + 1
     }

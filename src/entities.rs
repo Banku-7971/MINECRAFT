@@ -1,76 +1,166 @@
-// Pixel-art sprite definitions and simple creature behaviour.
+//! Pixel-art sprite definitions and creature behaviour (Minecraft mobs).
 use crate::world::{self, World};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum MobKind { Sheep, Cow, Pig, Chicken, Zombie, Skeleton, Creeper, Spider, Enderman, Villager }
+pub enum MobKind {
+    Sheep,
+    Cow,
+    Pig,
+    Chicken,
+    Zombie,
+    Skeleton,
+    Creeper,
+    Spider,
+    Enderman,
+    Villager,
+}
 
 impl MobKind {
     pub fn name(self) -> &'static str {
         match self {
-            MobKind::Sheep => "Sheep", MobKind::Cow => "Cow", MobKind::Pig => "Pig",
-            MobKind::Chicken => "Chicken", MobKind::Zombie => "Zombie", MobKind::Skeleton => "Skeleton",
-            MobKind::Creeper => "Creeper", MobKind::Spider => "Spider", MobKind::Enderman => "Enderman",
+            MobKind::Sheep => "Sheep",
+            MobKind::Cow => "Cow",
+            MobKind::Pig => "Pig",
+            MobKind::Chicken => "Chicken",
+            MobKind::Zombie => "Zombie",
+            MobKind::Skeleton => "Skeleton",
+            MobKind::Creeper => "Creeper",
+            MobKind::Spider => "Spider",
+            MobKind::Enderman => "Enderman",
             MobKind::Villager => "Villager",
         }
     }
+
     pub fn hostile(self) -> bool {
-        matches!(self, MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider | MobKind::Enderman)
+        matches!(
+            self,
+            MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider | MobKind::Enderman
+        )
     }
+
     pub fn health(self) -> f32 {
-        match self { MobKind::Spider => 16.0, MobKind::Enderman => 40.0, MobKind::Chicken => 4.0, MobKind::Villager => 20.0, _ => 10.0 }
-    }
-    pub fn drop(self) -> u16 {
         match self {
-            MobKind::Sheep => 33, MobKind::Cow => 287, MobKind::Pig => 272,
-            MobKind::Chicken => 275, MobKind::Zombie => 288, MobKind::Skeleton => 287,
-            MobKind::Creeper => 289, MobKind::Spider => 289, MobKind::Enderman => 303,
-            MobKind::Villager => 269,
+            MobKind::Spider => 16.0,
+            MobKind::Enderman => 40.0,
+            MobKind::Chicken => 4.0,
+            MobKind::Villager | MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper => 20.0,
+            _ => 10.0,
         }
     }
+
+    pub fn drop(self) -> u16 {
+        match self {
+            MobKind::Sheep => world::WOOL_WHITE,
+            MobKind::Cow => 273,      // Raw Beef
+            MobKind::Pig => 272,      // Raw Porkchop
+            MobKind::Chicken => 275,  // Raw Chicken
+            MobKind::Zombie => 288,   // Rotten Flesh
+            MobKind::Skeleton => 287, // Bone
+            MobKind::Creeper => 306,  // Gunpowder
+            MobKind::Spider => 289,   // String
+            MobKind::Enderman => 302, // Ender Pearl
+            MobKind::Villager => 0,   // Villagers drop nothing
+        }
+    }
+
     pub fn height(self) -> f32 {
-        match self { MobKind::Chicken => 0.7, MobKind::Spider => 0.9, MobKind::Enderman => 2.9, _ => 1.8 }
+        match self {
+            MobKind::Chicken => 0.7,
+            MobKind::Spider => 0.9,
+            MobKind::Enderman => 2.9,
+            _ => 1.8,
+        }
     }
 }
 
 #[derive(Clone)]
 pub struct Mob {
     pub kind: MobKind,
-    pub x: f32, pub y: f32, pub z: f32,
-    pub vx: f32, pub vy: f32, pub vz: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub vz: f32,
     pub yaw: f32,
     pub hp: f32,
     pub timer: f32,
     pub attack_cd: f32,
     pub hurt: f32,
+    pub fuse: f32,
     pub on_ground: bool,
 }
 
 impl Mob {
     pub fn spawn(kind: MobKind, x: f32, y: f32, z: f32) -> Self {
-        Self { kind, x, y, z, vx: 0.0, vy: 0.0, vz: 0.0, yaw: 0.0, hp: kind.health(), timer: 0.0, attack_cd: 0.0, hurt: 0.0, on_ground: false }
+        Self {
+            kind,
+            x,
+            y,
+            z,
+            vx: 0.0,
+            vy: 0.0,
+            vz: 0.0,
+            yaw: 0.0,
+            hp: kind.health(),
+            timer: 0.0,
+            attack_cd: 0.0,
+            hurt: 0.0,
+            fuse: 0.0,
+            on_ground: true,
+        }
     }
 
-    pub fn update(&mut self, world: &mut World, px: f32, py: f32, pz: f32, dt: f32, tick: u32, day: f32) {
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        px: f32,
+        py: f32,
+        pz: f32,
+        dt: f32,
+        tick: u32,
+        day: f32,
+        grace: f32,
+    ) {
         self.timer -= dt;
         self.attack_cd -= dt;
         self.hurt = (self.hurt - dt * 2.0).max(0.0);
         let dx = px - self.x;
+        let dy = py - self.y;
         let dz = pz - self.z;
         let dist = (dx * dx + dz * dz).sqrt();
-        let speed = match self.kind { MobKind::Spider => 2.8, MobKind::Chicken => 1.0, _ => 1.5 };
+        let dist3 = (dx * dx + dy * dy + dz * dz).sqrt();
+        let speed = match self.kind {
+            MobKind::Spider => 2.9,
+            MobKind::Enderman => 2.6,
+            MobKind::Chicken => 1.1,
+            _ => 1.6,
+        };
         if self.timer <= 0.0 {
             self.timer = 1.5 + (tick.wrapping_mul(2654435761) % 100) as f32 / 100.0;
-            if self.kind.hostile() {
+            if self.kind.hostile() && dist < 16.0 {
                 self.yaw = dz.atan2(dx);
-            } else if dist < 5.0 {
+            } else if !self.kind.hostile() && dist < 4.0 {
                 self.yaw = (-dz).atan2(-dx);
             } else {
                 self.yaw = (tick as f32 * 0.13 + self.x * 0.7 + self.z * 0.3).sin() * 3.14;
             }
         }
         let mut move_speed = 0.0;
-        if self.kind.hostile() {
-            if dist < 16.0 && (day < 0.7 || self.kind != MobKind::Creeper) {
+        if self.kind == MobKind::Creeper {
+            if dist < 16.0 && grace <= 0.0 {
+                self.yaw = dz.atan2(dx);
+                if dist3 < 3.0 {
+                    self.fuse += dt;
+                } else {
+                    self.fuse = (self.fuse - dt * 1.5).max(0.0);
+                    move_speed = speed;
+                }
+            } else {
+                self.fuse = (self.fuse - dt * 1.5).max(0.0);
+            }
+        } else if self.kind.hostile() {
+            if dist < 16.0 && grace <= 0.0 {
                 move_speed = speed;
             }
         } else if dist > 2.5 || dist < 1.0 {
@@ -81,16 +171,47 @@ impl Mob {
         let nx = self.x + self.vx * dt;
         let nz = self.z + self.vz * dt;
         let r = 0.3;
-        if !self.blocked(world, nx, self.y, self.z, r) { self.x = nx; }
-        if !self.blocked(world, self.x, self.y, nz, r) { self.z = nz; }
+        let mut step_up = false;
+        if !self.blocked(world, nx, self.y, self.z, r) {
+            self.x = nx;
+        } else if !self.blocked(world, nx, self.y + 1.05, self.z, r) {
+            step_up = true;
+        }
+        if !self.blocked(world, self.x, self.y, nz, r) {
+            self.z = nz;
+        } else if !self.blocked(world, self.x, self.y + 1.05, nz, r) {
+            step_up = true;
+        }
+        if step_up && self.on_ground {
+            self.vy = 6.8;
+            self.on_ground = false;
+        }
         self.vy -= 22.0 * dt;
         let ny = self.y + self.vy * dt;
         if self.blocked(world, self.x, ny, self.z, r) {
-            if self.vy < 0.0 { self.on_ground = true; }
+            if self.vy < 0.0 {
+                self.on_ground = true;
+                self.y = (ny + 0.05).floor();
+            }
             self.vy = 0.0;
-        } else { self.y = ny; self.on_ground = false; }
-        if self.y < -5.0 { self.hp = 0.0; }
-        if day > 0.75 && (self.kind == MobKind::Zombie || self.kind == MobKind::Skeleton) && tick % 120 == 0 { self.hp -= 1.0; }
+        } else {
+            self.y = ny;
+            self.on_ground = false;
+        }
+        if self.y < -5.0 {
+            self.hp = 0.0;
+        }
+        // Zombies and Skeletons burn in direct sunlight when exposed to sky.
+        if day > 0.75
+            && (self.kind == MobKind::Zombie || self.kind == MobKind::Skeleton)
+            && tick % 60 == 0
+        {
+            let sky_y = world.highest(self.x.floor() as i32, self.z.floor() as i32);
+            if sky_y <= self.y.floor() as i32 + 2 {
+                self.hp -= 2.0;
+                self.hurt = 0.3;
+            }
+        }
     }
 
     fn blocked(&self, world: &mut World, x: f32, y: f32, z: f32, r: f32) -> bool {
@@ -98,7 +219,13 @@ impl Mob {
         for dx in [-r, r] {
             for dz in [-r, r] {
                 for dy in [0.05, h * 0.5, h - 0.05] {
-                    if world::is_solid(world.get((x + dx).floor() as i32, (y + dy).floor() as i32, (z + dz).floor() as i32)) { return true; }
+                    if world::is_solid(world.get(
+                        (x + dx).floor() as i32,
+                        (y + dy).floor() as i32,
+                        (z + dz).floor() as i32,
+                    )) {
+                        return true;
+                    }
                 }
             }
         }
@@ -107,7 +234,14 @@ impl Mob {
 }
 
 #[derive(Clone)]
-pub struct Drop { pub item: u16, pub x: f32, pub y: f32, pub z: f32, pub vy: f32, pub age: f32 }
+pub struct Drop {
+    pub item: u16,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub vy: f32,
+    pub age: f32,
+}
 
 impl Drop {
     pub fn new(x: f32, y: f32, z: f32, item: u16) -> Self {
@@ -121,7 +255,9 @@ impl Drop {
         if world::is_solid(world.get(self.x.floor() as i32, ny.floor() as i32, self.z.floor() as i32)) {
             self.y = ny.floor() + 1.0;
             self.vy = 0.0;
-        } else { self.y = ny; }
+        } else {
+            self.y = ny;
+        }
     }
 }
 
@@ -148,7 +284,7 @@ pub fn sprite_pixel(kind: MobKind, x: u32, y: u32, tick: u32, back: bool) -> [u8
             let green = if (x * 7 + y * 11) % 13 < 3 { [70, 135, 60] } else { [92, 165, 78] };
             if y >= 2 && y <= 13 && x >= 4 && x <= 11 {
                 let face = y >= 4 && y <= 9;
-                if face && ((x == 6 && y == 5) || (x == 9 && y == 5) || (x == 6 && y == 8 && y == 8) || (y == 8 && (x == 5 || x == 10))) {
+                if face && ((x == 6 && y == 5) || (x == 9 && y == 5) || (x == 6 && y == 8) || (y == 8 && (x == 5 || x == 10))) {
                     return [20, 20, 20, 255];
                 }
                 if face && y == 7 && x >= 6 && x <= 9 { return [20, 20, 20, 255]; }
@@ -157,12 +293,12 @@ pub fn sprite_pixel(kind: MobKind, x: u32, y: u32, tick: u32, back: bool) -> [u8
             [0, 0, 0, 0]
         }
         MobKind::Spider => {
-            let body = (x >= 5 && x <= 10 && y >= 5 && y <= 11);
+            let body = x >= 5 && x <= 10 && y >= 5 && y <= 11;
             let head = x >= 2 && x <= 5 && y >= 7 && y <= 10;
             let leg = (y == 4 || y == 12 || (x == 4 && y >= 3) || (x == 11 && y >= 3)) && x >= 1 && x <= 14;
             if body { return [45, 30, 28, 255]; }
             if head {
-                if (y == 8 && (x == 3 || x == 4)) { return [220, 40, 30, 255]; }
+                if y == 8 && (x == 3 || x == 4) { return [220, 40, 30, 255]; }
                 return [60, 40, 35, 255];
             }
             if leg { return [35, 22, 20, 255]; }
@@ -189,7 +325,6 @@ fn animal(x: u32, y: u32, b0: u8, b1: u8, b2: u8, h0: u8, h1: u8, h2: u8, l0: u8
     [0, 0, 0, 0]
 }
 
-#[allow(clippy::too_many_arguments)]
 fn humanoid(x: u32, y: u32, bob: i32, s0: u8, s1: u8, s2: u8, h0: u8, h1: u8, h2: u8, l0: u8, l1: u8, l2: u8, e0: u8, e1: u8, e2: u8, back: bool, bones: bool) -> [u8; 4] {
     let head = x >= 5 && x <= 10 && y >= 1 && y <= 6;
     let body = x >= 5 && x <= 10 && y >= 7 && y <= 11;
@@ -203,7 +338,7 @@ fn humanoid(x: u32, y: u32, bob: i32, s0: u8, s1: u8, s2: u8, h0: u8, h1: u8, h2
     if body { return if bones && (x == 6 || x == 9) { [245, 245, 240, 255] } else { [s0, s1, s2, 255] }; }
     if arm { return [h0, h1, h2, 255]; }
     if leg {
-        let sw = if (x < 8) { bob } else { -bob };
+        let sw = if x < 8 { bob } else { -bob };
         if y == 15 && sw != 0 { return [0, 0, 0, 0]; }
         return [l0, l1, l2, 255];
     }
@@ -211,7 +346,6 @@ fn humanoid(x: u32, y: u32, bob: i32, s0: u8, s1: u8, s2: u8, h0: u8, h1: u8, h2
 }
 
 pub fn steve_pixel(x: u32, y: u32, tick: u32, back: bool) -> [u8; 4] {
-    // 32x32 Steve, Minecraft proportions: head 10 rows, body 11 rows, legs 11 rows.
     let (x, y) = (x as i32, y as i32);
     let swing = ((tick as i32 / 6) % 4) - 1;
     let skin = [224, 178, 138, 255];
@@ -228,7 +362,6 @@ pub fn steve_pixel(x: u32, y: u32, tick: u32, back: bool) -> [u8; 4] {
     let iris = [72, 108, 196, 255];
     let mouth = [146, 96, 74, 255];
 
-    // --- head (rows 0..10, columns 10..22) ---
     if (0..10).contains(&y) && (10..22).contains(&x) {
         let hairline = y < 2 || (y < 6 && (x < 12 || x > 19));
         if hairline { return if (x * 3 + y * 5) % 7 == 0 { hair_hi } else { hair }; }
@@ -245,7 +378,6 @@ pub fn steve_pixel(x: u32, y: u32, tick: u32, back: bool) -> [u8; 4] {
         return if x > 19 { skin_dark } else { skin };
     }
 
-    // --- torso and arms (rows 10..21) ---
     if (10..21).contains(&y) {
         if (12..20).contains(&x) {
             if y == 10 { return if back { shirt_dark } else { shirt_hi }; }
@@ -264,7 +396,6 @@ pub fn steve_pixel(x: u32, y: u32, tick: u32, back: bool) -> [u8; 4] {
         return [0, 0, 0, 0];
     }
 
-    // --- legs (rows 21..32) ---
     if (21..32).contains(&y) {
         let leg = if (12..16).contains(&x) { 0 } else if (16..20).contains(&x) { 1 } else { return [0, 0, 0, 0] };
         let step = if leg == 0 { swing } else { -swing };
@@ -280,13 +411,18 @@ pub fn random_kind(n: u32, day: f32) -> MobKind {
     let hostile_chance = if day < 0.45 { 45 } else { 0 };
     if n % 100 < hostile_chance {
         match (n / 7) % 5 {
-            0 => MobKind::Zombie, 1 => MobKind::Skeleton, 2 => MobKind::Creeper,
-            3 => MobKind::Spider, _ => MobKind::Enderman,
+            0 => MobKind::Zombie,
+            1 => MobKind::Skeleton,
+            2 => MobKind::Creeper,
+            3 => MobKind::Spider,
+            _ => MobKind::Enderman,
         }
     } else {
-        match (n / 11) % 6 {
-            0 => MobKind::Sheep, 1 => MobKind::Cow, 2 => MobKind::Pig,
-            3 => MobKind::Chicken, 4 => MobKind::Villager, _ => MobKind::Sheep,
+        match (n / 11) % 4 {
+            0 => MobKind::Sheep,
+            1 => MobKind::Cow,
+            2 => MobKind::Pig,
+            _ => MobKind::Chicken,
         }
     }
 }
