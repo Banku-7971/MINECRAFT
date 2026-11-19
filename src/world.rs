@@ -100,7 +100,12 @@ pub const SLAB: u16 = 91;
 pub const STAIRS: u16 = 92;
 pub const FENCE: u16 = 93;
 pub const SIGN: u16 = 94;
-pub const MAX_BLOCK: u16 = 95;
+pub const REDSTONE_DUST: u16 = 96;
+pub const REDSTONE_TORCH: u16 = 97;
+pub const LEVER: u16 = 98;
+pub const LAMP: u16 = 99;
+pub const PRESSURE_PLATE: u16 = 100;
+pub const MAX_BLOCK: u16 = 100;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BPos(pub i32, pub i32, pub i32);
@@ -378,12 +383,15 @@ pub fn block_name(id: u16) -> &'static str {
         LADDER => "Ladder", RAIL => "Rail", ANVIL => "Anvil", ENCHANTING => "Enchanting Table",
         END_STONE => "End Stone", NETHERRACK => "Netherrack", SOUL_SAND => "Soul Sand", QUARTZ => "Quartz Block",
         SLAB => "Stone Slab", STAIRS => "Cobble Stairs", FENCE => "Oak Fence", SIGN => "Oak Sign",
+        REDSTONE_DUST => "Redstone Dust", REDSTONE_TORCH => "Redstone Torch", LEVER => "Lever",
+        LAMP => "Redstone Lamp", PRESSURE_PLATE => "Pressure Plate",
         _ => "Unknown",
     }
 }
 
 pub fn is_solid(id: u16) -> bool {
-    !matches!(id, AIR | WATER | LAVA | TALL_GRASS | FLOWER_RED | FLOWER_YELLOW | COBWEB | VINE | WHEAT | TORCH | SNOW_LAYER | RAIL)
+    !matches!(id, AIR | WATER | LAVA | TALL_GRASS | FLOWER_RED | FLOWER_YELLOW | COBWEB | VINE | WHEAT | TORCH | SNOW_LAYER | RAIL
+        | REDSTONE_DUST | LEVER | PRESSURE_PLATE | REDSTONE_TORCH)
 }
 
 pub fn is_opaque(id: u16) -> bool {
@@ -498,11 +506,13 @@ pub struct World {
     chunks: HashMap<(i32, i32), Chunk>,
     pub edits: HashMap<BPos, u16>,
     hot: Option<((i32, i32), Chunk)>,
+    /// Redstone lamps that are currently powered and glowing.
+    pub lit: std::collections::HashSet<(i32, i32, i32)>,
 }
 
 impl World {
     pub fn new() -> Self {
-        Self { chunks: HashMap::new(), edits: HashMap::new(), hot: None }
+        Self { chunks: HashMap::new(), edits: HashMap::new(), hot: None, lit: std::collections::HashSet::new() }
     }
 
     fn chunk(&mut self, cx: i32, cz: i32) -> &mut Chunk {

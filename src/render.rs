@@ -45,7 +45,7 @@ pub struct Textures { data: Vec<Vec<u8>> }
 impl Textures {
     pub fn new() -> Self {
         let mut data = Vec::with_capacity(65);
-        for k in 0..65 { data.push(Self::generate(k)); }
+        for k in 0..70 { data.push(Self::generate(k)); }
         Self { data }
     }
 
@@ -80,7 +80,9 @@ impl Textures {
             world::CAKE => 44, world::LADDER => 12, world::RAIL => 56, world::ANVIL => 57,
             world::ENCHANTING => 58, world::END_STONE => 59, world::NETHERRACK => 60,
             world::SOUL_SAND => 61, world::QUARTZ => 62, world::SLAB => 0, world::STAIRS => 4,
-            world::FENCE => 12, world::SIGN => 12, _ => 0,
+            world::FENCE => 12, world::SIGN => 12,
+            world::REDSTONE_DUST => 65, world::REDSTONE_TORCH => 66, world::LEVER => 67,
+            world::LAMP => 68, world::PRESSURE_PLATE => 69, _ => 0,
         }
     }
 
@@ -247,6 +249,32 @@ impl Textures {
                     62 => (230.0 + noise * 0.3, 228.0 + noise * 0.3, 220.0 + noise * 0.3, 255.0),
                     63 => (95.0 + noise * 0.5, 75.0 + noise * 0.4, 50.0 + noise * 0.4, 255.0),
                     64 => (135.0 + noise * 0.6, 120.0 + noise * 0.5, 145.0 + noise * 0.5, 255.0),
+                    65 => { // redstone dust
+                        let dot = (x % 5 == 2) && (y % 5 == 2);
+                        let near = (x as i32 - 16).abs() < 3 || (y as i32 - 16).abs() < 3;
+                        if near && r % 3 != 0 { (200.0, 25.0, 25.0, 255.0) }
+                        else if dot { (150.0, 20.0, 20.0, 255.0) }
+                        else { (120.0 + noise * 0.4, 118.0 + noise * 0.4, 120.0 + noise * 0.4, 255.0) }
+                    }
+                    66 => { // redstone torch
+                        if y < 10 && x > 12 && x < 20 { (255.0 - noise * 0.3, 40.0, 30.0, 255.0) }
+                        else if x > 13 && x < 19 { (110.0 + noise * 0.3, 75.0 + noise * 0.3, 45.0, 255.0) }
+                        else { (0.0, 0.0, 0.0, 0.0) }
+                    }
+                    67 => { // lever
+                        if y > 20 && x > 8 && x < 24 { (130.0 + noise * 0.4, 130.0 + noise * 0.4, 132.0, 255.0) }
+                        else if x > 14 && x < 18 && y > 6 { (120.0 + noise * 0.2, 90.0, 60.0, 255.0) }
+                        else { (0.0, 0.0, 0.0, 0.0) }
+                    }
+                    68 => { // redstone lamp
+                        let grid = x % 8 == 0 || y % 8 == 0;
+                        if grid { (120.0 + noise * 0.3, 90.0 + noise * 0.3, 45.0, 255.0) }
+                        else { (205.0 + noise * 0.3, 165.0 + noise * 0.4, 90.0, 255.0) }
+                    }
+                    69 => { // pressure plate
+                        if y > 6 && y < 26 && x > 4 && x < 28 { (150.0 + noise * 0.4, 150.0 + noise * 0.4, 152.0, 255.0) }
+                        else { (0.0, 0.0, 0.0, 0.0) }
+                    }
                     _ => (128.0, 128.0, 128.0, 255.0),
                 };
                 out[i] = clamp255(cr);
@@ -275,13 +303,14 @@ impl Textures {
 pub struct Framebuffer {
     pub w: usize,
     pub h: usize,
+    pub cursor: (i32, i32),
     pub rgba: Vec<u8>,
     pub depth: Vec<f32>,
 }
 
 impl Framebuffer {
     pub fn new(w: usize, h: usize) -> Self {
-        Self { w, h, rgba: vec![0; w * h * 4], depth: vec![f32::INFINITY; w * h] }
+        Self { w, h, cursor: (0, 0), rgba: vec![0; w * h * 4], depth: vec![f32::INFINITY; w * h] }
     }
     pub fn clear(&mut self) {
         for d in self.depth.iter_mut() { *d = f32::INFINITY; }
@@ -327,7 +356,10 @@ fn glyph(c: char) -> [u8; 5] {
         '9' => [14, 17, 15, 1, 14], ' ' => [0, 0, 0, 0, 0], '.' => [0, 0, 0, 0, 4],
         ':' => [0, 4, 0, 4, 0], '/' => [1, 1, 2, 4, 16], '-' => [0, 0, 31, 0, 0],
         '+' => [0, 4, 31, 4, 0], '[' => [14, 8, 8, 8, 14], ']' => [14, 2, 2, 2, 14],
-        '%' => [17, 2, 4, 8, 17], '#' => [10, 31, 10, 31, 10], _ => [0, 0, 0, 0, 0],
+        '%' => [17, 2, 4, 8, 17], '#' => [10, 31, 10, 31, 10],
+        '<' => [2, 4, 8, 4, 2], '>' => [8, 4, 2, 4, 8], '!' => [4, 4, 4, 0, 4], '?' => [14, 17, 2, 0, 4], '_' => [0, 0, 0, 0, 31],
+        '(' => [2, 4, 4, 4, 2], ')' => [8, 4, 4, 4, 8], ',' => [0, 0, 0, 4, 8], '\'' => [4, 4, 0, 0, 0], '=' => [0, 31, 0, 31, 0],
+        _ => [0, 0, 0, 0, 0],
     }
 }
 
@@ -483,6 +515,8 @@ fn shade_hit(tex: &Textures, world: &mut World, h: &Hit, _time: f32, day: f32, t
     if h.ny > 0 && h.block == world::GRASS { t = tex.grass_top(h.u, h.v); }
     let mut light = face_shade(h.nx, h.ny, h.nz, day) * ao(world, h);
     if h.block == world::TORCH || h.block == world::CAMPFIRE || h.block == world::GLOWSTONE || h.block == world::SEA_LANTERN { light = 1.25; }
+    if h.block == world::LAMP && world.lit.contains(&(h.x, h.y, h.z)) { light = 1.45; }
+    if h.block == world::REDSTONE_TORCH { light = 1.2; }
     if h.block == world::LAVA || h.block == world::GLOWSTONE || h.block == world::SEA_LANTERN { light = 1.15; }
     (t[0] as f32 * light, t[1] as f32 * light, t[2] as f32 * light, t[3])
 }
@@ -554,21 +588,42 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     if item >= 256 {
         match item {
             256..=260 => { // pickaxe
-                if (x as i32 == 8 + z && y >= 3 && y <= 13) || (y == 4 && (4..12).contains(&(x + z as u32))) { return [120, 80, 45, 255]; }
-                if y >= 1 && y <= 4 && (x >= 3 && x <= 12) { return [190, 195, 200, 255]; }
+                let head = match item {
+                    256 => [165, 118, 70, 255],
+                    257 => [145, 145, 150, 255],
+                    258 => [215, 220, 225, 255],
+                    259 => [80, 225, 235, 255],
+                    _ => [75, 65, 75, 255],
+                };
+                if y >= 2 && y <= 4 && x >= 3 && x <= 12 { return head; }
+                if (x as i32 == 8 + z && y >= 4 && y <= 13) { return [120, 80, 45, 255]; }
             }
-            261..=263 => { if y >= 2 && y <= 12 && x == 8 { return [125, 85, 50, 255]; } if y <= 4 && x >= 5 && x <= 12 { return [200, 205, 210, 255]; } }
-            264..=265 => { if x >= 6 && x <= 9 && y >= 2 && y <= 12 { return [140, 100, 55, 255]; } if y <= 5 && x >= 3 && x <= 12 { return [175, 180, 185, 255]; } }
-            266..=268 => { if x >= 7 && x <= 9 && y >= 2 && y <= 10 { return [205, 210, 215, 255]; } if y >= 9 && y <= 13 && x >= 5 && x <= 11 { return [110, 75, 45, 255]; } }
+            261..=263 => {
+                let head = match item { 261 => [165, 118, 70, 255], 262 => [215, 220, 225, 255], _ => [80, 225, 235, 255] };
+                if y >= 2 && y <= 12 && x == 8 { return [125, 85, 50, 255]; }
+                if y <= 5 && x >= 5 && x <= 12 { return head; }
+            }
+            264..=265 => {
+                let head = if item == 264 { [165, 118, 70, 255] } else { [215, 220, 225, 255] };
+                if x >= 7 && x <= 8 && y >= 5 && y <= 13 { return [140, 100, 55, 255]; }
+                if y >= 2 && y <= 5 && x >= 5 && x <= 10 { return head; }
+            }
+            266..=268 => {
+                let blade = match item { 266 => [165, 118, 70, 255], 267 => [215, 220, 225, 255], _ => [80, 225, 235, 255] };
+                if x >= 7 && x <= 9 && y >= 2 && y <= 9 { return blade; }
+                if y >= 9 && y <= 13 && x >= 5 && x <= 11 { return [110, 75, 45, 255]; }
+            }
             269 => { if (x as i32 - 8).pow(2) + (y as i32 - 8).pow(2) < 36 { return [225, 65, 60, 255]; } if y < 4 { return [65, 130, 55, 255]; } }
             270 => { if x >= 3 && x <= 12 && y >= 5 && y <= 12 { return [225, 190, 130, 255]; } }
             271 | 273 | 275 => { if x >= 4 && x <= 12 && y >= 5 && y <= 12 { return [235, 190, 175, 255]; } }
             272 | 274 | 276 | 277 => { if x >= 4 && x <= 12 && y >= 5 && y <= 12 { return [220, 155, 140, 255]; } }
             278 => { if x >= 4 && x <= 11 && y >= 6 && y <= 10 { return [45, 45, 50, 255]; } }
-            279 | 280 => { if x >= 3 && x <= 12 && y >= 6 && y <= 10 { return [215, 215, 220, 255]; } }
+            279 => { if x >= 3 && x <= 12 && y >= 6 && y <= 10 { return [215, 215, 220, 255]; } }
+            280 => { if x >= 3 && x <= 12 && y >= 6 && y <= 10 { return [245, 205, 65, 255]; } }
             281 => { if x >= 5 && x <= 11 && y >= 5 && y <= 11 { return [80, 225, 235, 255]; } }
             282 => { if x >= 5 && x <= 11 && y >= 5 && y <= 11 { return [80, 200, 120, 255]; } }
             283 => { if x >= 7 && x <= 9 && y >= 3 && y <= 13 { return [150, 105, 60, 255]; } }
+            284 => { if x >= 5 && x <= 10 && y >= 5 && y <= 11 { return [80, 80, 90, 255]; } }
             285 => { if x >= 6 && x <= 9 && y >= 4 && y <= 12 { return [235, 230, 215, 255]; } }
             286 => { if x >= 4 && x <= 11 && y >= 6 && y <= 10 { return [130, 85, 55, 255]; } }
             287 => { if x >= 5 && x <= 10 && y >= 5 && y <= 11 { return [245, 245, 235, 255]; } }
@@ -597,6 +652,20 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     if (item == world::TALL_GRASS || item == world::FLOWER_RED || item == world::FLOWER_YELLOW || item == world::WHEAT || item == world::TORCH) && (x < 5 || x > 10) {
         return [0, 0, 0, 0];
     }
+    if item == world::REDSTONE_TORCH {
+        if x >= 7 && x <= 8 && y >= 6 && y <= 13 { return [145, 100, 60, 255]; }
+        if x >= 6 && x <= 9 && y >= 3 && y <= 6 { return [245, 50, 40, 255]; }
+        return [0, 0, 0, 0];
+    }
+    if item == world::LEVER {
+        if x >= 7 && x <= 9 && y >= 3 && y <= 9 { return [145, 100, 60, 255]; }
+        if x >= 4 && x <= 11 && y >= 9 && y <= 13 { return [120, 120, 125, 255]; }
+        return [0, 0, 0, 0];
+    }
+    if item == world::PRESSURE_PLATE {
+        if x >= 3 && x <= 12 && y >= 9 && y <= 12 { return [155, 155, 160, 255]; }
+        return [0, 0, 0, 0];
+    }
     let (r, g, b) = match item {
         world::GRASS => (90, 150, 70), world::DIRT => (122, 88, 62), world::STONE => (135, 135, 138),
         world::COBBLE => (142, 142, 144), world::SAND | world::SANDSTONE => (222, 208, 165),
@@ -618,6 +687,8 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
         world::CONCRETE_BLACK => (45, 45, 50), world::CONCRETE_WHITE => (235, 235, 235),
         world::GOLD_BLOCK => (245, 210, 80), world::DIAMOND_BLOCK => (80, 225, 235),
         world::EMERALD_BLOCK => (80, 205, 120), world::IRON_BLOCK => (220, 220, 225),
+        world::REDSTONE_DUST => (205, 30, 30), world::REDSTONE_TORCH => (235, 60, 55),
+        world::LEVER => (140, 140, 145), world::LAMP => (230, 185, 95), world::PRESSURE_PLATE => (150, 150, 152),
         _ => (160, 160, 160),
     };
     let shade = if x < 3 || y > 12 { 0.72 } else if x > 12 || y < 3 { 0.88 } else { 1.0 };
@@ -796,4 +867,398 @@ pub fn encode_png(path: &std::path::Path, rgba: &[u8], w: usize, h: usize) -> st
     chunk(&mut out, b"IDAT", &z);
     chunk(&mut out, b"IEND", &[]);
     std::fs::write(path, out)
+}
+
+// ===================== menus, inventory, furnace, chat =====================
+
+pub const SLOT_PX: i32 = 24;
+
+pub fn panel(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32) {
+    fb.rect(x, y, w, h, [198, 198, 198, 255]);
+    fb.rect(x, y, w, 2, [255, 255, 255, 255]);
+    fb.rect(x, y, 2, h, [255, 255, 255, 255]);
+    fb.rect(x + w - 2, y, 2, h, [85, 85, 85, 255]);
+    fb.rect(x, y + h - 2, w, 2, [85, 85, 85, 255]);
+    fb.frame(x, y, w, h, [25, 25, 25, 255]);
+}
+
+pub fn slot(fb: &mut Framebuffer, x: i32, y: i32, size: i32, hover: bool) {
+    fb.rect(x, y, size, size, [139, 139, 139, 255]);
+    fb.rect(x, y, size, 1, [55, 55, 55, 255]);
+    fb.rect(x, y, 1, size, [55, 55, 55, 255]);
+    fb.rect(x + size - 1, y, 1, size, [255, 255, 255, 255]);
+    fb.rect(x, y + size - 1, size, 1, [255, 255, 255, 255]);
+    if hover { fb.rect(x + 1, y + 1, size - 2, size - 2, [255, 255, 255, 65]); }
+}
+
+pub fn stack(fb: &mut Framebuffer, x: i32, y: i32, size: i32, item: u16, count: u32, tick: u32) {
+    if item == 0 || count == 0 { return; }
+    draw_item_icon(fb, x + 2, y + 2, item, size - 4, tick);
+    if count > 1 {
+        let s = format!("{}", count);
+        text(fb, x + size - (s.len() as i32 * 6) - 1, y + size - 8, &s, [255, 255, 255, 255], 1);
+    }
+}
+
+pub fn button(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32, label: &str, hover: bool) {
+    let top = if hover { [122, 138, 178, 255] } else { [112, 112, 118, 255] };
+    let bot = if hover { [86, 102, 146, 255] } else { [80, 80, 86, 255] };
+    for r in 0..h {
+        let t = r as f32 / h.max(1) as f32;
+        let c = [
+            (top[0] as f32 * (1.0 - t) + bot[0] as f32 * t) as u8,
+            (top[1] as f32 * (1.0 - t) + bot[1] as f32 * t) as u8,
+            (top[2] as f32 * (1.0 - t) + bot[2] as f32 * t) as u8,
+            255,
+        ];
+        fb.rect(x, y + r, w, 1, c);
+    }
+    let border = if hover { [255, 255, 255, 255] } else { [32, 32, 36, 255] };
+    fb.frame(x, y, w, h, border);
+    let tw = label.len() as i32 * 6;
+    text(fb, x + (w - tw) / 2, y + (h - 7) / 2, label, [255, 255, 255, 255], 1);
+}
+
+pub fn creeper_face(fb: &mut Framebuffer, x: i32, y: i32, scale: i32) {
+    let g1 = [66, 146, 56, 255];
+    let g2 = [52, 120, 44, 255];
+    let dk = [16, 36, 16, 255];
+    fb.rect(x, y, 8 * scale, 8 * scale, g1);
+    for r in 0..8 { for c in 0..8 { if (r + c) % 3 == 0 { fb.rect(x + c * scale, y + r * scale, scale, scale, g2); } } }
+    fb.rect(x + 1 * scale, y + 2 * scale, 2 * scale, 2 * scale, dk);
+    fb.rect(x + 5 * scale, y + 2 * scale, 2 * scale, 2 * scale, dk);
+    fb.rect(x + 3 * scale, y + 4 * scale, 2 * scale, 1 * scale, dk);
+    fb.rect(x + 2 * scale, y + 5 * scale, 4 * scale, 2 * scale, dk);
+    fb.rect(x + 2 * scale, y + 7 * scale, 1 * scale, 1 * scale, dk);
+    fb.rect(x + 5 * scale, y + 7 * scale, 1 * scale, 1 * scale, dk);
+}
+
+pub fn draw_title(fb: &mut Framebuffer, buttons: &[&str], hover: usize, splash: &str, t: f32) {
+    for y in 0..H as i32 {
+        let f = y as f32 / H as f32;
+        let r = (108.0 * (1.0 - f) + 178.0 * f) as u8;
+        let g = (165.0 * (1.0 - f) + 212.0 * f) as u8;
+        let b = (232.0 * (1.0 - f) + 252.0 * f) as u8;
+        fb.rect(0, y, W as i32, 1, [r, g, b, 255]);
+    }
+    fb.rect(392, 26, 26, 26, [255, 250, 210, 255]);
+    fb.rect(396, 30, 18, 18, [255, 255, 235, 255]);
+    for i in 0..4 {
+        let cx = ((t * 9.0 + i as f32 * 150.0) % 620.0) - 70.0;
+        let cy = 40 + i * 20;
+        fb.rect(cx as i32, cy, 74, 10, [245, 246, 250, 255]);
+        fb.rect(cx as i32 + 12, cy - 7, 46, 8, [245, 246, 250, 255]);
+    }
+    for x in 0..W as i32 {
+        let h1 = 196.0 + (x as f32 * 0.012 + 1.2).sin() * 12.0 + (x as f32 * 0.031).sin() * 5.0;
+        let h2 = 208.0 + (x as f32 * 0.008 + 2.7).sin() * 18.0;
+        fb.rect(x, h1 as i32, 1, H as i32 - h1 as i32, [96, 156, 74, 255]);
+        fb.rect(x, h2 as i32, 1, H as i32 - h2 as i32, [74, 128, 58, 255]);
+    }
+    fb.rect(0, 238, W as i32, 32, [122, 88, 62, 255]);
+    for x in (0..W as i32).step_by(12) { fb.rect(x, 238, 6, 4, [104, 74, 52, 255]); }
+
+    let title = "MINECRAFT";
+    let scale = 4;
+    let tw = title.len() as i32 * 6 * scale;
+    let tx = (W as i32 - tw) / 2;
+    let bob = ((t * 1.6).sin() * 1.5) as i32;
+    text(fb, tx + 3, 40 + bob + 3, title, [40, 40, 40, 200], scale);
+    for (i, ch) in title.chars().enumerate() {
+        let c = if i % 2 == 0 { [225, 225, 225, 255] } else { [245, 245, 245, 255] };
+        text(fb, tx + i as i32 * 6 * scale, 40 + bob, &ch.to_string(), c, scale);
+    }
+    fb.rect(tx, 40 + bob + 8 * scale + 1, tw, 2, [70, 70, 70, 160]);
+
+    let sw = splash.len() as i32 * 6;
+    let sx = tx + tw - sw;
+    let sy = 40 + bob + 8 * scale + 8 + ((t * 4.0).sin() * 2.0) as i32;
+    text(fb, sx, sy, splash, [255, 255, 40, 255], 1);
+
+    creeper_face(fb, W as i32 - 56, 100, 6);
+
+    let bw = 200;
+    let bx = (W as i32 - bw) / 2;
+    for (i, label) in buttons.iter().enumerate() {
+        let y = 132 + i as i32 * 28;
+        button(fb, bx, y, bw, 22, label, hover == i);
+    }
+    text(fb, 8, H as i32 - 14, "Minecraft written in Rust", [235, 235, 235, 220], 1);
+}
+
+pub fn craft_grid_idx(i: usize, grid_size: usize) -> usize {
+    (i / grid_size) * 3 + (i % grid_size)
+}
+
+pub fn recipe_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (224 + (i % 3) as i32 * 24, 38 + (i / 3) as i32 * 24, 22, 22)
+}
+
+pub fn recipe_prev_rect() -> (i32, i32, i32, i32) { (344, 22, 16, 13) }
+pub fn recipe_next_rect() -> (i32, i32, i32, i32) { (394, 22, 16, 13) }
+pub fn recipe_fill_rect() -> (i32, i32, i32, i32) { (352, 82, 54, 16) }
+
+pub fn recipe_fits_2x2(pat: &[u16; 9]) -> bool {
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (3usize, 3usize, 0usize, 0usize);
+    let mut any = false;
+    for y in 0..3 {
+        for x in 0..3 {
+            if pat[y * 3 + x] != 0 {
+                any = true;
+                min_x = min_x.min(x); min_y = min_y.min(y);
+                max_x = max_x.max(x); max_y = max_y.max(y);
+            }
+        }
+    }
+    !any || (max_x - min_x + 1 <= 2 && max_y - min_y + 1 <= 2)
+}
+
+/// Survival inventory: 2x2 (inventory) or 3x3 (crafting table) crafting + recipe book + storage.
+pub fn draw_inventory_screen(
+    fb: &mut Framebuffer,
+    hot: &[crate::craft::Stack; 9],
+    store: &[crate::craft::Stack; 27],
+    grid: &[crate::craft::Stack; 9],
+    grid_size: usize,
+    result: crate::craft::Stack,
+    cursor: crate::craft::Stack,
+    tick: u32,
+    hover: Option<(usize, usize)>,
+    recipe_page: usize,
+    recipe_sel: usize,
+) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 120]);
+    let (px, py, pw, ph) = (60, 14, 360, 242);
+    panel(fb, px, py, pw, ph);
+    text(fb, 76, 20, if grid_size == 3 { "CRAFTING (3x3)" } else { "CRAFTING (2x2)" }, [60, 60, 60, 255], 1);
+
+    // crafting grid
+    for i in 0..grid_size * grid_size {
+        let (x, y, w, h) = craft_slot_rect(i, grid_size);
+        let hv = hover == Some((0, i));
+        slot(fb, x, y, w, hv);
+        let st = grid[craft_grid_idx(i, grid_size)];
+        draw_item_icon(fb, x + 1, y + 1, st.id, w - 2, tick);
+        if st.count > 1 { text(fb, x + w - 8, y + h - 8, &format!("{}", st.count), [255, 255, 255, 255], 1); }
+    }
+    let (rx, ry, rw, rh) = craft_result_rect(grid_size);
+    slot(fb, rx, ry, rw, hover == Some((0, 99)));
+    draw_item_icon(fb, rx + 1, ry + 1, result.id, rw - 2, tick);
+    if result.count > 1 { text(fb, rx + rw - 8, ry + rh - 8, &format!("{}", result.count), [255, 255, 255, 255], 1); }
+    text(fb, rx - 18, ry + 9, "->", [60, 60, 60, 255], 1);
+
+    // recipe book panel
+    fb.rect(218, 20, 194, 90, [168, 168, 172, 255]);
+    fb.frame(218, 20, 194, 90, [95, 95, 100, 255]);
+    text(fb, 224, 24, "RECIPES", [50, 50, 55, 255], 1);
+    let recs = crate::craft::recipes();
+    let per_page = 6usize;
+    let pages = (recs.len() + per_page - 1) / per_page;
+    let page = recipe_page.min(pages.saturating_sub(1));
+    let (pvx, pvy, pvw, pvh) = recipe_prev_rect();
+    let (nvx, nvy, nvw, nvh) = recipe_next_rect();
+    button(fb, pvx, pvy, pvw, pvh, "<", hover == Some((3, 100)));
+    text(fb, 363, 25, &format!("{}/{}", page + 1, pages), [50, 50, 55, 255], 1);
+    button(fb, nvx, nvy, nvw, nvh, ">", hover == Some((3, 101)));
+
+    let start = page * per_page;
+    for i in 0..per_page {
+        let idx = start + i;
+        let (x, y, w, h) = recipe_slot_rect(i);
+        let selected = idx == recipe_sel;
+        slot(fb, x, y, w, hover == Some((3, i)) || selected);
+        if selected { fb.frame(x, y, w, h, [255, 220, 60, 255]); }
+        if idx < recs.len() {
+            draw_item_icon(fb, x + 2, y + 2, recs[idx].out, w - 4, tick);
+            if recs[idx].count > 1 {
+                text(fb, x + w - 7, y + h - 8, &format!("{}", recs[idx].count), [255, 255, 255, 255], 1);
+            }
+        }
+    }
+
+    // selected recipe 3x3 preview + auto-fill
+    if let Some(rec) = recs.get(recipe_sel) {
+        for r in 0..3 {
+            for c in 0..3 {
+                let sx = 302 + c as i32 * 14;
+                let sy = 38 + r as i32 * 14;
+                slot(fb, sx, sy, 13, false);
+                let id = rec.pattern[r * 3 + c];
+                if id != 0 {
+                    draw_item_icon(fb, sx + 1, sy + 1, id, 11, tick);
+                }
+            }
+        }
+        let (fx, fy, fw, fh) = recipe_fill_rect();
+        button(fb, fx, fy, fw, fh, "FILL", hover == Some((3, 102)));
+        let out_name = crate::items::name(rec.out);
+        let short = if out_name.len() > 21 { &out_name[..21] } else { out_name };
+        text(fb, 224, 90, short, [40, 40, 45, 255], 1);
+        if grid_size == 2 && !recipe_fits_2x2(&rec.pattern) {
+            text(fb, 224, 100, "NEEDS CRAFTING TABLE", [175, 40, 40, 255], 1);
+        }
+    }
+
+    // storage
+    text(fb, 76, 112, "INVENTORY", [60, 60, 60, 255], 1);
+    for i in 0..27 {
+        let (x, y, w, h) = inv_slot_rect(i);
+        let hv = hover == Some((1, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 1, y + 1, store[i].id, w - 2, tick);
+        if store[i].count > 1 { text(fb, x + w - 8, y + h - 8, &format!("{}", store[i].count), [255, 255, 255, 255], 1); }
+    }
+    for i in 0..9 {
+        let (x, y, w, h) = hot_slot_rect(i);
+        let hv = hover == Some((2, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 1, y + 1, hot[i].id, w - 2, tick);
+        if hot[i].count > 1 { text(fb, x + w - 8, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+    }
+    text(fb, 76, 240, "E / ESC CLOSE   -   CLICK RECIPE TO VIEW / FILL", [60, 60, 60, 255], 1);
+    draw_cursor_stack(fb, cursor, tick);
+}
+
+pub fn draw_cursor_stack(fb: &mut Framebuffer, cursor: crate::craft::Stack, tick: u32) {
+    if !cursor.is_empty() {
+        let (mx, my) = fb.cursor;
+        draw_item_icon(fb, mx - 12, my - 12, cursor.id, 24, tick);
+        if cursor.count > 1 { text(fb, mx + 2, my + 6, &format!("{}", cursor.count), [255, 255, 255, 255], 1); }
+    }
+}
+
+pub fn craft_slot_rect(i: usize, grid_size: usize) -> (i32, i32, i32, i32) {
+    let gx = 76;
+    let gy = 30;
+    let (col, row) = (i % grid_size, i / grid_size);
+    (gx + col as i32 * (SLOT_PX + 2), gy + row as i32 * (SLOT_PX + 2), SLOT_PX, SLOT_PX)
+}
+pub fn craft_result_rect(grid_size: usize) -> (i32, i32, i32, i32) {
+    let (x, y, _, _) = craft_slot_rect(0, grid_size);
+    (x + (grid_size as i32) * (SLOT_PX + 2) + 24, y + (grid_size as i32 - 1) * 10 + 4, SLOT_PX + 4, SLOT_PX + 4)
+}
+pub fn inv_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (76 + (i % 9) as i32 * (SLOT_PX + 2), 124 + (i / 9) as i32 * (SLOT_PX + 2), SLOT_PX, SLOT_PX)
+}
+pub fn hot_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (76 + i as i32 * (SLOT_PX + 2), 208, SLOT_PX, SLOT_PX)
+}
+
+pub fn furnace_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    match i {
+        0 => (104, 40, SLOT_PX, SLOT_PX),
+        1 => (104, 96, SLOT_PX, SLOT_PX),
+        _ => (196, 66, SLOT_PX + 4, SLOT_PX + 4),
+    }
+}
+
+pub fn draw_furnace_screen(
+    fb: &mut Framebuffer,
+    input: crate::craft::Stack,
+    fuel: crate::craft::Stack,
+    output: crate::craft::Stack,
+    burn: f32,
+    cook: f32,
+    hot: &[crate::craft::Stack; 9],
+    cursor: crate::craft::Stack,
+    tick: u32,
+    hover: Option<(usize, usize)>,
+) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 120]);
+    let (px, py, pw, ph) = (60, 16, 360, 238);
+    panel(fb, px, py, pw, ph);
+    text(fb, px + 10, py + 8, "FURNACE", [60, 60, 60, 255], 1);
+    let names = ["FUEL", "INGREDIENT", "RESULT"];
+    let _ = names;
+    for i in 0..3 {
+        let (x, y, w, h) = furnace_slot_rect(i);
+        slot(fb, x, y, w, hover == Some((0, i)));
+        let st = [input, fuel, output][i];
+        draw_item_icon(fb, x + 1, y + 1, st.id, w - 2, tick);
+        if st.count > 1 { text(fb, x + w - 8, y + h - 8, &format!("{}", st.count), [255, 255, 255, 255], 1); }
+    }
+    // fuel flame (fills bottom-up)
+    let flame = (burn * 24.0) as i32;
+    for i in 0..24 {
+        let c = if i < flame { [255, 170, 40, 255] } else { [80, 80, 84, 255] };
+        fb.rect(142, 122 - i, 12, 1, c);
+    }
+    text(fb, 136, 128, "FUEL", [60, 60, 60, 255], 1);
+    // cooking progress bar
+    let prog = (cook * 40.0) as i32;
+    fb.rect(150, 48, 40, 8, [120, 120, 120, 255]);
+    fb.rect(150, 48, prog, 8, [235, 235, 235, 255]);
+    text(fb, 150, 38, "SMELTING", [60, 60, 60, 255], 1);
+
+    text(fb, px + 10, py + 178, "INVENTORY", [60, 60, 60, 255], 1);
+    for i in 0..9 {
+        let (x, y, w, h) = hot_slot_rect(i);
+        slot(fb, x, y, w, hover == Some((1, i)));
+        draw_item_icon(fb, x + 1, y + 1, hot[i].id, w - 2, tick);
+        if hot[i].count > 1 { text(fb, x + w - 8, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+    }
+    text(fb, px + 10, py + ph - 12, "E / ESC CLOSE", [60, 60, 60, 255], 1);
+    draw_cursor_stack(fb, cursor, tick);
+}
+
+pub fn draw_chat(fb: &mut Framebuffer, lines: &[(String, f32)], input: Option<&str>, t: f32) {
+    let mut y = 96;
+    for (line, age) in lines.iter().rev().take(8).rev() {
+        let fade = if *age > 8.0 { 0.35 } else { 1.0 };
+        if input.is_some() || *age < 12.0 {
+            let a = (200.0 * fade) as u8;
+            fb.rect(6, y - 2, (line.len() as i32 * 6 + 8).min(W as i32 - 12), 11, [0, 0, 0, a]);
+            text(fb, 10, y, line, [255, 255, 255, 255], 1);
+        }
+        y += 12;
+    }
+    if let Some(text_in) = input {
+        fb.rect(6, H as i32 - 40, W as i32 - 12, 12, [0, 0, 0, 170]);
+        let caret = if (t * 2.0) as i32 % 2 == 0 { "_" } else { " " };
+        text(fb, 10, H as i32 - 37, &format!("> {}{}", text_in, caret), [255, 255, 255, 255], 1);
+    }
+}
+
+pub fn draw_pause(fb: &mut Framebuffer, hover: usize, t: f32) {
+    fb.rect(0, 0, W as i32, H as i32, [20, 30, 50, 150]);
+    let names = ["BACK TO GAME", "SOUND: ON", "MUSIC: ON", "OPTIONS", "SAVE AND QUIT"];
+    let _ = t;
+    text(fb, (W as i32 - 84) / 2, 40, "GAME MENU", [255, 255, 255, 255], 2);
+    let bw = 200; let bx = (W as i32 - bw) / 2;
+    for (i, n) in names.iter().enumerate() { button(fb, bx, 76 + i as i32 * 26, bw, 20, n, hover == i); }
+}
+
+pub fn draw_multiplayer_screen(fb: &mut Framebuffer, addr: &str, status: &str, hover: usize, hosting: bool) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 140]);
+    let (px, py, pw, ph) = (50, 20, 380, 230);
+    panel(fb, px, py, pw, ph);
+    text(fb, px + 10, py + 8, "PLAY MULTIPLAYER", [60, 60, 60, 255], 1);
+    text(fb, px + 10, py + 34, "SERVER ADDRESS", [60, 60, 60, 255], 1);
+    fb.rect(px + 10, py + 46, pw - 20, 18, [40, 40, 40, 255]);
+    text(fb, px + 14, py + 51, &format!("{}_", addr), [235, 235, 235, 255], 1);
+    text(fb, px + 10, py + 74, status, [70, 70, 110, 255], 1);
+    button(fb, px + 10, py + 96, 170, 22, "JOIN SERVER", hover == 0);
+    button(fb, px + 200, py + 96, 170, 22, if hosting { "HOSTING..." } else { "OPEN TO LAN" }, hover == 1);
+    button(fb, px + 10, py + 128, 170, 22, "DIRECT CONNECT", hover == 2);
+    button(fb, px + 200, py + 128, 170, 22, "BACK", hover == 3);
+    text(fb, px + 10, py + 168, "Host a game, then type your friend's IP on their", [60, 60, 60, 255], 1);
+    text(fb, px + 10, py + 180, "machine and press JOIN SERVER. Port 25565.", [60, 60, 60, 255], 1);
+    text(fb, px + 10, py + 200, "Chat with T. Players and block edits sync live.", [60, 60, 60, 255], 1);
+}
+
+pub fn draw_options_screen(fb: &mut Framebuffer, sound: bool, music: bool, scale: i32, hover: usize) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 140]);
+    let (px, py, pw, ph) = (70, 30, 340, 210);
+    panel(fb, px, py, pw, ph);
+    text(fb, px + 10, py + 8, "OPTIONS", [60, 60, 60, 255], 1);
+    let items = [
+        format!("SOUND: {}", if sound { "ON" } else { "OFF" }),
+        format!("MUSIC: {}", if music { "ON" } else { "OFF" }),
+        format!("PIXEL SCALE: {}x", scale),
+        "DONE".to_string(),
+    ];
+    for (i, label) in items.iter().enumerate() {
+        button(fb, px + 60, py + 44 + i as i32 * 30, pw - 120, 22, label, hover == i);
+    }
+    text(fb, px + 10, py + ph - 16, "Arrow keys change values", [90, 90, 90, 255], 1);
 }

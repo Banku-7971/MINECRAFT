@@ -110,6 +110,10 @@ impl Mob {
 pub struct Drop { pub item: u16, pub x: f32, pub y: f32, pub z: f32, pub vy: f32, pub age: f32 }
 
 impl Drop {
+    pub fn new(x: f32, y: f32, z: f32, item: u16) -> Self {
+        Drop { item, x, y, z, vy: 0.0, age: 0.0 }
+    }
+
     pub fn update(&mut self, world: &mut World, dt: f32) {
         self.age += dt;
         self.vy -= 18.0 * dt;
