@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>RustCraft — Minecraft in Rust</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <div id="frame-wrap">
+      <img id="screen" alt="RustCraft game view" src="/frame.png" draggable="false" />
+      <div id="start" class="overlay">
+        <div class="logo">RUST<span>CRAFT</span></div>
+        <p class="tagline">A voxel sandbox written in Rust</p>
+        <button id="play">Click to play</button>
+        <div class="controls">
+          <div><b>WASD</b> move &nbsp; <b>Mouse</b> look &nbsp; <b>Space</b> jump &nbsp; <b>Shift</b> sprint</div>
+          <div><b>Left click</b> break / attack &nbsp; <b>Right click</b> place block</div>
+          <div><b>F5</b> change camera &nbsp; <b>E</b> inventory &nbsp; <b>1–9 / wheel</b> hotbar</div>
+        </div>
+      </div>
+    </div>
+    <div id="side">
+      <h1>RustCraft</h1>
+      <p class="sub">Procedural Minecraft-like sandbox</p>
+      <h3>Controls</h3>
+      <ul>
+        <li><span>WASD</span> Move</li><li><span>Mouse</span> Look around</li>
+        <li><span>Space</span> Jump</li><li><span>Shift</span> Sprint</li>
+        <li><span>F5</span> First / third / distant camera</li>
+        <li><span>E</span> Open creative inventory</li>
+        <li><span>Left click</span> Break block / hit mob</li>
+        <li><span>Right click</span> Place block</li>
+        <li><span>1–9 / Wheel</span> Select hotbar slot</li>
+        <li><span>Esc</span> Close inventory</li>
+      </ul>
+      <h3>What's inside</h3>
+      <p>Biomes, caves, ores, villages, temples, shipwrecks, mineshafts, trees, day &amp; night, pixel textures, block shadows, ambient occlusion, a hotbar, creative items, and sheep, cows, pigs, chickens, zombies, skeletons, creepers, spiders and endermen.</p>
+      <div id="status"><span class="dot"></span> <span id="statustext">Loading world…</span></div>
+    </div>
+  </div>
+  <script src="/game.js"></script>
+</body>
+</html>
