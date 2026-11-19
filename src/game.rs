@@ -208,6 +208,13 @@ fn scene_dims(scale: i32) -> (usize, usize) {
     }
 }
 
+// The browser is a little slower than the native build, so start at a
+// quarter-resolution scene (240x135) and let players change it in Options.
+#[cfg(target_arch = "wasm32")]
+const DEFAULT_PIXEL_SCALE: i32 = 4;
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_PIXEL_SCALE: i32 = 2;
+
 impl<P: Platform> Game<P> {
     pub fn new(plat: P) -> Self {
         let mut world = World::new();
@@ -224,14 +231,18 @@ impl<P: Platform> Game<P> {
             let k = entities::random_kind(i * 17 + 3, 0.6);
             mobs.push(Mob::spawn(k, x, world.highest_ground(x as i32, z as i32) as f32, z));
         }
+        #[cfg(target_arch = "wasm32")]
+        let splash = "Now running in your browser!";
+        #[cfg(not(target_arch = "wasm32"))]
         let splash = "Now with crafting, furnaces, redstone & LAN!";
+        let (scene_w, scene_h) = scene_dims(DEFAULT_PIXEL_SCALE);
         Game {
             plat,
             audio: Audio::new(),
             net: Net::offline(),
             world,
             tex: Textures::new(),
-            scene: Framebuffer::new(render::RW, render::RH),
+            scene: Framebuffer::new(scene_w, scene_h),
             fb: Framebuffer::new(render::W, render::H),
             player,
             mobs,
@@ -282,7 +293,7 @@ impl<P: Platform> Game<P> {
             net_timer: 0.0,
             sound_on: true,
             music_on: true,
-            pixel_scale: 2,
+            pixel_scale: DEFAULT_PIXEL_SCALE,
             audio_timer: 0.0,
             quit: false,
             splash: splash.to_string(),
@@ -299,50 +310,60 @@ impl<P: Platform> Game<P> {
         self.plat.set_title("Minecraft");
         self.plat.set_sound(true);
         self.plat.set_music(true);
-        loop {
-            if self.plat.should_quit() || self.quit { break; }
-            let now = self.plat.now();
-            let dt = if self.last_frame == 0.0 { 0.016 } else { (now - self.last_frame).clamp(0.0005, 0.1) };
-            self.last_frame = now;
-            self.title_t += dt as f32;
-            self.tick = self.tick.wrapping_add(1);
+        while !self.plat.should_quit() && !self.quit {
+            let start = self.plat.now();
+            self.frame();
 
-            let events = self.plat.poll();
-            self.handle_events(events);
-            (self.mouse_x, self.mouse_y) = self.plat.mouse();
-            self.fb.cursor = (self.mouse_x, self.mouse_y);
-
-            match self.screen {
-                Screen::Title => {
-                    self.draw_title();
-                }
-                Screen::Multiplayer => self.draw_multiplayer(),
-                Screen::Options => self.draw_options(),
-                Screen::Playing => {
-                    self.update_playing(dt as f32);
-                    self.draw_playing();
-                }
-            }
-
-            self.frames += 1;
-            if now - self.fps_timer > 1.0 {
-                self.fps = self.frames;
-                self.frames = 0;
-                self.fps_timer = now;
-            }
-
-            let mut frame = std::mem::replace(&mut self.fb, Framebuffer::new(render::W, render::H));
-            frame.cursor = (self.mouse_x, self.mouse_y);
-            self.plat.present(&mut frame);
-            self.fb = frame;
-
-            // ~60 fps target
-            let spent = self.plat.now() - now;
+            // ~60 fps target on native platforms. The web driver uses
+            // requestAnimationFrame instead, so `frame` itself never sleeps.
+            let spent = self.plat.now() - start;
             if spent < 0.0166 {
                 self.plat.sleep_ms(((0.0166 - spent) * 1000.0) as u64);
             }
         }
         self.net.close();
+    }
+
+    /// Advance the simulation and render exactly one frame.
+    ///
+    /// Native builds pace this with `Platform::sleep_ms`; the WebAssembly
+    /// build calls it from JavaScript once per animation frame.
+    pub fn frame(&mut self) {
+        if self.plat.should_quit() || self.quit { return; }
+        let now = self.plat.now();
+        let dt = if self.last_frame == 0.0 { 0.016 } else { (now - self.last_frame).clamp(0.0005, 0.1) };
+        self.last_frame = now;
+        self.title_t += dt as f32;
+        self.tick = self.tick.wrapping_add(1);
+
+        let events = self.plat.poll();
+        self.handle_events(events);
+        (self.mouse_x, self.mouse_y) = self.plat.mouse();
+        self.fb.cursor = (self.mouse_x, self.mouse_y);
+
+        match self.screen {
+            Screen::Title => {
+                self.draw_title();
+            }
+            Screen::Multiplayer => self.draw_multiplayer(),
+            Screen::Options => self.draw_options(),
+            Screen::Playing => {
+                self.update_playing(dt as f32);
+                self.draw_playing();
+            }
+        }
+
+        self.frames += 1;
+        if now - self.fps_timer > 1.0 {
+            self.fps = self.frames;
+            self.frames = 0;
+            self.fps_timer = now;
+        }
+
+        let mut frame = std::mem::replace(&mut self.fb, Framebuffer::new(render::W, render::H));
+        frame.cursor = (self.mouse_x, self.mouse_y);
+        self.plat.present(&mut frame);
+        self.fb = frame;
     }
 
     // ------------------------------------------------------------------ input
