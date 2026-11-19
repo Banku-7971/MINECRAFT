@@ -162,7 +162,7 @@ fn main() {
     // Populate the neighbourhood so first frame is a real world, not an empty plain.
     for i in 0..26 {
         let a = i as f32 * 2.39996;
-        let d = 6.0 + (i % 9) as f32 * 2.4;
+        let d = 11.0 + (i % 9) as f32 * 2.6;
         let x = spawn_x + a.cos() * d;
         let z = spawn_z + a.sin() * d;
         let k = entities::random_kind(i * 17 + 3, 0.6);
