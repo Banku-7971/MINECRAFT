@@ -6,6 +6,8 @@ WebAssembly game that runs entirely in the browser.
 
 ## Play in the browser
 
+**Live build: <https://rustcraft-vert.vercel.app>**
+
 The browser build is a static site: Rust compiles to a single
 `web/rustcraft.wasm`, and `web/game.js` drives it with `requestAnimationFrame`.
 There is no game server, so it can be hosted for free on Vercel (or any static
@@ -104,9 +106,11 @@ Build the WebAssembly library and copy it into the static site:
 npm run build:wasm
 ```
 
-Deploy the contents of `web/` to any static host. On Vercel, import this
-repository and keep the default branch connected; `vercel.json` sets
-`web` as the output directory, so future commits deploy automatically. The
+Deploy the contents of `web/` to any static host. On Vercel, `vercel.json` sets
+`web` as the output directory. The included GitHub Actions workflow
+(`.github/workflows/deploy.yml`) deploys every push to `main` using the
+`VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` repository secrets, so
+you do not need to configure Vercel's Git integration manually. The
 `npm run build:wasm` step runs locally, not on Vercel.
 
 ## Notes & limitations
