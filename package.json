@@ -2,9 +2,11 @@
   "name": "rustcraft",
   "version": "2.0.0",
   "private": true,
-  "description": "A Minecraft-inspired voxel sandbox with a Rust engine and browser viewer",
+  "description": "A Minecraft-inspired voxel sandbox written in Rust, playable in the browser via WebAssembly",
   "scripts": {
     "build": "bash build.sh",
-    "start": "bash run.sh"
+    "start": "bash run.sh",
+    "build:wasm": "node scripts/build-web.mjs",
+    "start:web": "node web/server.js"
   }
 }

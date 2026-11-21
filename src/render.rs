@@ -7,7 +7,9 @@ use std::sync::OnceLock;
 
 pub const W: usize = 480;
 pub const H: usize = 270;
+#[allow(dead_code)]
 pub const RW: usize = 480;
+#[allow(dead_code)]
 pub const RH: usize = 270;
 const TEX: usize = 16;
 const NUM_BLOCK_TEX: usize = 144;
@@ -1048,40 +1050,67 @@ pub fn render_world(
     let cache = world.sync_cache(cam.x, cam.z);
     let underwater = cache.get(cam.x.floor() as i32, cam.y.floor() as i32, cam.z.floor() as i32) == world::WATER;
 
-    let nthreads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 16);
-    let rows_per = ((h + nthreads - 1) / nthreads).max(1);
-    let rgba_chunks = fb.rgba.chunks_mut(rows_per * w * 4);
-    let depth_chunks = fb.depth.chunks_mut(rows_per * w);
-
-    std::thread::scope(|s| {
-        for (band_idx, (rgba_band, depth_band)) in rgba_chunks.zip(depth_chunks).enumerate() {
-            let y_start = band_idx * rows_per;
-            let band_rows = depth_band.len() / w;
-            s.spawn(move || {
-                for local_y in 0..band_rows {
-                    let py = y_start + local_y;
-                    let ny = 1.0 - ((py as f32 + 0.5) / h as f32) * 2.0;
-                    for px in 0..w {
-                        let nx = ((px as f32 + 0.5) / w as f32 * 2.0 - 1.0) * aspect * scale;
-                        let mut dx = cam.fx + cam.rx * nx + cam.ux * ny * scale;
-                        let mut dy = cam.fy + cam.ry * nx + cam.uy * ny * scale;
-                        let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
-                        let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
-                        dx *= inv_len; dy *= inv_len; dz *= inv_len;
-                        let sky = sky_color(dim, dy, time, px as i32, py as i32);
-                        let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining);
-                        let pi = local_y * w + px;
-                        depth_band[pi] = dist;
-                        let di = pi * 4;
-                        rgba_band[di] = rgb[0];
-                        rgba_band[di + 1] = rgb[1];
-                        rgba_band[di + 2] = rgb[2];
-                        rgba_band[di + 3] = 255;
-                    }
-                }
-            });
+    #[cfg(target_arch = "wasm32")]
+    {
+        for py in 0..h {
+            let ny = 1.0 - ((py as f32 + 0.5) / h as f32) * 2.0;
+            for px in 0..w {
+                let nx = ((px as f32 + 0.5) / w as f32 * 2.0 - 1.0) * aspect * scale;
+                let mut dx = cam.fx + cam.rx * nx + cam.ux * ny * scale;
+                let mut dy = cam.fy + cam.ry * nx + cam.uy * ny * scale;
+                let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
+                let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
+                dx *= inv_len; dy *= inv_len; dz *= inv_len;
+                let sky = sky_color(dim, dy, time, px as i32, py as i32);
+                let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining);
+                let pi = py * w + px;
+                fb.depth[pi] = dist;
+                let di = pi * 4;
+                fb.rgba[di] = rgb[0];
+                fb.rgba[di + 1] = rgb[1];
+                fb.rgba[di + 2] = rgb[2];
+                fb.rgba[di + 3] = 255;
+            }
         }
-    });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let nthreads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 16);
+        let rows_per = ((h + nthreads - 1) / nthreads).max(1);
+        let rgba_chunks = fb.rgba.chunks_mut(rows_per * w * 4);
+        let depth_chunks = fb.depth.chunks_mut(rows_per * w);
+
+        std::thread::scope(|s| {
+            for (band_idx, (rgba_band, depth_band)) in rgba_chunks.zip(depth_chunks).enumerate() {
+                let y_start = band_idx * rows_per;
+                let band_rows = depth_band.len() / w;
+                s.spawn(move || {
+                    for local_y in 0..band_rows {
+                        let py = y_start + local_y;
+                        let ny = 1.0 - ((py as f32 + 0.5) / h as f32) * 2.0;
+                        for px in 0..w {
+                            let nx = ((px as f32 + 0.5) / w as f32 * 2.0 - 1.0) * aspect * scale;
+                            let mut dx = cam.fx + cam.rx * nx + cam.ux * ny * scale;
+                            let mut dy = cam.fy + cam.ry * nx + cam.uy * ny * scale;
+                            let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
+                            let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
+                            dx *= inv_len; dy *= inv_len; dz *= inv_len;
+                            let sky = sky_color(dim, dy, time, px as i32, py as i32);
+                            let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining);
+                            let pi = local_y * w + px;
+                            depth_band[pi] = dist;
+                            let di = pi * 4;
+                            rgba_band[di] = rgb[0];
+                            rgba_band[di + 1] = rgb[1];
+                            rgba_band[di + 2] = rgb[2];
+                            rgba_band[di + 3] = 255;
+                        }
+                    }
+                });
+            }
+        });
+    }
 }
 
 fn project(cam: &Cam, x: f32, y: f32, z: f32, fb: &Framebuffer) -> Option<(f32, f32, f32)> {

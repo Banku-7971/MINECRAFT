@@ -1,22 +1,66 @@
 # Minecraft (Rust Edition)
 
-A native Windows desktop voxel game written from scratch in **Rust** with zero external crate dependencies.
+A Minecraft-inspired voxel sandbox written from scratch in **Rust** with zero
+external crate dependencies. It builds both as a native Windows game and as a
+WebAssembly game that runs entirely in the browser.
 
-## Windows Executables
+## Play in the browser
 
-Built binaries in `runtime/`:
-- **`runtime/Minecraft-Setup.exe`** — Native Windows GUI installer. Installs `Minecraft.exe` to `%LOCALAPPDATA%\Minecraft\`, creates Desktop & Start Menu shortcuts, registers **Minecraft** in Windows Apps & Features (with uninstall support), and offers to launch immediately.
-- **`runtime/Minecraft.exe`** — Standalone portable Windows 64-bit GUI application (`x86_64-pc-windows-gnu`), zero external DLL dependencies.
+**Live build: <https://rustcraft-vert.vercel.app>**
+
+The browser build is a static site: Rust compiles to a single
+`web/rustcraft.wasm`, and `web/game.js` drives it with `requestAnimationFrame`.
+There is no game server, so it can be hosted for free on Vercel (or any static
+host) and every push to the connected Git branch deploys automatically.
+
+```bash
+npm run build:wasm   # requires Rust + wasm32-unknown-unknown
+npm run start:web    # http://localhost:3000
+```
+
+The compiled `web/rustcraft.wasm` is committed, so **Vercel does not need a Rust
+toolchain**. Its build step only verifies the artifact and serves `web/` as the
+output directory (see `vercel.json`).
+
+Browser limitations:
+
+- Singleplayer only. Browsers cannot open the raw TCP sockets used by the
+  desktop LAN mode.
+- Audio is currently desktop-only.
+- The software renderer defaults to a 160x90 scene upscaled to 480x270. Change
+  it in **Options → Pixel Scale** if you want more detail or more speed.
+
+## Native Windows game
+
+Builds are written to `runtime/`:
+
+- **`runtime/Minecraft.exe`** - standalone portable Windows 64-bit GUI
+  application (`x86_64-pc-windows-gnu`), zero external DLL dependencies.
+- **`runtime/Minecraft-Setup.exe`** - native Windows GUI installer. It installs
+  `Minecraft.exe` to `%LOCALAPPDATA%\Minecraft\`, creates Desktop and Start Menu
+  shortcuts, registers **Minecraft** in Windows Apps & Features (with uninstall
+  support), and offers to launch immediately.
 
 ## Features
 
-- **Main Menu & Screens**: Minecraft title screen with animated sky, clouds, hills, Creeper mascot, splash text, Singleplayer, Multiplayer, Options, and Pause menu.
-- **Crafting & Recipe Book**: 2×2 inventory crafting and 3×3 Crafting Table crafting with 47 shaped recipes plus an interactive in-game **Recipes** browser and `FILL` helper.
-- **Furnace**: Interactive furnace UI with fuel burn meter, smelting progress bar, and recipes for ores, cobble, sand, clay, logs, and food.
-- **Redstone**: Redstone Dust wire propagation, Redstone Torches, toggleable Levers, Pressure Plates, and glowing Redstone Lamps.
-- **Music & Sound Effects**: Pure-Rust procedural 22,050 Hz software mixer via Windows `winmm.dll` (`waveOut`) playing a calm looping soundtrack and 16 sound effects (clicks, footsteps, breaking, placing, crafting, furnace, hurt, mobs, explosions).
-- **LAN Multiplayer**: Built-in TCP multiplayer (`OPEN TO LAN` / `JOIN SERVER` on port `25565`) syncing player positions, block edits, and live `T` chat.
-- **World, Biomes & Mobs**: 11 biomes, caves, ore veins, trees, villages, desert temples, mineshafts, shipwrecks (structures), 100 blocks, 50 items, Minecraft Steve character, `F5` camera cycling (first-person / third-person / distant), and 10 mob types.
+- **Main Menu & Screens**: Minecraft title screen with animated sky, clouds,
+  hills, Creeper mascot, splash text, Singleplayer, Multiplayer, Options, and
+  Pause menu.
+- **Crafting & Recipe Book**: 2x2 inventory crafting and 3x3 Crafting Table
+  crafting with 47 shaped recipes plus an interactive in-game **Recipes**
+  browser and `FILL` helper.
+- **Furnace**: Interactive furnace UI with fuel burn meter, smelting progress
+  bar, and recipes for ores, cobble, sand, clay, logs, and food.
+- **Redstone**: Redstone Dust wire propagation, Redstone Torches, toggleable
+  Levers, Pressure Plates, and glowing Redstone Lamps.
+- **Music & Sound Effects** (desktop): Pure-Rust procedural 22,050 Hz software
+  mixer via Windows `winmm.dll` (`waveOut`) playing a calm looping soundtrack
+  and 16 sound effects.
+- **LAN Multiplayer** (desktop): Built-in TCP multiplayer (`OPEN TO LAN` /
+  `JOIN SERVER` on port `25565`).
+- **World, Biomes & Mobs**: 11 biomes, caves, ore veins, trees, villages, desert
+  temples, mineshafts, shipwrecks (structures), 100 blocks, 50 items, Steve,
+  `F5` camera cycling, and 10 mob types.
 
 ## Controls
 
@@ -29,12 +73,12 @@ Built binaries in `runtime/`:
 | `F5` | Switch camera angle (1st person / 3rd person / distant) |
 | `E` | Open inventory & recipes |
 | `T` | Open chat |
-| `1`–`9`, Mouse Wheel | Select hotbar slot |
+| `1`-`9`, Mouse Wheel | Select hotbar slot |
 | Left Click | Break block / attack mob / UI click |
 | Right Click | Place block / use Crafting Table, Furnace, Lever / eat food |
 | `Esc` | Pause menu / close UI |
 
-## Building from Source on Windows
+## Building the native game
 
 ```powershell
 cargo build --release --bin minecraft
@@ -48,9 +92,31 @@ rustc --edition 2021 -O src/main.rs -o runtime/Minecraft.exe
 rustc --edition 2021 -O src/installer.rs -o runtime/Minecraft-Setup.exe
 ```
 
-## Notes & Limitations
+## Building and deploying the browser game
 
-- Software CPU renderer (`480×270` scaled to the window via GDI `StretchDIBits`), typically ~15–30 FPS depending on scene complexity.
+Prerequisites:
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
+Build the WebAssembly library and copy it into the static site:
+
+```bash
+npm run build:wasm
+```
+
+Deploy the contents of `web/` to any static host. On Vercel, `vercel.json` sets
+`web` as the output directory. The included GitHub Actions workflow
+(`.github/workflows/deploy.yml`) deploys every push to `main` using the
+`VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` repository secrets, so
+you do not need to configure Vercel's Git integration manually. The
+`npm run build:wasm` step runs locally, not on Vercel.
+
+## Notes & limitations
+
+- Software CPU renderer, typically ~15-40 FPS depending on scene complexity.
 - Shipwrecks are static generated structures (not sailable ships).
 - Mob AI is simplified (wandering and melee/ranged chasing).
 - LAN multiplayer uses a lightweight TCP line protocol without authentication.
+- The browser build is singleplayer-only and has no audio yet.
