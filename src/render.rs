@@ -1,14 +1,20 @@
 // Software renderer: 16x16 face-aware pixel textures, voxel raycaster,
 // 3D rasterized box-model mobs/player, isometric 3D block icons, and Minecraft UI.
 use crate::entities::{self, FaceArt, MobKind, Part3D};
-use crate::world::{self, Biome, Hit, World};
+use crate::world::{self, Biome, RenderCache, World};
 use std::f32::consts::PI;
+use std::sync::OnceLock;
 
 pub const W: usize = 480;
 pub const H: usize = 270;
-pub const RW: usize = 320;
-pub const RH: usize = 180;
+pub const RW: usize = 480;
+pub const RH: usize = 270;
 const TEX: usize = 16;
+const NUM_BLOCK_TEX: usize = 96;
+const NUM_ITEM_TEX: usize = 90;
+
+static ATLAS_BYTES: &[u8] = include_bytes!("../assets/textures.bin");
+static ATLAS_CACHE: OnceLock<Textures> = OnceLock::new();
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum GameMode {
@@ -64,37 +70,42 @@ fn th(x: i32, y: i32, k: i32) -> u32 {
     h ^ (h >> 16)
 }
 
-fn clamp255(v: f32) -> u8 { v.clamp(0.0, 255.0) as u8 }
-
 pub struct Textures {
-    data: Vec<Vec<u8>>,
+    blocks: Vec<u8>,
+    items: Vec<u8>,
 }
 
 impl Textures {
+    pub fn atlas() -> &'static Textures {
+        ATLAS_CACHE.get_or_init(Self::from_embedded)
+    }
+
     pub fn new() -> Self {
-        let mut data = Vec::with_capacity(84);
-        for k in 0..84 {
-            data.push(Self::generate(k));
+        Self::from_embedded()
+    }
+
+    fn from_embedded() -> Self {
+        assert!(ATLAS_BYTES.len() >= 8 && &ATLAS_BYTES[0..4] == b"MCTX");
+        let nb = u16::from_le_bytes([ATLAS_BYTES[4], ATLAS_BYTES[5]]) as usize;
+        let ni = u16::from_le_bytes([ATLAS_BYTES[6], ATLAS_BYTES[7]]) as usize;
+        let b_end = 8 + nb * TEX * TEX * 4;
+        let i_end = b_end + ni * TEX * TEX * 4;
+        Self {
+            blocks: ATLAS_BYTES[8..b_end].to_vec(),
+            items: ATLAS_BYTES[b_end..i_end].to_vec(),
         }
-        Self { data }
     }
 
     pub fn face_kind(block: u16, _nx: i32, ny: i32, nz: i32) -> usize {
         match block {
             world::GRASS => {
-                if ny > 0 { 1 }
-                else if ny < 0 { 3 }
-                else { 2 }
+                if ny > 0 { 1 } else if ny < 0 { 3 } else { 2 }
             }
             world::PODZOL => {
-                if ny > 0 { 63 }
-                else if ny < 0 { 3 }
-                else { 2 }
+                if ny > 0 { 63 } else if ny < 0 { 3 } else { 2 }
             }
             world::MYCELIUM => {
-                if ny > 0 { 64 }
-                else if ny < 0 { 3 }
-                else { 2 }
+                if ny > 0 { 64 } else if ny < 0 { 3 } else { 2 }
             }
             world::LOG | world::JUNGLE_LOG => {
                 if ny != 0 { 6 } else { 5 }
@@ -106,14 +117,10 @@ impl Textures {
                 if ny != 0 { 6 } else { 47 }
             }
             world::CRAFTING => {
-                if ny > 0 { 41 }
-                else if ny < 0 { 12 }
-                else { 72 }
+                if ny > 0 { 41 } else if ny < 0 { 12 } else { 72 }
             }
             world::FURNACE => {
-                if ny != 0 { 73 }
-                else if nz > 0 { 42 }
-                else { 73 }
+                if ny != 0 { 89 } else if nz > 0 { 42 } else { 73 }
             }
             world::TNT => {
                 if ny != 0 { 74 } else { 70 }
@@ -122,7 +129,10 @@ impl Textures {
                 if ny != 0 { 12 } else { 55 }
             }
             world::PUMPKIN => {
-                if ny > 0 { 75 } else { 44 }
+                if ny > 0 { 75 } else if nz > 0 { 95 } else { 44 }
+            }
+            world::CACTUS => {
+                if ny != 0 { 88 } else { 24 }
             }
             world::CHEST => {
                 if nz > 0 { 40 } else { 76 }
@@ -149,7 +159,9 @@ impl Textures {
             world::ICE => 11,
             world::SPRUCE_LOG | world::DARK_LOG => 47,
             world::BIRCH_LOG => 71,
-            world::PLANKS | world::DOOR | world::LADDER | world::FENCE | world::SIGN => 12,
+            world::PLANKS | world::FENCE | world::SIGN => 12,
+            world::DOOR => 85,
+            world::LADDER => 91,
             world::GLASS => 13,
             world::TORCH | world::CAMPFIRE => 14,
             world::BEDROCK => 15,
@@ -160,7 +172,8 @@ impl Textures {
             world::REDSTONE_ORE => 20,
             world::EMERALD_ORE => 21,
             world::GRAVEL => 22,
-            world::CLAY | world::TERRACOTTA => 23,
+            world::CLAY => 23,
+            world::TERRACOTTA => 87,
             world::CACTUS => 24,
             world::TALL_GRASS | world::VINE => 25,
             world::FLOWER_RED | world::BROWN_MUSHROOM => 26,
@@ -172,7 +185,8 @@ impl Textures {
             world::WOOL_BLUE => 32,
             world::WOOL_GREEN => 33,
             world::WOOL_YELLOW => 34,
-            world::BLACKSTONE | world::OBSIDIAN => 35,
+            world::BLACKSTONE => 90,
+            world::OBSIDIAN => 35,
             world::MAGMA => 36,
             world::LAVA => 37,
             world::FARMLAND => 38,
@@ -180,11 +194,14 @@ impl Textures {
             world::CHEST => 40,
             world::CRAFTING => 41,
             world::FURNACE => 42,
-            world::PUMPKIN | world::CAKE => 44,
+            world::PUMPKIN => 44,
+            world::CAKE => 94,
             world::HAY => 45,
             world::TNT => 70,
-            world::GLOWSTONE | world::SEA_LANTERN | world::LANTERN => 46,
-            world::MOSSY => 4,
+            world::GLOWSTONE => 46,
+            world::LANTERN => 92,
+            world::SEA_LANTERN => 93,
+            world::MOSSY => 84,
             world::COBWEB => 48,
             world::IRON_BLOCK => 83,
             world::GOLD_BLOCK => 80,
@@ -217,319 +234,34 @@ impl Textures {
         }
     }
 
-    fn generate(k: usize) -> Vec<u8> {
-        let mut out = vec![0u8; TEX * TEX * 4];
-        for y in 0..TEX {
-            for x in 0..TEX {
-                let i = (y * TEX + x) * 4;
-                let r = th(x as i32, y as i32, k as i32) % 256;
-                let j = ((r as f32 / 255.0) - 0.5) * 20.0;
-                let (cr, cg, cb, a) = match k {
-                    0 => { // stone
-                        let streak = if (x + y * 3) % 11 == 0 { -10.0 } else { 0.0 };
-                        (126.0 + j + streak, 126.0 + j + streak, 128.0 + j + streak, 255.0)
-                    }
-                    1 => { // grass top
-                        let blade = if r % 5 == 0 { 14.0 } else if r % 7 == 0 { -14.0 } else { 0.0 };
-                        (88.0 + j * 0.7 + blade, 152.0 + j * 0.7 + blade, 54.0 + j * 0.5, 255.0)
-                    }
-                    2 => { // grass side
-                        let edge = 3 + (th(x as i32, 0, 202) % 3) as usize;
-                        if y < edge {
-                            let blade = if r % 4 == 0 { -12.0 } else { 0.0 };
-                            (84.0 + j * 0.5 + blade, 148.0 + j * 0.5 + blade, 52.0, 255.0)
-                        } else if y == edge && r % 3 == 0 {
-                            (74.0, 126.0, 46.0, 255.0)
-                        } else {
-                            let speck = if r % 11 == 0 { -18.0 } else if r % 13 == 0 { 15.0 } else { 0.0 };
-                            (130.0 + j + speck, 92.0 + j + speck, 62.0 + j * 0.8 + speck, 255.0)
-                        }
-                    }
-                    3 => { // dirt
-                        let speck = if r % 9 == 0 { -18.0 } else if r % 14 == 0 { 16.0 } else { 0.0 };
-                        (130.0 + j + speck, 92.0 + j + speck, 62.0 + j * 0.8 + speck, 255.0)
-                    }
-                    4 => { // cobblestone
-                        let mortar = x == 0 || y == 0 || y == 8 || (y < 8 && x == 8) || (y >= 8 && (x == 4 || x == 12));
-                        if mortar { (84.0, 84.0, 86.0, 255.0) }
-                        else {
-                            let tone = ((th(x as i32 / 4, y as i32 / 4, 4) % 3) as f32 - 1.0) * 14.0;
-                            (134.0 + j * 0.6 + tone, 134.0 + j * 0.6 + tone, 136.0 + j * 0.6 + tone, 255.0)
-                        }
-                    }
-                    5 | 47 => { // oak / spruce bark
-                        let base = if k == 47 { (74.0, 52.0, 34.0) } else { (106.0, 80.0, 50.0) };
-                        let groove = (x % 4 == 0) || (x % 4 == 2 && (y + x) % 5 == 0);
-                        let mul = if groove { 0.72 } else { 1.0 };
-                        (base.0 * mul + j * 0.5, base.1 * mul + j * 0.5, base.2 * mul + j * 0.4, 255.0)
-                    }
-                    6 => { // log rings top
-                        let d = ((x as i32 - 8).abs()).max((y as i32 - 8).abs());
-                        if d >= 7 { (104.0, 78.0, 48.0, 255.0) }
-                        else if d == 4 || d == 2 { (142.0, 108.0, 68.0, 255.0) }
-                        else { (182.0 + j * 0.4, 146.0 + j * 0.4, 96.0 + j * 0.3, 255.0) }
-                    }
-                    7 => { // oak leaves (dense opaque pixel foliage)
-                        if r % 5 == 0 { (36.0, 74.0, 28.0, 255.0) }
-                        else if r % 4 == 0 { (78.0, 142.0, 52.0, 255.0) }
-                        else { (56.0 + j * 0.5, 114.0 + j * 0.6, 40.0 + j * 0.4, 255.0) }
-                    }
-                    77 => { // spruce leaves
-                        if r % 5 == 0 { (26.0, 54.0, 32.0, 255.0) }
-                        else { (42.0 + j * 0.4, 86.0 + j * 0.5, 48.0 + j * 0.4, 255.0) }
-                    }
-                    78 => { // birch leaves
-                        if r % 5 == 0 { (54.0, 96.0, 42.0, 255.0) }
-                        else { (92.0 + j * 0.5, 152.0 + j * 0.5, 64.0 + j * 0.4, 255.0) }
-                    }
-                    8 => (224.0 + j * 0.4, 212.0 + j * 0.4, 162.0 + j * 0.4, 255.0), // sand
-                    79 => (196.0 + j * 0.4, 108.0 + j * 0.4, 52.0 + j * 0.3, 255.0), // red sand
-                    9 => { // water
-                        let crest = (x + y * 2) % 8 == 0;
-                        if crest { (78.0, 148.0, 224.0, 180.0) } else { (44.0, 108.0, 200.0, 168.0) }
-                    }
-                    10 => (240.0 + j * 0.25, 246.0 + j * 0.2, 250.0, 255.0), // snow
-                    11 => { // ice
-                        let shine = (x + y) == 6 || (x + y) == 7 || (x + y) == 22;
-                        if shine { (210.0, 236.0, 255.0, 210.0) } else { (145.0 + j * 0.4, 198.0 + j * 0.3, 240.0, 195.0) }
-                    }
-                    12 => { // planks
-                        let seam = y % 4 == 0 || ((y / 4) * 5 + x) % 16 == 0;
-                        if seam { (122.0, 88.0, 50.0, 255.0) }
-                        else { (178.0 + j * 0.4, 134.0 + j * 0.4, 82.0 + j * 0.3, 255.0) }
-                    }
-                    13 => { // glass
-                        let border = x == 0 || y == 0 || x == 15 || y == 15;
-                        let glint = (x + y == 5 && x < 5) || (x + y == 25 && x > 10);
-                        if border { (175.0, 215.0, 228.0, 220.0) }
-                        else if glint { (240.0, 250.0, 255.0, 190.0) }
-                        else { (205.0, 235.0, 245.0, 40.0) }
-                    }
-                    14 => { // torch
-                        if x >= 7 && x <= 8 && y >= 5 { (112.0, 76.0, 42.0, 255.0) }
-                        else if x >= 6 && x <= 9 && y >= 2 && y <= 5 { (252.0, 190.0, 55.0, 255.0) }
-                        else { (0.0, 0.0, 0.0, 0.0) }
-                    }
-                    15 => (42.0 + j * 0.8, 42.0 + j * 0.8, 44.0 + j * 0.8, 255.0), // bedrock
-                    16 | 17 | 18 | 19 | 20 | 21 => { // ores
-                        let speck = ((x == 4 || x == 5) && (y == 3 || y == 4))
-                            || ((x == 10 || x == 11) && (y == 6 || y == 7))
-                            || ((x == 5 || x == 6) && (y == 11 || y == 12))
-                            || ((x == 11 || x == 12) && (y == 10 || y == 11));
-                        if speck {
-                            match k {
-                                16 => (34.0, 34.0, 38.0, 255.0),
-                                17 => (214.0, 178.0, 142.0, 255.0),
-                                18 => (248.0, 206.0, 56.0, 255.0),
-                                19 => (76.0, 226.0, 232.0, 255.0),
-                                20 => (224.0, 38.0, 38.0, 255.0),
-                                _ => (52.0, 212.0, 102.0, 255.0),
-                            }
-                        } else {
-                            (126.0 + j, 126.0 + j, 128.0 + j, 255.0)
-                        }
-                    }
-                    22 => (150.0 + j, 146.0 + j, 142.0 + j, 255.0), // gravel
-                    23 => (162.0 + j * 0.5, 166.0 + j * 0.5, 174.0 + j * 0.5, 255.0), // clay
-                    24 => { // cactus
-                        if x % 4 == 0 && y % 3 == 0 { (36.0, 82.0, 30.0, 255.0) }
-                        else { (64.0 + j * 0.5, 134.0 + j * 0.5, 50.0 + j * 0.4, 255.0) }
-                    }
-                    25 => { // tall grass
-                        if (x == 3 || x == 7 || x == 11 || x == 14) && y >= 5 { (72.0, 138.0, 48.0, 255.0) }
-                        else if (x == 4 || x == 8 || x == 12) && y >= 3 { (92.0, 158.0, 60.0, 255.0) }
-                        else { (0.0, 0.0, 0.0, 0.0) }
-                    }
-                    26 => { // red flower
-                        if x >= 6 && x <= 9 && y >= 4 && y <= 8 { (222.0, 48.0, 50.0, 255.0) }
-                        else if x >= 7 && x <= 8 && y >= 9 { (64.0, 132.0, 48.0, 255.0) }
-                        else { (0.0, 0.0, 0.0, 0.0) }
-                    }
-                    27 => { // yellow flower
-                        if x >= 6 && x <= 9 && y >= 4 && y <= 8 { (242.0, 212.0, 50.0, 255.0) }
-                        else if x >= 7 && x <= 8 && y >= 9 { (64.0, 132.0, 48.0, 255.0) }
-                        else { (0.0, 0.0, 0.0, 0.0) }
-                    }
-                    28 => { // brick
-                        let mortar = y % 4 == 0 || ((y / 4) % 2 == 0 && x % 8 == 0) || ((y / 4) % 2 == 1 && (x + 4) % 8 == 0);
-                        if mortar { (182.0, 176.0, 168.0, 255.0) } else { (152.0 + j * 0.6, 72.0 + j * 0.4, 58.0 + j * 0.4, 255.0) }
-                    }
-                    29 => { // stone bricks
-                        let mortar = y % 8 == 0 || ((y / 8) == 0 && x % 8 == 0) || ((y / 8) == 1 && (x + 4) % 8 == 0);
-                        if mortar { (84.0, 84.0, 88.0, 255.0) } else { (124.0 + j * 0.5, 124.0 + j * 0.5, 128.0 + j * 0.5, 255.0) }
-                    }
-                    30 => (236.0 + j * 0.3, 236.0 + j * 0.3, 232.0 + j * 0.3, 255.0),
-                    31 => (182.0 + j * 0.4, 48.0 + j * 0.3, 46.0 + j * 0.3, 255.0),
-                    32 => (52.0 + j * 0.3, 86.0 + j * 0.3, 182.0 + j * 0.3, 255.0),
-                    33 => (54.0 + j * 0.3, 128.0 + j * 0.4, 54.0 + j * 0.3, 255.0),
-                    34 => (224.0 + j * 0.3, 192.0 + j * 0.3, 52.0 + j * 0.3, 255.0),
-                    35 => (38.0 + j * 0.4, 30.0 + j * 0.4, 48.0 + j * 0.5, 255.0),
-                    36 => { let hot = r % 4 == 0; if hot { (235.0, 110.0, 25.0, 255.0) } else { (110.0, 38.0, 28.0, 255.0) } }
-                    37 => { let bright = (x + y) % 5 == 0; if bright { (252.0, 180.0, 42.0, 255.0) } else { (220.0, 88.0, 20.0, 255.0) } }
-                    38 => { if y % 4 == 0 { (72.0, 48.0, 30.0, 255.0) } else { (104.0 + j * 0.4, 72.0 + j * 0.4, 46.0 + j * 0.4, 255.0) } }
-                    39 => { if x % 4 == 1 && y >= 3 { (210.0, 182.0, 68.0, 255.0) } else { (0.0, 0.0, 0.0, 0.0) } }
-                    40 => { // chest front
-                        let border = x == 0 || y == 0 || x == 15 || y == 15 || y == 5;
-                        if x >= 7 && x <= 8 && y >= 4 && y <= 7 { (222.0, 195.0, 95.0, 255.0) }
-                        else if border { (78.0, 52.0, 28.0, 255.0) }
-                        else { (152.0 + j * 0.4, 104.0 + j * 0.4, 54.0 + j * 0.3, 255.0) }
-                    }
-                    41 => { // crafting table top
-                        let border = x == 0 || y == 0 || x == 15 || y == 15;
-                        let grid = x % 5 == 0 || y % 5 == 0;
-                        if border { (94.0, 62.0, 34.0, 255.0) }
-                        else if grid { (68.0, 44.0, 24.0, 255.0) }
-                        else { (176.0 + j * 0.3, 128.0 + j * 0.3, 76.0 + j * 0.3, 255.0) }
-                    }
-                    42 => { // furnace front
-                        let rim = x <= 1 || y <= 1 || x >= 14 || y >= 14;
-                        let top_mouth = x >= 4 && x <= 11 && y >= 3 && y <= 6;
-                        let firebox = x >= 5 && x <= 10 && y >= 10 && y <= 13;
-                        if rim { (110.0, 110.0, 114.0, 255.0) }
-                        else if top_mouth || firebox { (38.0, 38.0, 42.0, 255.0) }
-                        else { (134.0 + j * 0.4, 134.0 + j * 0.4, 136.0 + j * 0.4, 255.0) }
-                    }
-                    43 => { // sandstone
-                        let band = y == 2 || y == 6 || y == 11;
-                        if band { (198.0, 180.0, 132.0, 255.0) } else { (220.0 + j * 0.3, 202.0 + j * 0.3, 150.0 + j * 0.3, 255.0) }
-                    }
-                    44 => { // pumpkin side
-                        if x % 4 == 0 { (180.0, 92.0, 24.0, 255.0) } else { (222.0 + j * 0.4, 124.0 + j * 0.4, 34.0, 255.0) }
-                    }
-                    45 => { // hay
-                        if y == 5 || y == 11 { (182.0, 48.0, 36.0, 255.0) }
-                        else { (212.0 + j * 0.4, 182.0 + j * 0.4, 72.0 + j * 0.3, 255.0) }
-                    }
-                    46 => { // glowstone
-                        if x % 5 == 0 || y % 5 == 0 { (172.0, 124.0, 56.0, 255.0) } else { (248.0, 224.0, 146.0, 255.0) }
-                    }
-                    48 => { if (x + y) % 4 == 0 || (x as i32 - y as i32).abs() % 5 == 0 { (225.0, 225.0, 225.0, 230.0) } else { (0.0, 0.0, 0.0, 0.0) } }
-                    49 => (235.0 + j * 0.2, 235.0 + j * 0.2, 235.0 + j * 0.2, 255.0),
-                    50 => (54.0 + j * 0.3, 92.0 + j * 0.3, 184.0 + j * 0.3, 255.0),
-                    51 => (188.0 + j * 0.3, 48.0 + j * 0.2, 48.0 + j * 0.2, 255.0),
-                    52 => (52.0 + j * 0.3, 134.0 + j * 0.3, 58.0 + j * 0.3, 255.0),
-                    53 => (224.0 + j * 0.2, 192.0 + j * 0.3, 48.0 + j * 0.2, 255.0),
-                    54 => (38.0 + j * 0.3, 38.0 + j * 0.3, 42.0 + j * 0.3, 255.0),
-                    55 => { // bookshelf
-                        if y < 2 || y > 13 || y == 7 || y == 8 { (168.0, 126.0, 78.0, 255.0) }
-                        else if x == 0 || x == 15 { (134.0, 96.0, 56.0, 255.0) }
-                        else {
-                            match (x / 2 + y / 8) % 4 {
-                                0 => (178.0, 52.0, 48.0, 255.0),
-                                1 => (58.0, 132.0, 62.0, 255.0),
-                                2 => (62.0, 88.0, 174.0, 255.0),
-                                _ => (212.0, 174.0, 68.0, 255.0),
-                            }
-                        }
-                    }
-                    56 => { if x == 3 || x == 12 { (170.0, 172.0, 178.0, 255.0) } else if y % 4 == 1 { (124.0, 88.0, 52.0, 255.0) } else { (0.0, 0.0, 0.0, 0.0) } }
-                    57 => (74.0 + j * 0.3, 74.0 + j * 0.3, 80.0 + j * 0.3, 255.0),
-                    58 => (82.0 + j * 0.3, 46.0 + j * 0.3, 128.0 + j * 0.3, 255.0),
-                    59 => (218.0 + j * 0.4, 218.0 + j * 0.4, 188.0 + j * 0.4, 255.0),
-                    60 => (108.0 + j * 0.5, 42.0 + j * 0.4, 42.0 + j * 0.4, 255.0),
-                    61 => (92.0 + j * 0.4, 74.0 + j * 0.4, 58.0 + j * 0.4, 255.0),
-                    62 => (234.0 + j * 0.2, 232.0 + j * 0.2, 224.0 + j * 0.2, 255.0),
-                    63 => (98.0 + j * 0.4, 70.0 + j * 0.3, 44.0 + j * 0.3, 255.0),
-                    64 => (124.0 + j * 0.4, 108.0 + j * 0.4, 128.0 + j * 0.4, 255.0),
-                    65 => {
-                        let center = (x as i32 - 8).abs() <= 1 || (y as i32 - 8).abs() <= 1;
-                        if center && r % 3 != 0 { (212.0, 24.0, 24.0, 255.0) }
-                        else { (118.0 + j * 0.3, 118.0 + j * 0.3, 120.0 + j * 0.3, 255.0) }
-                    }
-                    66 => {
-                        if y <= 5 && x >= 6 && x <= 9 { (252.0, 46.0, 34.0, 255.0) }
-                        else if x >= 7 && x <= 8 && y >= 5 { (112.0, 76.0, 42.0, 255.0) }
-                        else { (0.0, 0.0, 0.0, 0.0) }
-                    }
-                    67 => {
-                        if y >= 10 && x >= 4 && x <= 11 { (128.0, 128.0, 130.0, 255.0) }
-                        else if x >= 7 && x <= 8 && y >= 4 { (122.0, 86.0, 52.0, 255.0) }
-                        else { (0.0, 0.0, 0.0, 0.0) }
-                    }
-                    68 => {
-                        let frame = x == 0 || y == 0 || x == 15 || y == 15 || x == 8 || y == 8;
-                        if frame { (110.0, 78.0, 42.0, 255.0) } else { (208.0 + j * 0.3, 166.0 + j * 0.3, 88.0, 255.0) }
-                    }
-                    69 => { if x >= 2 && x <= 13 && y >= 2 && y <= 13 { (148.0, 148.0, 152.0, 255.0) } else { (0.0, 0.0, 0.0, 0.0) } }
-                    70 => { // TNT side
-                        if y >= 5 && y <= 10 {
-                            let letter = ((x >= 2 && x <= 4 && y == 6) || (x == 3 && y >= 6 && y <= 9))
-                                || ((x == 6 || x == 9) && y >= 6 && y <= 9) || (x == 7 && y == 7) || (x == 8 && y == 8)
-                                || ((x >= 11 && x <= 13 && y == 6) || (x == 12 && y >= 6 && y <= 9));
-                            if letter { (24.0, 24.0, 24.0, 255.0) } else { (240.0, 238.0, 232.0, 255.0) }
-                        } else {
-                            let plank = if x % 3 == 0 { -22.0 } else { 0.0 };
-                            (196.0 + plank + j * 0.3, 46.0 + j * 0.2, 38.0 + j * 0.2, 255.0)
-                        }
-                    }
-                    71 => { // birch bark
-                        let mark = (y % 5 == 1 && (x + y * 3) % 7 < 3) || (y % 4 == 3 && x % 6 == 2);
-                        if mark { (54.0, 52.0, 48.0, 255.0) } else { (228.0 + j * 0.25, 224.0 + j * 0.25, 214.0 + j * 0.25, 255.0) }
-                    }
-                    72 => { // crafting table side
-                        let border = x == 0 || y == 0 || x == 15 || y == 15;
-                        let tool = (x >= 4 && x <= 6 && y >= 4 && y <= 11) || (x >= 10 && x <= 12 && y >= 4 && y <= 9);
-                        if border { (104.0, 72.0, 42.0, 255.0) }
-                        else if tool { (132.0, 134.0, 140.0, 255.0) }
-                        else { (168.0 + j * 0.3, 122.0 + j * 0.3, 74.0 + j * 0.3, 255.0) }
-                    }
-                    73 => { // furnace side/top
-                        let border = x == 0 || y == 0 || x == 15 || y == 15;
-                        if border { (102.0, 102.0, 106.0, 255.0) }
-                        else { (134.0 + j * 0.4, 134.0 + j * 0.4, 136.0 + j * 0.4, 255.0) }
-                    }
-                    74 => { // TNT top
-                        let inner = x >= 4 && x <= 11 && y >= 4 && y <= 11;
-                        if inner { (62.0 + j * 0.4, 58.0 + j * 0.4, 56.0 + j * 0.4, 255.0) }
-                        else { (192.0 + j * 0.3, 52.0 + j * 0.2, 44.0 + j * 0.2, 255.0) }
-                    }
-                    75 => { // pumpkin top
-                        if x >= 7 && x <= 8 && y >= 7 && y <= 8 { (96.0, 132.0, 52.0, 255.0) }
-                        else { (222.0 + j * 0.3, 124.0 + j * 0.3, 34.0, 255.0) }
-                    }
-                    76 => { // chest side
-                        let border = x == 0 || y == 0 || x == 15 || y == 15 || y == 5;
-                        if border { (78.0, 52.0, 28.0, 255.0) }
-                        else { (152.0 + j * 0.4, 104.0 + j * 0.4, 54.0 + j * 0.3, 255.0) }
-                    }
-                    80 | 81 | 82 | 83 => { // gold, diamond, emerald, iron blocks
-                        let rim = x == 0 || y == 0 || x == 15 || y == 15;
-                        let shine = (x == 2 && y >= 2 && y <= 8) || (y == 2 && x >= 2 && x <= 8);
-                        let base = match k {
-                            80 => (246.0, 206.0, 54.0),
-                            81 => (82.0, 224.0, 232.0),
-                            82 => (62.0, 206.0, 102.0),
-                            _ => (220.0, 222.0, 226.0),
-                        };
-                        let m = if rim { 0.78 } else if shine { 1.12 } else { 1.0 };
-                        (base.0 * m + j * 0.2, base.1 * m + j * 0.2, base.2 * m + j * 0.2, 255.0)
-                    }
-                    _ => (130.0, 130.0, 130.0, 255.0),
-                };
-                out[i] = clamp255(cr);
-                out[i + 1] = clamp255(cg);
-                out[i + 2] = clamp255(cb);
-                out[i + 3] = clamp255(a);
-            }
-        }
-        out
-    }
-
+    #[inline(always)]
     pub fn sample_kind(&self, k: usize, u: f32, v: f32, tick: u32, animated: bool) -> [u8; 4] {
-        let x = ((u.fract().abs() * TEX as f32) as usize) % TEX;
-        let mut y = ((v.fract().abs() * TEX as f32) as usize) % TEX;
+        let kk = k % NUM_BLOCK_TEX;
+        let x = ((u.rem_euclid(1.0) * TEX as f32) as usize) & 15;
+        let mut y = ((v.rem_euclid(1.0) * TEX as f32) as usize) & 15;
         if animated {
-            y = (y + (tick / 6) as usize) % TEX;
+            y = (y + (tick / 6) as usize) & 15;
         }
-        let d = &self.data[k];
-        let i = (y * TEX + x) * 4;
-        [d[i], d[i + 1], d[i + 2], d[i + 3]]
+        let i = (kk * 256 + y * 16 + x) * 4;
+        [self.blocks[i], self.blocks[i + 1], self.blocks[i + 2], self.blocks[i + 3]]
     }
 
+    #[inline(always)]
     pub fn sample_face(&self, block: u16, nx: i32, ny: i32, nz: i32, u: f32, v: f32, tick: u32) -> [u8; 4] {
-        let k = Self::face_kind(block, nx, ny, nz);
+        let k = if block == world::DOOR && ny == 0 {
+            86 // door lower/panel look on side
+        } else {
+            Self::face_kind(block, nx, ny, nz)
+        };
         let animated = block == world::WATER || block == world::LAVA;
         self.sample_kind(k, u, v, tick, animated)
+    }
+
+    #[inline(always)]
+    pub fn sample_item(&self, idx: usize, x: u32, y: u32) -> [u8; 4] {
+        if idx >= NUM_ITEM_TEX { return [0, 0, 0, 0]; }
+        let i = (idx * 256 + (y as usize & 15) * 16 + (x as usize & 15)) * 4;
+        [self.items[i], self.items[i + 1], self.items[i + 2], self.items[i + 3]]
     }
 }
 
@@ -594,6 +326,7 @@ fn glyph(c: char) -> [u8; 5] {
         '?' => [14, 17, 2, 0, 4], '_' => [0, 0, 0, 0, 31],
         '(' => [2, 4, 4, 4, 2], ')' => [8, 4, 4, 4, 8], ',' => [0, 0, 0, 4, 8],
         '\'' => [4, 4, 0, 0, 0], '=' => [0, 31, 0, 31, 0], '&' => [12, 18, 12, 19, 13],
+        '^' => [4, 10, 17, 0, 0],
         _ => [0, 0, 0, 0, 0],
     }
 }
@@ -623,161 +356,419 @@ fn day_factor(time: f32) -> f32 {
     (sun * 2.2 + 0.35).clamp(0.0, 1.0)
 }
 
-fn sky_color(dir_y: f32, time: f32, x: i32, y: i32) -> [u8; 3] {
+fn sky_color(dir_y: f32, time: f32, x: i32, y: i32) -> [f32; 3] {
     let sun = (time * 2.0 * PI).sin();
     let day = day_factor(time);
-    let horizon = 0.22 + sun.abs() * 0.1;
+    let horizon = 0.22 + sun.abs() * 0.10;
     let t = ((dir_y * 0.5 + 0.5) * (1.0 - horizon) + horizon).clamp(0.0, 1.0);
     let night_top = [8.0, 14.0, 36.0];
     let night_bot = [22.0, 26.0, 56.0];
-    let day_top = [78.0, 152.0, 238.0];
-    let day_bot = [172.0, 212.0, 248.0];
-    let dusk = [235.0, 135.0, 90.0];
-    let dusk_amt = (1.0 - sun.abs() * 3.0).clamp(0.0, 1.0) * 0.75;
+    let day_top = [72.0, 148.0, 242.0];
+    let day_bot = [178.0, 218.0, 252.0];
+    let dusk = [240.0, 138.0, 88.0];
+    let dusk_amt = (1.0 - sun.abs() * 3.0).clamp(0.0, 1.0) * 0.78;
     let mut c = [0.0; 3];
     for i in 0..3 {
         let mut v = night_bot[i] + (night_top[i] - night_bot[i]) * t;
         let dv = day_bot[i] + (day_top[i] - day_bot[i]) * t;
         v = v + (dv - v) * day;
-        v = v * (1.0 - dusk_amt) + dusk[i] * dusk_amt * (1.0 - dir_y.abs().min(1.0)) * 0.7;
+        v = v * (1.0 - dusk_amt) + dusk[i] * dusk_amt * (1.0 - dir_y.abs().min(1.0)) * 0.72;
         c[i] = v;
     }
     if day < 0.2 && dir_y > 0.02 && th(x, y, 91) % 900 == 0 {
         c = [235.0, 235.0, 220.0];
     }
-    [c[0] as u8, c[1] as u8, c[2] as u8]
+    c
 }
 
-fn cloud_color(cam: &Cam, dx: f32, dy: f32, dz: f32, time: f32, day: f32) -> Option<[u8; 3]> {
+#[inline]
+fn cloud_color(cam: &Cam, dx: f32, dy: f32, dz: f32, time: f32, day: f32) -> Option<[f32; 3]> {
     if dy <= 0.03 { return None; }
     let t = (108.0 - cam.y) / dy;
     if t <= 0.0 || t > 260.0 { return None; }
-    let wx = ((cam.x + dx * t) / 14.0 + time * 12.0).floor() as i32;
+    let wx = ((cam.x + dx * t) / 14.0 + time * 14.0).floor() as i32;
     let wz = ((cam.z + dz * t) / 14.0).floor() as i32;
-    let h = th(wx / 2, wz / 2, 777) % 10;
+    let h = th(wx / 2, wz / 2, 777) % 11;
     if h < 3 {
-        let v = 195.0 + day * 55.0;
-        Some([v as u8, v as u8, (v + 5.0).min(255.0) as u8])
+        let edge = (wx & 1) == 0 && (wz & 1) == 0;
+        let v = if edge { 188.0 + day * 52.0 } else { 205.0 + day * 50.0 };
+        Some([v, v, (v + 6.0).min(255.0)])
     } else { None }
 }
 
-fn face_shade(nx: i32, ny: i32, nz: i32, day: f32) -> f32 {
-    let base = if ny > 0 { 1.0 } else if ny < 0 { 0.48 } else if nz != 0 { 0.80 } else { 0.65 };
+#[inline]
+fn face_light(nx: i32, ny: i32, nz: i32, day: f32) -> [f32; 3] {
+    let base = if ny > 0 { 1.00 } else if ny < 0 { 0.46 } else if nz != 0 { 0.80 } else { 0.66 };
     let sun = 0.34 + day * 0.66;
-    let direct = if ny > 0 { day * 0.14 } else if nx > 0 { day * 0.04 } else { 0.0 };
-    (base * sun + direct).min(1.12)
+    let warm = if ny > 0 { day * 0.14 } else if nx > 0 { day * 0.05 } else { 0.0 };
+    let l = (base * sun + warm).min(1.12);
+    if ny > 0 || nx > 0 {
+        [l * (1.0 + day * 0.03), l * (1.0 + day * 0.01), l * (1.0 - day * 0.02)]
+    } else {
+        [l * (0.94 + (1.0 - day) * 0.04), l * 0.97, l * (1.02 + (1.0 - day) * 0.06)]
+    }
 }
 
-fn ao(world: &mut World, h: &Hit) -> f32 {
+#[inline]
+fn ao_cache(cache: &RenderCache, bx: i32, by: i32, bz: i32, nx: i32, ny: i32, nz: i32) -> f32 {
     let mut occ = 0;
-    let (ax, ay, az) = if h.ny != 0 { (1, 0, 0) } else if h.nx != 0 { (0, 1, 0) } else { (1, 0, 0) };
-    let (bx, by, bz) = if h.ny != 0 { (0, 0, 1) } else if h.nx != 0 { (0, 0, 1) } else { (0, 1, 0) };
+    let (ax, ay, az) = if ny != 0 { (1, 0, 0) } else if nx != 0 { (0, 1, 0) } else { (1, 0, 0) };
+    let (cx, cy, cz) = if ny != 0 { (0, 0, 1) } else if nx != 0 { (0, 0, 1) } else { (0, 1, 0) };
+    let sx = bx + nx; let sy = by + ny; let sz = bz + nz;
     for s in [-1, 1] {
-        if world::is_opaque(world.get(h.x + h.nx + ax * s, h.y + h.ny + ay * s, h.z + h.nz + az * s)) { occ += 1; }
-        if world::is_opaque(world.get(h.x + h.nx + bx * s, h.y + h.ny + by * s, h.z + h.nz + bz * s)) { occ += 1; }
+        if world::is_opaque(cache.get(sx + ax * s, sy + ay * s, sz + az * s)) { occ += 1; }
+        if world::is_opaque(cache.get(sx + cx * s, sy + cy * s, sz + cz * s)) { occ += 1; }
     }
-    1.0 - (occ as f32) * 0.075
+    1.0 - (occ as f32) * 0.07
+}
+
+#[inline]
+fn is_crossed_plant(b: u16) -> bool {
+    matches!(
+        b,
+        world::TALL_GRASS
+            | world::FLOWER_RED
+            | world::FLOWER_YELLOW
+            | world::WHEAT
+            | world::BROWN_MUSHROOM
+            | world::RED_MUSHROOM
+            | world::TORCH
+            | world::REDSTONE_TORCH
+    )
+}
+
+#[inline]
+fn is_floor_block(b: u16) -> bool {
+    matches!(b, world::RAIL | world::REDSTONE_DUST | world::PRESSURE_PLATE)
+}
+
+#[inline]
+fn is_cutout_cube(b: u16) -> bool {
+    matches!(
+        b,
+        world::GLASS | world::ICE | world::COBWEB | world::DOOR | world::LADDER | world::VINE
+            | world::LEVER | world::LANTERN | world::CAMPFIRE
+    )
+}
+
+#[inline]
+fn shade_voxel(
+    tex: &Textures,
+    cache: &RenderCache,
+    b: u16,
+    bx: i32, by: i32, bz: i32,
+    nx: i32, ny: i32, nz: i32,
+    u: f32, v: f32,
+    day: f32,
+    tick: u32,
+    apply_ao: bool,
+) -> ([f32; 3], u8) {
+    let t = tex.sample_face(b, nx, ny, nz, u, v, tick);
+    if t[3] == 0 {
+        return ([0.0, 0.0, 0.0], 0);
+    }
+    let fl = face_light(nx, ny, nz, day);
+    let ao_v = if apply_ao { ao_cache(cache, bx, by, bz, nx, ny, nz) } else { 0.94 };
+    let emit = world::emits_light(b);
+    let mut lr = fl[0] * ao_v;
+    let mut lg = fl[1] * ao_v;
+    let mut lb = fl[2] * ao_v;
+    if emit > 0 {
+        let e = 0.98 + emit as f32 * 0.025;
+        lr = lr.max(e); lg = lg.max(e * 0.97); lb = lb.max(e * 0.90);
+    }
+    if b == world::LAMP && cache.is_lit(bx, by, bz) {
+        lr = 1.48; lg = 1.38; lb = 1.15;
+    }
+    ([t[0] as f32 * lr, t[1] as f32 * lg, t[2] as f32 * lb], t[3])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn trace_ray(
+    tex: &Textures,
+    cache: &RenderCache,
+    cam: &Cam,
+    dx: f32, dy: f32, dz: f32,
+    sky: [f32; 3],
+    day: f32,
+    tick: u32,
+    time: f32,
+    underwater: bool,
+) -> ([u8; 3], f32) {
+    let ox = cam.x; let oy = cam.y; let oz = cam.z;
+    let mut x = ox.floor() as i32;
+    let mut y = oy.floor() as i32;
+    let mut z = oz.floor() as i32;
+    let step_x = if dx > 0.0 { 1 } else if dx < 0.0 { -1 } else { 0 };
+    let step_y = if dy > 0.0 { 1 } else if dy < 0.0 { -1 } else { 0 };
+    let step_z = if dz > 0.0 { 1 } else if dz < 0.0 { -1 } else { 0 };
+    let invx = if dx == 0.0 { f32::INFINITY } else { 1.0 / dx };
+    let invy = if dy == 0.0 { f32::INFINITY } else { 1.0 / dy };
+    let invz = if dz == 0.0 { f32::INFINITY } else { 1.0 / dz };
+    let mut tmx = if step_x > 0 { ((x + 1) as f32 - ox) * invx } else if step_x < 0 { (ox - x as f32) * -invx } else { f32::INFINITY };
+    let mut tmy = if step_y > 0 { ((y + 1) as f32 - oy) * invy } else if step_y < 0 { (oy - y as f32) * -invy } else { f32::INFINITY };
+    let mut tmz = if step_z > 0 { ((z + 1) as f32 - oz) * invz } else if step_z < 0 { (oz - z as f32) * -invz } else { f32::INFINITY };
+    let dtx = invx.abs();
+    let dty = invy.abs();
+    let dtz = invz.abs();
+    let mut nx = 0; let mut ny = 0; let mut nz = 0;
+    let mut t = 0.0f32;
+
+    let mut has_trans = false;
+    let mut trans_rgb = [0.0f32; 3];
+    let mut trans_alpha = 0.0f32;
+    let mut trans_dist = f32::INFINITY;
+
+    let mut hit_rgb = sky;
+    let mut hit_dist = f32::INFINITY;
+    let max_dist = 76.0f32;
+
+    // Precompute cloud color for sky fallback
+    if let Some(cc) = cloud_color(cam, dx, dy, dz, time, day) {
+        let fade = 0.50 + day * 0.42;
+        hit_rgb = [
+            hit_rgb[0] * (1.0 - fade) + cc[0] * fade,
+            hit_rgb[1] * (1.0 - fade) + cc[1] * fade,
+            hit_rgb[2] * (1.0 - fade) + cc[2] * fade,
+        ];
+    }
+
+    for _ in 0..220 {
+        let t_next = tmx.min(tmy).min(tmz);
+        if y >= 0 && y < world::WORLD_H as i32 {
+            let b = cache.get(x, y, z);
+            if b != world::AIR {
+                if is_crossed_plant(b) {
+                    let mut cands = [(f32::INFINITY, 0.0f32, 0.0f32); 2];
+                    let mut nc = 0usize;
+                    let denom1 = dx - dz;
+                    if denom1.abs() > 1e-5 {
+                        let tp = ((x as f32 - ox) - (z as f32 - oz)) / denom1;
+                        if tp > t.max(0.001) && tp < t_next {
+                            let px = ox + dx * tp - x as f32;
+                            let py = oy + dy * tp - y as f32;
+                            if (0.0..=1.0).contains(&px) && (0.0..=1.0).contains(&py) {
+                                cands[nc] = (tp, px, 1.0 - py);
+                                nc += 1;
+                            }
+                        }
+                    }
+                    let denom2 = dx + dz;
+                    if denom2.abs() > 1e-5 {
+                        let tp = (1.0 - (ox - x as f32) - (oz - z as f32)) / denom2;
+                        if tp > t.max(0.001) && tp < t_next {
+                            let px = ox + dx * tp - x as f32;
+                            let py = oy + dy * tp - y as f32;
+                            if (0.0..=1.0).contains(&px) && (0.0..=1.0).contains(&py) {
+                                cands[nc] = (tp, px, 1.0 - py);
+                                nc += 1;
+                            }
+                        }
+                    }
+                    if nc == 2 && cands[1].0 < cands[0].0 { cands.swap(0, 1); }
+                    let mut hit_plant = false;
+                    for ci in 0..nc {
+                        let (tp, u, v) = cands[ci];
+                        let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, u, v, day, tick, false);
+                        if a > 25 {
+                            let fog = (1.0 - (-tp * 0.009).exp()).min(0.86);
+                            hit_rgb = [
+                                rgb[0] * (1.0 - fog) + sky[0] * fog,
+                                rgb[1] * (1.0 - fog) + sky[1] * fog,
+                                rgb[2] * (1.0 - fog) + sky[2] * fog,
+                            ];
+                            hit_dist = tp;
+                            hit_plant = true;
+                            break;
+                        }
+                    }
+                    if hit_plant { break; }
+                } else if is_floor_block(b) {
+                    if dy.abs() > 1e-5 {
+                        let tp = (y as f32 + 0.06 - oy) / dy;
+                        if tp > t.max(0.001) && tp < t_next {
+                            let px = ox + dx * tp - x as f32;
+                            let pz = oz + dz * tp - z as f32;
+                            if (0.0..=1.0).contains(&px) && (0.0..=1.0).contains(&pz) {
+                                let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, px, pz, day, tick, false);
+                                if a > 25 {
+                                    let fog = (1.0 - (-tp * 0.009).exp()).min(0.86);
+                                    hit_rgb = [
+                                        rgb[0] * (1.0 - fog) + sky[0] * fog,
+                                        rgb[1] * (1.0 - fog) + sky[1] * fog,
+                                        rgb[2] * (1.0 - fog) + sky[2] * fog,
+                                    ];
+                                    hit_dist = tp;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else if b == world::WATER || b == world::LAVA {
+                    if t > 0.001 && !has_trans {
+                        let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
+                        let tpx = tex.sample_face(b, nx, ny, nz, u, v, tick);
+                        if b == world::WATER {
+                            let fresnel = ((1.0 - dy.abs()).powf(2.5) * 0.35).clamp(0.05, 0.38);
+                            let shimmer = if ((u * 16.0) as i32 + (v * 16.0) as i32 + (tick / 8) as i32) % 9 == 0 { 1.12 } else { 1.0 };
+                            let light = 0.55 + day * 0.48;
+                            trans_rgb = [
+                                tpx[0] as f32 * light * shimmer * (1.0 - fresnel) + sky[0] * fresnel,
+                                tpx[1] as f32 * light * shimmer * (1.0 - fresnel) + sky[1] * fresnel,
+                                tpx[2] as f32 * light * shimmer * (1.0 - fresnel) + sky[2] * fresnel,
+                            ];
+                            trans_alpha = 0.62;
+                            trans_dist = t;
+                            has_trans = true;
+                        } else {
+                            let fog = (1.0 - (-t * 0.009).exp()).min(0.85);
+                            hit_rgb = [
+                                tpx[0] as f32 * 1.15 * (1.0 - fog) + sky[0] * fog,
+                                tpx[1] as f32 * 1.15 * (1.0 - fog) + sky[1] * fog,
+                                tpx[2] as f32 * 1.15 * (1.0 - fog) + sky[2] * fog,
+                            ];
+                            hit_dist = t;
+                            break;
+                        }
+                    }
+                } else if is_cutout_cube(b) {
+                    if t > 0.001 {
+                        let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
+                        let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true);
+                        if a >= 240 {
+                            let fog = (1.0 - (-t * 0.009).exp()).min(0.86);
+                            hit_rgb = [
+                                rgb[0] * (1.0 - fog) + sky[0] * fog,
+                                rgb[1] * (1.0 - fog) + sky[1] * fog,
+                                rgb[2] * (1.0 - fog) + sky[2] * fog,
+                            ];
+                            hit_dist = t;
+                            break;
+                        } else if a > 20 && !has_trans {
+                            trans_rgb = rgb;
+                            trans_alpha = a as f32 / 255.0;
+                            trans_dist = t;
+                            has_trans = true;
+                        }
+                    }
+                } else if t > 0.001 {
+                    let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
+                    let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true);
+                    if a > 20 {
+                        let fog = (1.0 - (-t * 0.009).exp()).min(0.86);
+                        hit_rgb = [
+                            rgb[0] * (1.0 - fog) + sky[0] * fog,
+                            rgb[1] * (1.0 - fog) + sky[1] * fog,
+                            rgb[2] * (1.0 - fog) + sky[2] * fog,
+                        ];
+                        hit_dist = t;
+                        break;
+                    }
+                }
+            }
+        }
+        if tmx < tmy && tmx < tmz { t = tmx; tmx += dtx; x += step_x; nx = -step_x; ny = 0; nz = 0; }
+        else if tmy < tmz { t = tmy; tmy += dty; y += step_y; ny = -step_y; nx = 0; nz = 0; }
+        else { t = tmz; tmz += dtz; z += step_z; nz = -step_z; nx = 0; ny = 0; }
+        if t > max_dist { break; }
+    }
+
+    if hit_dist.is_infinite() {
+        let ang = time * 2.0 * PI;
+        let mut sx = ang.cos();
+        let mut sy = ang.sin();
+        let mut sz = 0.22f32;
+        let sl = (sx * sx + sy * sy + sz * sz).sqrt();
+        sx /= sl; sy /= sl; sz /= sl;
+        if sy > -0.1 && (dx - sx).abs() < 0.062 && (dy - sy).abs() < 0.062 && (dz - sz).abs() < 0.062 {
+            hit_rgb = [255.0, 246.0, 185.0];
+        }
+        if -sy > -0.1 && (dx + sx).abs() < 0.048 && (dy + sy).abs() < 0.048 && (dz + sz).abs() < 0.048 {
+            hit_rgb = [225.0, 230.0, 242.0];
+        }
+        if day < 0.35 && dy > 0.05 {
+            let st = th((dx * 220.0) as i32, (dz * 220.0 + dy * 140.0) as i32, 91);
+            if st % 520 == 0 {
+                let br = (0.35 - day) * 2.5;
+                hit_rgb[0] = (hit_rgb[0] + 180.0 * br).min(255.0);
+                hit_rgb[1] = (hit_rgb[1] + 190.0 * br).min(255.0);
+                hit_rgb[2] = (hit_rgb[2] + 220.0 * br).min(255.0);
+            }
+        }
+    }
+
+    if has_trans {
+        let fog = (1.0 - (-trans_dist * 0.009).exp()).min(0.85);
+        let tr = trans_rgb[0] * (1.0 - fog) + sky[0] * fog;
+        let tg = trans_rgb[1] * (1.0 - fog) + sky[1] * fog;
+        let tb = trans_rgb[2] * (1.0 - fog) + sky[2] * fog;
+        hit_rgb[0] = hit_rgb[0] * (1.0 - trans_alpha) + tr * trans_alpha;
+        hit_rgb[1] = hit_rgb[1] * (1.0 - trans_alpha) + tg * trans_alpha;
+        hit_rgb[2] = hit_rgb[2] * (1.0 - trans_alpha) + tb * trans_alpha;
+        hit_dist = hit_dist.min(trans_dist);
+    }
+
+    if underwater {
+        let uf = (1.0 - (-hit_dist.min(32.0) * 0.055).exp()).clamp(0.28, 0.85);
+        hit_rgb[0] = hit_rgb[0] * (1.0 - uf) + 22.0 * uf;
+        hit_rgb[1] = hit_rgb[1] * (1.0 - uf) + 68.0 * uf;
+        hit_rgb[2] = hit_rgb[2] * (1.0 - uf) + 148.0 * uf;
+    }
+
+    (
+        [
+            hit_rgb[0].clamp(0.0, 255.0) as u8,
+            hit_rgb[1].clamp(0.0, 255.0) as u8,
+            hit_rgb[2].clamp(0.0, 255.0) as u8,
+        ],
+        hit_dist,
+    )
 }
 
 pub fn render_world(fb: &mut Framebuffer, tex: &Textures, world: &mut World, cam: &Cam, time: f32, tick: u32) {
     fb.clear();
     let day = day_factor(time);
-    let aspect = fb.w as f32 / fb.h as f32;
-    let scale = 0.78;
-    for py in 0..fb.h {
-        let ny = 1.0 - ((py as f32 + 0.5) / fb.h as f32) * 2.0;
-        for px in 0..fb.w {
-            let nx = ((px as f32 + 0.5) / fb.w as f32 * 2.0 - 1.0) * aspect * scale;
-            let mut dx = cam.fx + cam.rx * nx + cam.ux * ny * scale;
-            let mut dy = cam.fy + cam.ry * nx + cam.uy * ny * scale;
-            let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
-            let len = (dx * dx + dy * dy + dz * dz).sqrt();
-            dx /= len; dy /= len; dz /= len;
-            let sky = sky_color(dy, time, px as i32, py as i32);
-            let mut r = sky[0] as f32; let mut g = sky[1] as f32; let mut b = sky[2] as f32;
-            if let Some(cc) = cloud_color(cam, dx, dy, dz, time, day) {
-                let fade = 0.45 + day * 0.45;
-                r = r * (1.0 - fade) + cc[0] as f32 * fade;
-                g = g * (1.0 - fade) + cc[1] as f32 * fade;
-                b = b * (1.0 - fade) + cc[2] as f32 * fade;
-            }
-            if let Some(hit) = world::raycast(world, cam.x, cam.y, cam.z, dx, dy, dz, 76.0, true) {
-                if hit.block == world::WATER || hit.block == world::LAVA {
-                    let behind = world::raycast(
-                        world,
-                        cam.x + dx * (hit.dist + 0.04),
-                        cam.y + dy * (hit.dist + 0.04),
-                        cam.z + dz * (hit.dist + 0.04),
-                        dx, dy, dz, 76.0 - hit.dist, false,
-                    );
-                    if let Some(bh) = behind {
-                        let (br, bg, bb, _) = shade_hit(tex, world, &bh, time, day, tick);
-                        let fog = (1.0 - (-bh.dist * 0.010).exp()).min(0.85);
-                        r = br * (1.0 - fog) + sky[0] as f32 * fog;
-                        g = bg * (1.0 - fog) + sky[1] as f32 * fog;
-                        b = bb * (1.0 - fog) + sky[2] as f32 * fog;
-                    }
-                    let t = tex.sample_face(hit.block, hit.nx, hit.ny, hit.nz, hit.u, hit.v, tick);
-                    let alpha = if hit.block == world::WATER { 0.56 } else { 0.86 };
-                    r = r * (1.0 - alpha) + t[0] as f32 * alpha;
-                    g = g * (1.0 - alpha) + t[1] as f32 * alpha;
-                    b = b * (1.0 - alpha) + t[2] as f32 * alpha;
-                    fb.depth[py * fb.w + px] = hit.dist;
-                } else {
-                    let (cr, cg, cb, ca) = shade_hit(tex, world, &hit, time, day, tick);
-                    let fog = (1.0 - (-hit.dist * 0.010).exp()).min(0.88);
-                    r = cr * (1.0 - fog) + sky[0] as f32 * fog;
-                    g = cg * (1.0 - fog) + sky[1] as f32 * fog;
-                    b = cb * (1.0 - fog) + sky[2] as f32 * fog;
-                    if ca < 255 {
-                        let a = ca as f32 / 255.0;
-                        r = r * a + sky[0] as f32 * (1.0 - a);
-                        g = g * a + sky[1] as f32 * (1.0 - a);
-                        b = b * a + sky[2] as f32 * (1.0 - a);
-                    } else {
-                        fb.depth[py * fb.w + px] = hit.dist;
-                    }
-                }
-            }
-            if fb.depth[py * fb.w + px].is_infinite() {
-                let ang = time * 2.0 * PI;
-                let mut sx = ang.cos();
-                let mut sy = ang.sin();
-                let mut sz = 0.22f32;
-                let sl = (sx * sx + sy * sy + sz * sz).sqrt();
-                sx /= sl; sy /= sl; sz /= sl;
-                // Square Minecraft sun & moon
-                if sy > -0.1 && (dx - sx).abs() < 0.062 && (dy - sy).abs() < 0.062 && (dz - sz).abs() < 0.062 {
-                    r = 255.0; g = 246.0; b = 185.0;
-                }
-                if -sy > -0.1 && (dx + sx).abs() < 0.048 && (dy + sy).abs() < 0.048 && (dz + sz).abs() < 0.048 {
-                    r = 225.0; g = 230.0; b = 242.0;
-                }
-                if day < 0.35 && dy > 0.05 {
-                    let st = th((dx * 220.0) as i32, (dz * 220.0 + dy * 140.0) as i32, 91);
-                    if st % 520 == 0 {
-                        let br = (0.35 - day) * 2.5;
-                        r = (r + 180.0 * br).min(255.0);
-                        g = (g + 190.0 * br).min(255.0);
-                        b = (b + 220.0 * br).min(255.0);
-                    }
-                }
-            }
-            fb.rgba[(py * fb.w + px) * 4] = r as u8;
-            fb.rgba[(py * fb.w + px) * 4 + 1] = g as u8;
-            fb.rgba[(py * fb.w + px) * 4 + 2] = b as u8;
-            fb.rgba[(py * fb.w + px) * 4 + 3] = 255;
-        }
-    }
-}
+    let w = fb.w;
+    let h = fb.h;
+    let aspect = w as f32 / h as f32;
+    let scale = 0.78f32;
+    let cache = world.sync_cache(cam.x, cam.z);
+    let underwater = cache.get(cam.x.floor() as i32, cam.y.floor() as i32, cam.z.floor() as i32) == world::WATER;
 
-fn shade_hit(tex: &Textures, world: &mut World, h: &Hit, _time: f32, day: f32, tick: u32) -> (f32, f32, f32, u8) {
-    let t = tex.sample_face(h.block, h.nx, h.ny, h.nz, h.u, h.v, tick);
-    let mut light = face_shade(h.nx, h.ny, h.nz, day) * ao(world, h);
-    let emit = world::emits_light(h.block);
-    if emit > 0 { light = light.max(0.95 + emit as f32 * 0.02); }
-    if h.block == world::LAMP && world.lit.contains(&(h.x, h.y, h.z)) { light = 1.45; }
-    (t[0] as f32 * light, t[1] as f32 * light, t[2] as f32 * light, t[3])
+    let nthreads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(1, 16);
+    let rows_per = ((h + nthreads - 1) / nthreads).max(1);
+    let rgba_chunks = fb.rgba.chunks_mut(rows_per * w * 4);
+    let depth_chunks = fb.depth.chunks_mut(rows_per * w);
+
+    std::thread::scope(|s| {
+        for (band_idx, (rgba_band, depth_band)) in rgba_chunks.zip(depth_chunks).enumerate() {
+            let y_start = band_idx * rows_per;
+            let band_rows = depth_band.len() / w;
+            s.spawn(move || {
+                for local_y in 0..band_rows {
+                    let py = y_start + local_y;
+                    let ny = 1.0 - ((py as f32 + 0.5) / h as f32) * 2.0;
+                    for px in 0..w {
+                        let nx = ((px as f32 + 0.5) / w as f32 * 2.0 - 1.0) * aspect * scale;
+                        let mut dx = cam.fx + cam.rx * nx + cam.ux * ny * scale;
+                        let mut dy = cam.fy + cam.ry * nx + cam.uy * ny * scale;
+                        let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
+                        let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
+                        dx *= inv_len; dy *= inv_len; dz *= inv_len;
+                        let sky = sky_color(dy, time, px as i32, py as i32);
+                        let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater);
+                        let pi = local_y * w + px;
+                        depth_band[pi] = dist;
+                        let di = pi * 4;
+                        rgba_band[di] = rgb[0];
+                        rgba_band[di + 1] = rgb[1];
+                        rgba_band[di + 2] = rgb[2];
+                        rgba_band[di + 3] = 255;
+                    }
+                }
+            });
+        }
+    });
 }
 
 fn project(cam: &Cam, x: f32, y: f32, z: f32, fb: &Framebuffer) -> Option<(f32, f32, f32)> {
@@ -792,7 +783,7 @@ fn project(cam: &Cam, x: f32, y: f32, z: f32, fb: &Framebuffer) -> Option<(f32, 
 
 /// Crisp wireframe highlight around the block the player is aiming at.
 pub fn draw_block_outline(fb: &mut Framebuffer, cam: &Cam, bx: i32, by: i32, bz: i32) {
-    let e = 0.004;
+    let e = 0.006;
     let x0 = bx as f32 - e; let x1 = bx as f32 + 1.0 + e;
     let y0 = by as f32 - e; let y1 = by as f32 + 1.0 + e;
     let z0 = bz as f32 - e; let z1 = bz as f32 + 1.0 + e;
@@ -816,7 +807,7 @@ pub fn draw_block_outline(fb: &mut Framebuffer, cam: &Cam, bx: i32, by: i32, bz:
             let d = ad + (bd - ad) * t;
             if px >= 0 && py >= 0 && px < fb.w as i32 && py < fb.h as i32 {
                 let td = fb.depth[py as usize * fb.w + px as usize];
-                if d <= td + 0.12 {
+                if d <= td + 0.18 {
                     fb.set(px, py, 20, 20, 24, 200);
                 }
             }
@@ -1106,223 +1097,37 @@ pub fn draw_drop_sprite(fb: &mut Framebuffer, cam: &Cam, x: f32, y: f32, z: f32,
 // ===================== Item & 3D Isometric Block Icons =====================
 
 pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
-    let _ = tick;
     if item == 0 { return [0, 0, 0, 0]; }
-    if item >= 256 {
-        let xi = x as i32; let yi = y as i32;
-        match item {
-            256..=260 => { // pickaxe
-                let head = match item {
-                    256 => [165, 118, 70, 255],
-                    257 => [145, 145, 152, 255],
-                    258 => [220, 224, 232, 255],
-                    259 => [68, 225, 232, 255],
-                    _ => [72, 62, 74, 255],
-                };
-                if (yi == 2 && xi >= 4 && xi <= 11) || (yi == 3 && (xi == 3 || xi == 12 || (xi >= 8 && xi <= 10))) || (yi == 4 && xi == 12) { return head; }
-                if (xi + yi == 15) && xi >= 3 && xi <= 11 { return [132, 88, 48, 255]; }
-            }
-            261..=263 => { // axe
-                let head = match item { 261 => [165, 118, 70, 255], 262 => [220, 224, 232, 255], _ => [68, 225, 232, 255] };
-                if xi >= 7 && xi <= 12 && yi >= 2 && yi <= 6 && (xi + yi >= 10) { return head; }
-                if (xi + yi == 15) && xi >= 3 && xi <= 11 { return [132, 88, 48, 255]; }
-            }
-            264..=265 => { // shovel
-                let head = if item == 264 { [165, 118, 70, 255] } else { [220, 224, 232, 255] };
-                if xi >= 9 && xi <= 13 && yi >= 2 && yi <= 6 { return head; }
-                if (xi + yi == 15) && xi >= 3 && xi <= 10 { return [132, 88, 48, 255]; }
-            }
-            266..=268 | 312 => { // swords
-                let blade = match item {
-                    266 => [165, 118, 70, 255],
-                    267 => [220, 224, 232, 255],
-                    268 => [68, 225, 232, 255],
-                    _ => [72, 62, 74, 255],
-                };
-                if (xi + yi == 15 || xi + yi == 14) && xi >= 6 && xi <= 13 && yi >= 2 && yi <= 9 { return blade; }
-                if (xi - yi == 5 || (xi >= 4 && xi <= 7 && yi >= 9 && yi <= 11)) && xi + yi >= 13 { return [110, 74, 42, 255]; }
-                if xi >= 2 && xi <= 4 && yi >= 11 && yi <= 13 { return [138, 94, 52, 255]; }
-            }
-            269 => { // apple
-                if (xi - 8).pow(2) + (yi - 9).pow(2) <= 22 { return if xi <= 6 && yi <= 8 { [248, 120, 110, 255] } else { [214, 38, 42, 255] }; }
-                if xi == 8 && yi >= 2 && yi <= 4 { return [110, 72, 38, 255]; }
-                if xi >= 9 && xi <= 11 && yi == 3 { return [72, 162, 56, 255]; }
-            }
-            307 => { // golden apple
-                if (xi - 8).pow(2) + (yi - 9).pow(2) <= 22 { return if xi <= 6 && yi <= 8 { [255, 244, 150, 255] } else { [246, 198, 42, 255] }; }
-                if xi == 8 && yi >= 2 && yi <= 4 { return [110, 72, 38, 255]; }
-            }
-            270 => { if xi >= 3 && xi <= 12 && yi >= 5 && yi <= 11 { return if yi <= 7 { [224, 174, 92, 255] } else { [186, 128, 56, 255] }; } }
-            271..=277 => {
-                let raw = matches!(item, 272 | 273 | 275);
-                if xi >= 3 && xi <= 12 && yi >= 5 && yi <= 11 {
-                    return if raw { [218, 108, 108, 255] } else { [162, 86, 52, 255] };
-                }
-            }
-            278 => { if (xi - 8).pow(2) + (yi - 8).pow(2) <= 20 { return [38, 38, 42, 255]; } }
-            279 => { if xi >= 3 && xi <= 12 && yi >= 5 && yi <= 10 { return if yi <= 6 { [242, 244, 248, 255] } else { [202, 206, 212, 255] }; } }
-            280 => { if xi >= 3 && xi <= 12 && yi >= 5 && yi <= 10 { return if yi <= 6 { [255, 234, 118, 255] } else { [242, 188, 44, 255] }; } }
-            281 => { if (xi - 8).abs() + (yi - 8).abs() <= 5 { return if xi <= 8 && yi <= 7 { [160, 250, 255, 255] } else { [62, 215, 228, 255] }; } }
-            282 => { if (xi - 8).abs() + (yi - 8).abs() <= 5 { return [52, 214, 102, 255]; } }
-            313 => { if xi >= 3 && xi <= 12 && yi >= 5 && yi <= 10 { return [72, 62, 74, 255]; } }
-            317 => { if (xi - 8).abs() + (yi - 8).abs() <= 5 { return [184, 102, 232, 255]; } }
-            283 => { if (xi + yi == 15) && xi >= 3 && xi <= 12 { return [142, 98, 54, 255]; } }
-            284 => { if xi >= 5 && xi <= 10 && yi >= 5 && yi <= 11 { return [62, 62, 72, 255]; } }
-            285 => { if (xi + yi == 15 || xi + yi == 14) && xi >= 4 && xi <= 12 { return [238, 234, 224, 255]; } }
-            286 => { if xi >= 4 && xi <= 11 && yi >= 4 && yi <= 11 { return [146, 86, 48, 255]; } }
-            287 => { if (xi + yi == 15 && xi >= 4 && xi <= 11) || (xi <= 5 && yi >= 10 && yi <= 12) || (xi >= 10 && yi >= 3 && yi <= 5) { return [242, 240, 228, 255]; } }
-            288 => { if xi >= 4 && xi <= 11 && yi >= 5 && yi <= 11 { return [142, 48, 38, 255]; } }
-            289 => { if (xi - 8).abs() <= 3 && (yi - 8).abs() <= 4 { return [225, 225, 222, 255]; } }
-            290 => { if xi >= 3 && xi <= 12 && yi >= 4 && yi <= 12 { return [235, 235, 232, 255]; } }
-            291 => { if (xi - 8).pow(2) + (yi - 8).pow(2) <= 20 { return [246, 238, 212, 255]; } }
-            292..=294 => {
-                if xi >= 4 && xi <= 11 && yi >= 5 && yi <= 12 {
-                    if yi <= 6 && item == 293 { return [54, 128, 222, 255]; }
-                    if yi <= 6 && item == 294 { return [242, 112, 24, 255]; }
-                    return [182, 186, 192, 255];
-                }
-            }
-            295 => {
-                if (xi - 8).pow(2) + (yi - 8).pow(2) <= 25 {
-                    if (xi - 8).abs() <= 1 && yi >= 4 && yi <= 9 { return [220, 42, 42, 255]; }
-                    return [135, 142, 152, 255];
-                }
-            }
-            296 => { if xi >= 3 && xi <= 12 && yi >= 3 && yi <= 12 { return [224, 206, 162, 255]; } }
-            297 => { if (xi - 8).pow(2) + (yi - 8).pow(2) <= 24 { return if xi < 8 { [90, 140, 210, 255] } else { [242, 206, 68, 255] }; } }
-            298 => { if (xi - 8).abs() <= 4 && (yi - 8).abs() <= 5 { return [134, 118, 168, 255]; } }
-            299 => { if xi >= 7 && xi <= 9 && yi >= 4 && yi <= 12 { return [220, 72, 54, 255]; } }
-            300 => { if xi >= 4 && xi <= 11 && yi >= 3 && yi <= 12 { return if xi == 4 || xi == 11 { [175, 180, 186, 255] } else { [146, 98, 56, 255] }; } }
-            301 => { if (xi - 8).abs() <= 3 && (yi - 8).abs() <= 4 { return if yi <= 5 { [72, 205, 112, 255] } else { [244, 208, 62, 255] }; } }
-            302 => { if (xi - 8).pow(2) + (yi - 8).pow(2) <= 20 { return [24, 154, 134, 255]; } }
-            303 => { if xi >= 7 && xi <= 8 && yi >= 2 && yi <= 13 { return [248, 184, 38, 255]; } }
-            304 => { if (xi - 8).abs() + (yi - 8).abs() <= 5 { return [252, 252, 238, 255]; } }
-            305 => { if xi >= 5 && xi <= 10 && yi >= 5 && yi <= 12 { return [124, 224, 92, 255]; } }
-            306 => { if (xi - 8).pow(2) + (yi - 8).pow(2) <= 22 { return if (xi + yi) % 2 == 0 { [116, 116, 122, 255] } else { [74, 74, 78, 255] }; } }
-            308 => { // bow
-                if xi == 5 && yi >= 3 && yi <= 12 { return [215, 215, 215, 255]; }
-                if (xi >= 6 && xi <= 10 && (yi == 3 || yi == 12)) || (xi == 11 && yi >= 4 && yi <= 11) { return [142, 96, 52, 255]; }
-            }
-            309 => { // arrow
-                if xi + yi == 15 && xi >= 4 && xi <= 11 { return [142, 98, 54, 255]; }
-                if xi >= 11 && yi <= 4 && xi + yi <= 16 { return [185, 190, 196, 255]; }
-                if xi <= 4 && yi >= 11 { return [236, 234, 228, 255]; }
-            }
-            310 => { // flint and steel
-                if xi >= 4 && xi <= 7 && yi >= 5 && yi <= 11 { return [192, 196, 202, 255]; }
-                if xi >= 9 && xi <= 12 && yi >= 6 && yi <= 10 { return [62, 62, 72, 255]; }
-            }
-            311 => { // shears
-                if (xi >= 4 && xi <= 8 && yi >= 4 && yi <= 8) || (xi >= 8 && xi <= 12 && yi >= 7 && yi <= 11) { return [196, 200, 206, 255]; }
-            }
-            314 => { // carrot
-                if xi >= 5 && xi <= 10 && yi >= 6 && yi <= 12 { return [242, 128, 32, 255]; }
-                if xi >= 7 && xi <= 9 && yi >= 3 && yi <= 5 { return [68, 168, 52, 255]; }
-            }
-            315 => { // cookie
-                if (xi - 8).pow(2) + (yi - 8).pow(2) <= 22 {
-                    return if (xi + yi * 3) % 5 == 0 { [68, 42, 24, 255] } else { [214, 158, 92, 255] };
-                }
-            }
-            316 => { if (xi - 8).pow(2) + (yi - 8).pow(2) <= 22 { return [106, 212, 92, 255]; } }
-            318 | 320 => { // helmet
-                let c = if item == 318 { [210, 214, 222, 255] } else { [68, 222, 232, 255] };
-                if xi >= 4 && xi <= 11 && yi >= 4 && yi <= 10 && !(xi >= 6 && xi <= 9 && yi >= 8) { return c; }
-            }
-            319 | 321 => { // chestplate
-                let c = if item == 319 { [210, 214, 222, 255] } else { [68, 222, 232, 255] };
-                if (xi >= 3 && xi <= 12 && yi >= 4 && yi <= 7) || (xi >= 5 && xi <= 10 && yi >= 4 && yi <= 13) { return c; }
-            }
-            322..=331 => { // spawn eggs (oval egg with spots!)
-                let d2 = ((xi - 8) * 5).pow(2) + ((yi - 8) * 4).pow(2);
-                if d2 <= 25 * 16 {
-                    let (base, spot) = match item {
-                        322 => ([232, 228, 220, 255], [220, 172, 150, 255]), // sheep
-                        323 => ([82, 58, 42, 255], [228, 228, 224, 255]),   // cow
-                        324 => ([242, 166, 174, 255], [218, 98, 118, 255]), // pig
-                        325 => ([242, 242, 238, 255], [222, 48, 48, 255]),  // chicken
-                        326 => ([48, 136, 150, 255], [92, 144, 72, 255]),   // zombie
-                        327 => ([218, 218, 210, 255], [78, 78, 82, 255]),   // skeleton
-                        328 => ([42, 168, 52, 255], [16, 36, 16, 255]),     // creeper
-                        329 => ([48, 42, 46, 255], [210, 32, 32, 255]),     // spider
-                        330 => ([22, 20, 28, 255], [210, 110, 248, 255]),   // enderman
-                        _ => ([122, 82, 52, 255], [210, 162, 126, 255]),    // villager
-                    };
-                    return if (xi + yi * 2) % 5 == 0 { spot } else { base };
-                }
-            }
-            _ => { if xi >= 4 && xi <= 11 && yi >= 4 && yi <= 11 { return [190, 190, 195, 255]; } }
-        }
+    let atlas = Textures::atlas();
+    if item >= 256 && item <= 331 {
+        return atlas.sample_item((item - 256) as usize, x, y);
+    }
+    let flat_idx = match item {
+        world::TORCH => Some(76),
+        world::REDSTONE_TORCH => Some(77),
+        world::REDSTONE_DUST => Some(78),
+        world::DOOR => Some(79),
+        world::SIGN => Some(80),
+        world::BED => Some(81),
+        world::FLOWER_RED => Some(82),
+        world::FLOWER_YELLOW => Some(83),
+        world::TALL_GRASS => Some(84),
+        world::RAIL => Some(85),
+        world::WHEAT => Some(86),
+        world::LEVER => Some(87),
+        world::BROWN_MUSHROOM => Some(88),
+        world::RED_MUSHROOM => Some(89),
+        _ => None,
+    };
+    if let Some(idx) = flat_idx {
+        return atlas.sample_item(idx, x, y);
+    }
+    if item == world::PRESSURE_PLATE {
+        if x >= 2 && x <= 13 && y >= 5 && y <= 11 { return [148, 148, 152, 255]; }
         return [0, 0, 0, 0];
     }
-
-    // Flat item sprites for non-cubic blocks
-    if matches!(item, world::TORCH | world::REDSTONE_TORCH) {
-        if x >= 7 && x <= 8 && y >= 6 && y <= 13 { return [132, 88, 48, 255]; }
-        if x >= 6 && x <= 9 && y >= 3 && y <= 5 {
-            return if item == world::REDSTONE_TORCH { [248, 48, 36, 255] } else { [252, 192, 52, 255] };
-        }
-        return [0, 0, 0, 0];
-    }
-    if item == world::REDSTONE_DUST {
-        if (x as i32 - 8).pow(2) + (y as i32 - 8).pow(2) <= 22 { return if (x + y) % 2 == 0 { [224, 34, 34, 255] } else { [172, 20, 20, 255] }; }
-        return [0, 0, 0, 0];
-    }
-    if item == world::SIGN {
-        if x >= 2 && x <= 13 && y >= 3 && y <= 9 { return [178, 134, 82, 255]; }
-        if x >= 7 && x <= 8 && y >= 9 && y <= 13 { return [132, 92, 48, 255]; }
-        return [0, 0, 0, 0];
-    }
-    if item == world::DOOR {
-        if x >= 4 && x <= 11 && y >= 2 && y <= 14 {
-            if x == 9 && y == 8 { return [225, 195, 90, 255]; }
-            return [154, 108, 60, 255];
-        }
-        return [0, 0, 0, 0];
-    }
-    if matches!(item, world::FLOWER_RED | world::FLOWER_YELLOW | world::TALL_GRASS | world::WHEAT | world::RAIL) {
-        return [90, 152, 58, if x >= 5 && x <= 10 && y >= 3 && y <= 13 { 255 } else { 0 }];
-    }
-    // Fallback solid tint
-    let (r, g, b) = block_rgb(item);
-    [r, g, b, 255]
-}
-
-fn block_rgb(item: u16) -> (u8, u8, u8) {
-    match item {
-        world::GRASS => (88, 152, 54), world::DIRT => (130, 92, 62), world::STONE => (126, 126, 128),
-        world::COBBLE => (134, 134, 136), world::SAND | world::SANDSTONE => (222, 208, 160),
-        world::RED_SAND => (196, 108, 52), world::WATER => (55, 118, 205),
-        world::LEAVES | world::JUNGLE_LEAVES => (56, 114, 40),
-        world::SPRUCE_LEAVES | world::DARK_LEAVES => (42, 86, 48),
-        world::BIRCH_LEAVES => (92, 152, 64),
-        world::LOG | world::JUNGLE_LOG => (106, 80, 50),
-        world::BIRCH_LOG => (224, 220, 210),
-        world::SPRUCE_LOG | world::DARK_LOG => (74, 52, 34),
-        world::PLANKS | world::SLAB | world::STAIRS | world::FENCE => (178, 134, 82),
-        world::GLASS => (185, 224, 238),
-        world::COAL_ORE => (82, 82, 86), world::IRON_ORE => (182, 156, 132),
-        world::GOLD_ORE => (232, 198, 72), world::DIAMOND_ORE => (84, 212, 222),
-        world::REDSTONE_ORE => (206, 62, 62), world::EMERALD_ORE => (68, 202, 102),
-        world::WOOL_RED => (182, 48, 46), world::WOOL_BLUE => (52, 86, 182),
-        world::WOOL_GREEN => (54, 128, 54), world::WOOL_YELLOW => (224, 192, 52),
-        world::WOOL_WHITE | world::CONCRETE_WHITE | world::QUARTZ => (235, 235, 232),
-        world::LAVA => (238, 108, 28), world::BEDROCK => (48, 48, 50),
-        world::SNOW | world::SNOW_LAYER => (240, 246, 250), world::ICE => (155, 208, 245),
-        world::BRICK => (152, 72, 58), world::STONE_BRICKS => (124, 124, 128),
-        world::CACTUS => (64, 134, 50), world::TNT => (196, 48, 42),
-        world::OBSIDIAN | world::BLACKSTONE => (38, 30, 48),
-        world::CHEST => (152, 104, 54), world::FURNACE => (126, 126, 128),
-        world::CRAFTING => (176, 128, 76), world::BOOKSHELF => (162, 118, 72),
-        world::CONCRETE_BLUE => (54, 92, 184), world::CONCRETE_RED => (188, 48, 48),
-        world::CONCRETE_GREEN => (52, 134, 58), world::CONCRETE_YELLOW => (224, 192, 48),
-        world::CONCRETE_BLACK => (38, 38, 42),
-        world::GOLD_BLOCK => (246, 206, 54), world::DIAMOND_BLOCK => (82, 224, 232),
-        world::EMERALD_BLOCK => (62, 206, 102), world::IRON_BLOCK => (220, 222, 226),
-        world::LAMP => (208, 166, 88), world::GLOWSTONE => (248, 224, 146),
-        world::PUMPKIN => (222, 124, 34), world::HAY => (212, 182, 72),
-        _ => (156, 156, 160),
-    }
+    let k = Textures::face_kind(item, 0, 0, 1);
+    atlas.sample_kind(k, x as f32 / 16.0, y as f32 / 16.0, tick, false)
 }
 
 fn is_flat_block_icon(item: u16) -> bool {
@@ -1331,28 +1136,19 @@ fn is_flat_block_icon(item: u16) -> bool {
         world::TORCH | world::REDSTONE_TORCH | world::REDSTONE_DUST | world::LEVER
             | world::PRESSURE_PLATE | world::FLOWER_RED | world::FLOWER_YELLOW
             | world::TALL_GRASS | world::WHEAT | world::RAIL | world::SIGN | world::DOOR
+            | world::BED | world::BROWN_MUSHROOM | world::RED_MUSHROOM
     )
 }
 
-/// Renders true isometric 3D cubes for blocks and crisp pixel art for items!
+/// Renders true textured isometric 3D cubes for blocks and real 16x16 pixel art for items!
 pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, size: i32, tick: u32) {
     if item == 0 || size <= 0 { return; }
+    let atlas = Textures::atlas();
     if item < 256 && !is_flat_block_icon(item) && size >= 10 {
-        let (top_rgb, side_rgb) = match item {
-            world::GRASS => ((88, 152, 54), (130, 92, 62)),
-            world::PODZOL => ((98, 70, 44), (130, 92, 62)),
-            world::MYCELIUM => ((124, 108, 128), (130, 92, 62)),
-            world::LOG | world::JUNGLE_LOG => ((182, 146, 96), (106, 80, 50)),
-            world::BIRCH_LOG => ((182, 146, 96), (224, 220, 210)),
-            world::SPRUCE_LOG | world::DARK_LOG => ((182, 146, 96), (74, 52, 34)),
-            world::CRAFTING => ((176, 128, 76), (146, 102, 58)),
-            world::BOOKSHELF => ((178, 134, 82), (168, 74, 58)),
-            world::TNT => ((192, 52, 44), (232, 230, 224)),
-            _ => {
-                let c = block_rgb(item);
-                (c, c)
-            }
-        };
+        let top_k = Textures::face_kind(item, 0, 1, 0);
+        let left_k = Textures::face_kind(item, 0, 0, 1);
+        let right_k = Textures::face_kind(item, 1, 0, 0);
+        let anim = item == world::WATER || item == world::LAVA;
         let cx = size as f32 * 0.5;
         let cy = size as f32 * 0.5;
         let rx = size as f32 * 0.44;
@@ -1365,32 +1161,40 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
                 // Isometric diamond top face centered at (0, -ry)
                 let ty = fy + ry;
                 if (fx / rx).abs() + (ty / ry).abs() <= 1.0 {
-                    let shade = 1.06;
-                    fb.set(
-                        fb_x + px,
-                        fb_y + py,
-                        (top_rgb.0 as f32 * shade).min(255.0) as u8,
-                        (top_rgb.1 as f32 * shade).min(255.0) as u8,
-                        (top_rgb.2 as f32 * shade).min(255.0) as u8,
-                        255,
-                    );
+                    let u = ((fx / rx + ty / ry) * 0.5 + 0.5).clamp(0.0, 0.999);
+                    let v = ((ty / ry - fx / rx) * 0.5 + 0.5).clamp(0.0, 0.999);
+                    let c = atlas.sample_kind(top_k, u, v, tick, anim);
+                    if c[3] > 20 {
+                        let shade = 1.05;
+                        fb.set(
+                            fb_x + px,
+                            fb_y + py,
+                            (c[0] as f32 * shade).min(255.0) as u8,
+                            (c[1] as f32 * shade).min(255.0) as u8,
+                            (c[2] as f32 * shade).min(255.0) as u8,
+                            c[3],
+                        );
+                    }
                     continue;
                 }
                 // Left side face (-rx..0)
                 if fx >= -rx && fx < 0.0 {
                     let top_edge = (fx + rx) / rx * ry;
                     if fy >= top_edge && fy <= top_edge + h {
-                        let c = if item == world::GRASS && fy < top_edge + h * 0.25 {
-                            top_rgb
-                        } else if item == world::TNT && fy > top_edge + h * 0.3 && fy < top_edge + h * 0.65 {
-                            (240, 238, 232)
-                        } else if item == world::TNT {
-                            (196, 46, 38)
-                        } else {
-                            side_rgb
-                        };
-                        let shade = 0.80;
-                        fb.set(fb_x + px, fb_y + py, (c.0 as f32 * shade) as u8, (c.1 as f32 * shade) as u8, (c.2 as f32 * shade) as u8, 255);
+                        let u = ((fx + rx) / rx).clamp(0.0, 0.999);
+                        let v = ((fy - top_edge) / h).clamp(0.0, 0.999);
+                        let c = atlas.sample_kind(left_k, u, v, tick, anim);
+                        if c[3] > 20 {
+                            let shade = 0.84;
+                            fb.set(
+                                fb_x + px,
+                                fb_y + py,
+                                (c[0] as f32 * shade) as u8,
+                                (c[1] as f32 * shade) as u8,
+                                (c[2] as f32 * shade) as u8,
+                                c[3],
+                            );
+                        }
                         continue;
                     }
                 }
@@ -1398,17 +1202,20 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
                 if fx >= 0.0 && fx <= rx {
                     let top_edge = (rx - fx) / rx * ry;
                     if fy >= top_edge && fy <= top_edge + h {
-                        let c = if item == world::GRASS && fy < top_edge + h * 0.25 {
-                            top_rgb
-                        } else if item == world::TNT && fy > top_edge + h * 0.3 && fy < top_edge + h * 0.65 {
-                            (240, 238, 232)
-                        } else if item == world::TNT {
-                            (196, 46, 38)
-                        } else {
-                            side_rgb
-                        };
-                        let shade = 0.62;
-                        fb.set(fb_x + px, fb_y + py, (c.0 as f32 * shade) as u8, (c.1 as f32 * shade) as u8, (c.2 as f32 * shade) as u8, 255);
+                        let u = (fx / rx).clamp(0.0, 0.999);
+                        let v = ((fy - top_edge) / h).clamp(0.0, 0.999);
+                        let c = atlas.sample_kind(right_k, u, v, tick, anim);
+                        if c[3] > 20 {
+                            let shade = 0.66;
+                            fb.set(
+                                fb_x + px,
+                                fb_y + py,
+                                (c[0] as f32 * shade) as u8,
+                                (c[1] as f32 * shade) as u8,
+                                (c[2] as f32 * shade) as u8,
+                                c[3],
+                            );
+                        }
                     }
                 }
             }
@@ -1419,7 +1226,7 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
     for y in 0..size {
         for x in 0..size {
             let c = item_pixel(item, (x as u32 * 16 / size as u32).min(15), (y as u32 * 16 / size as u32).min(15), tick);
-            if c[3] > 0 { fb.set(fb_x + x, fb_y + y, c[0], c[1], c[2], c[3]); }
+            if c[3] > 20 { fb.set(fb_x + x, fb_y + y, c[0], c[1], c[2], c[3]); }
         }
     }
 }
@@ -1427,7 +1234,6 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
 // ===================== HUD & Menus =====================
 
 fn heart(fb: &mut Framebuffer, x: i32, y: i32, state: u8) {
-    // state: 0=empty, 1=half, 2=full
     let rows = [
         [0, 1, 1, 0, 0, 1, 1, 0],
         [1, 2, 2, 1, 1, 2, 2, 1],
@@ -1471,12 +1277,19 @@ pub const HOT_Y: i32 = 238;
 pub fn hotbar_x(i: usize) -> i32 { W as i32 / 2 - (9 * (SLOT + 2)) / 2 + i as i32 * (SLOT + 2) }
 
 pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32) {
-    let x = 414;
-    let y = 193;
-    fb.rect(x + 20, y + 28, 18, 42, [220, 175, 135, 255]);
-    fb.rect(x + 20, y + 28, 18, 3, [245, 205, 165, 255]);
-    fb.rect(x + 17, y + 62, 24, 5, [60, 135, 155, 255]);
-    if item != 0 { draw_item_icon(fb, x, y, item, 40, tick); }
+    let x = 412;
+    let y = 192;
+    if item == 0 {
+        // Clean 3D-shaded first-person Steve hand
+        fb.rect(x + 26, y + 36, 18, 42, [198, 152, 114, 255]);
+        fb.rect(x + 26, y + 36, 14, 40, [218, 170, 130, 255]);
+        fb.rect(x + 26, y + 36, 14, 4, [236, 192, 152, 255]);
+        fb.rect(x + 23, y + 68, 24, 10, [52, 126, 148, 255]);
+    } else {
+        fb.rect(x + 22, y + 32, 16, 40, [212, 165, 125, 255]);
+        fb.rect(x + 20, y + 64, 20, 8, [52, 126, 148, 255]);
+        draw_item_icon(fb, x, y, item, 42, tick);
+    }
 }
 
 pub fn draw_hud(
@@ -1498,7 +1311,6 @@ pub fn draw_hud(
 ) {
     let hb_left = hotbar_x(0);
     if mode != GameMode::Spectator {
-        // Hotbar background + beveled Minecraft slots
         fb.rect(hb_left - 2, HOT_Y - 2, 9 * (SLOT + 2) + 2, SLOT + 4, [28, 28, 30, 210]);
         fb.frame(hb_left - 2, HOT_Y - 2, 9 * (SLOT + 2) + 2, SLOT + 4, [15, 15, 16, 255]);
         for i in 0..9 {
@@ -1524,13 +1336,11 @@ pub fn draw_hud(
                 let filled = hunger >= (i as f32 + 1.0) * 2.0 - 0.5;
                 drumstick(fb, hb_left + 9 * (SLOT + 2) - 8 - i * 8, HOT_Y - 16, filled);
             }
-            // XP bar
             fb.rect(hb_left, HOT_Y - 6, 9 * (SLOT + 2) - 2, 3, [20, 20, 20, 220]);
             fb.rect(hb_left, HOT_Y - 6, 118, 3, [122, 232, 68, 255]);
         }
     }
 
-    // Crosshair
     let cx = W as i32 / 2; let cy = H as i32 / 2;
     fb.rect(cx - 4, cy, 9, 1, [240, 240, 240, 200]);
     fb.rect(cx, cy - 4, 1, 9, [240, 240, 240, 200]);
@@ -1547,6 +1357,11 @@ pub fn draw_hud(
 }
 
 pub fn upscale(src: &Framebuffer, dst: &mut Framebuffer) {
+    if src.w == dst.w && src.h == dst.h {
+        dst.rgba.copy_from_slice(&src.rgba);
+        dst.depth.copy_from_slice(&src.depth);
+        return;
+    }
     for y in 0..dst.h {
         let sy = (y * src.h / dst.h).min(src.h - 1);
         for x in 0..dst.w {
@@ -1671,11 +1486,12 @@ pub fn creeper_face(fb: &mut Framebuffer, x: i32, y: i32, scale: i32) {
 }
 
 pub fn draw_title(fb: &mut Framebuffer, buttons: &[&str], hover: usize, splash: &str, t: f32) {
+    let atlas = Textures::atlas();
     for y in 0..H as i32 {
         let f = y as f32 / H as f32;
-        let r = (108.0 * (1.0 - f) + 178.0 * f) as u8;
-        let g = (165.0 * (1.0 - f) + 212.0 * f) as u8;
-        let b = (232.0 * (1.0 - f) + 252.0 * f) as u8;
+        let r = (92.0 * (1.0 - f) + 178.0 * f) as u8;
+        let g = (158.0 * (1.0 - f) + 216.0 * f) as u8;
+        let b = (238.0 * (1.0 - f) + 252.0 * f) as u8;
         fb.rect(0, y, W as i32, 1, [r, g, b, 255]);
     }
     fb.rect(392, 24, 26, 26, [255, 250, 210, 255]);
@@ -1686,14 +1502,20 @@ pub fn draw_title(fb: &mut Framebuffer, buttons: &[&str], hover: usize, splash: 
         fb.rect(cx as i32, cy, 74, 10, [245, 246, 250, 255]);
         fb.rect(cx as i32 + 12, cy - 7, 46, 8, [245, 246, 250, 255]);
     }
-    for x in 0..W as i32 {
-        let h1 = 196.0 + (x as f32 * 0.012 + 1.2).sin() * 12.0 + (x as f32 * 0.031).sin() * 5.0;
-        let h2 = 208.0 + (x as f32 * 0.008 + 2.7).sin() * 18.0;
-        fb.rect(x, h1 as i32, 1, H as i32 - h1 as i32, [96, 156, 74, 255]);
-        fb.rect(x, h2 as i32, 1, H as i32 - h2 as i32, [74, 128, 58, 255]);
+    // Textured voxel hills + real 16x16 Minecraft grass/dirt ground
+    let scroll = (t * 8.0) as i32;
+    for y in 198..H as i32 {
+        for x in 0..W as i32 {
+            let wx = (x + scroll) / 2;
+            let ground_y = 204 + ((wx as f32 * 0.04).sin() * 6.0) as i32;
+            if y < ground_y { continue; }
+            let dy = (y - ground_y) / 2;
+            let k = if dy < 16 { 2 } else { 3 };
+            let c = atlas.sample_kind(k, (wx & 15) as f32 / 16.0, (dy & 15) as f32 / 16.0, 0, false);
+            let shade = if dy < 16 { 0.96 } else { 0.80 };
+            fb.set(x, y, (c[0] as f32 * shade) as u8, (c[1] as f32 * shade) as u8, (c[2] as f32 * shade) as u8, 255);
+        }
     }
-    fb.rect(0, 238, W as i32, 32, [122, 88, 62, 255]);
-    for x in (0..W as i32).step_by(12) { fb.rect(x, 238, 6, 4, [104, 74, 52, 255]); }
 
     let title = "MINECRAFT";
     let scale = 4;

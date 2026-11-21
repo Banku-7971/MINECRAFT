@@ -535,17 +535,90 @@ impl Chunk {
     fn set(&mut self, lx: i32, y: usize, lz: i32, id: u16) { let i = Self::idx(lx, y, lz); self.blocks[i] = id; }
 }
 
+const CACHE_R: i32 = 5;
+const CACHE_SIDE: usize = (CACHE_R as usize) * 2 + 1; // 11 chunks = 176 blocks
+const CACHE_BLOCKS: i32 = CACHE_SIDE as i32 * CHUNK;
+const CHUNK_LEN: usize = CHUNK as usize * WORLD_H * CHUNK as usize;
+
+/// Fast immutable contiguous chunk snapshot for lock-free multi-threaded raycasting.
+pub struct RenderCache {
+    valid: bool,
+    cx: i32,
+    cz: i32,
+    ox: i32,
+    oz: i32,
+    data: Vec<u16>,
+    pub lit: Vec<(i32, i32, i32)>,
+}
+
+impl RenderCache {
+    pub fn new() -> Self {
+        Self {
+            valid: false,
+            cx: 0,
+            cz: 0,
+            ox: 0,
+            oz: 0,
+            data: vec![0; CACHE_SIDE * CACHE_SIDE * CHUNK_LEN],
+            lit: Vec::new(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn get(&self, x: i32, y: i32, z: i32) -> u16 {
+        if y < 0 { return BEDROCK; }
+        if y >= WORLD_H as i32 { return AIR; }
+        let rx = x - self.ox;
+        let rz = z - self.oz;
+        if (rx as u32) >= CACHE_BLOCKS as u32 || (rz as u32) >= CACHE_BLOCKS as u32 {
+            return AIR;
+        }
+        let cxi = (rx >> 4) as usize;
+        let czi = (rz >> 4) as usize;
+        let lx = (rx & 15) as usize;
+        let lz = (rz & 15) as usize;
+        let ci = (cxi * CACHE_SIDE + czi) * CHUNK_LEN;
+        self.data[ci + (y as usize * CHUNK as usize + lx) * CHUNK as usize + lz]
+    }
+
+    #[inline]
+    pub fn set_if_in_bounds(&mut self, x: i32, y: i32, z: i32, id: u16) {
+        if !self.valid || y < 0 || y >= WORLD_H as i32 { return; }
+        let rx = x - self.ox;
+        let rz = z - self.oz;
+        if (rx as u32) >= CACHE_BLOCKS as u32 || (rz as u32) >= CACHE_BLOCKS as u32 { return; }
+        let cxi = (rx >> 4) as usize;
+        let czi = (rz >> 4) as usize;
+        let lx = (rx & 15) as usize;
+        let lz = (rz & 15) as usize;
+        let ci = (cxi * CACHE_SIDE + czi) * CHUNK_LEN;
+        self.data[ci + (y as usize * CHUNK as usize + lx) * CHUNK as usize + lz] = id;
+    }
+
+    #[inline]
+    pub fn is_lit(&self, x: i32, y: i32, z: i32) -> bool {
+        !self.lit.is_empty() && self.lit.contains(&(x, y, z))
+    }
+}
+
 pub struct World {
     chunks: HashMap<(i32, i32), Chunk>,
     pub edits: HashMap<BPos, u16>,
     hot: Option<((i32, i32), Chunk)>,
     /// Redstone lamps that are currently powered and glowing.
     pub lit: std::collections::HashSet<(i32, i32, i32)>,
+    cache: RenderCache,
 }
 
 impl World {
     pub fn new() -> Self {
-        Self { chunks: HashMap::new(), edits: HashMap::new(), hot: None, lit: std::collections::HashSet::new() }
+        Self {
+            chunks: HashMap::new(),
+            edits: HashMap::new(),
+            hot: None,
+            lit: std::collections::HashSet::new(),
+            cache: RenderCache::new(),
+        }
     }
 
     fn chunk(&mut self, cx: i32, cz: i32) -> &mut Chunk {
@@ -575,6 +648,38 @@ impl World {
     pub fn set(&mut self, x: i32, y: i32, z: i32, id: u16) {
         if y < 0 || y >= WORLD_H as i32 { return; }
         self.edits.insert(BPos(x, y, z), id);
+        self.cache.set_if_in_bounds(x, y, z, id);
+    }
+
+    pub fn sync_cache(&mut self, cam_x: f32, cam_z: f32) -> &RenderCache {
+        let pcx = (cam_x.floor() as i32) >> 4;
+        let pcz = (cam_z.floor() as i32) >> 4;
+        if !self.cache.valid || self.cache.cx != pcx || self.cache.cz != pcz {
+            self.cache.cx = pcx;
+            self.cache.cz = pcz;
+            self.cache.ox = (pcx - CACHE_R) * CHUNK;
+            self.cache.oz = (pcz - CACHE_R) * CHUNK;
+            let mut data = std::mem::take(&mut self.cache.data);
+            for dcx in 0..CACHE_SIDE {
+                let cx = pcx - CACHE_R + dcx as i32;
+                for dcz in 0..CACHE_SIDE {
+                    let cz = pcz - CACHE_R + dcz as i32;
+                    let off = (dcx * CACHE_SIDE + dcz) * CHUNK_LEN;
+                    let ch = self.chunk(cx, cz);
+                    data[off..off + CHUNK_LEN].copy_from_slice(&ch.blocks);
+                }
+            }
+            self.cache.data = data;
+            self.cache.valid = true;
+            for (&BPos(ex, ey, ez), &id) in &self.edits {
+                self.cache.set_if_in_bounds(ex, ey, ez, id);
+            }
+        }
+        self.cache.lit.clear();
+        for &p in &self.lit {
+            self.cache.lit.push(p);
+        }
+        &self.cache
     }
 
     pub fn highest_ground(&mut self, x: i32, z: i32) -> i32 {
@@ -601,10 +706,26 @@ pub struct Hit {
     pub x: i32, pub y: i32, pub z: i32,
     pub nx: i32, pub ny: i32, pub nz: i32,
     pub dist: f32,
-    pub u: f32, pub v: f32,
 }
 
-// Amanatides & Woo voxel traversal.
+#[inline]
+pub fn hit_uv(ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, t: f32, nx: i32, ny: i32, nz: i32) -> (f32, f32) {
+    if nx != 0 {
+        let raw_u = (oz + dz * t).rem_euclid(1.0);
+        let u = if nx > 0 { 1.0 - raw_u } else { raw_u };
+        let v = 1.0 - (oy + dy * t).rem_euclid(1.0);
+        (u, v)
+    } else if ny != 0 {
+        ((ox + dx * t).rem_euclid(1.0), (oz + dz * t).rem_euclid(1.0))
+    } else {
+        let raw_u = (ox + dx * t).rem_euclid(1.0);
+        let u = if nz > 0 { raw_u } else { 1.0 - raw_u };
+        let v = 1.0 - (oy + dy * t).rem_euclid(1.0);
+        (u, v)
+    }
+}
+
+// Amanatides & Woo voxel traversal (used by player interaction & camera collision).
 pub fn raycast(world: &mut World, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max_dist: f32, include_liquid: bool) -> Option<Hit> {
     let mut x = ox.floor() as i32;
     let mut y = oy.floor() as i32;
@@ -623,18 +744,11 @@ pub fn raycast(world: &mut World, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, d
     let dtz = invz.abs();
     let mut nx = 0; let mut ny = 0; let mut nz = 0;
     let mut t = 0.0;
-    for _ in 0..128 {
+    for _ in 0..220 {
         let b = world.get(x, y, z);
         let solid = is_solid(b) || (include_liquid && (b == WATER || b == LAVA));
         if solid && t > 0.0001 {
-            let (u, v) = if nx != 0 {
-                ((oz + dz * t).fract(), (oy + dy * t).fract())
-            } else if ny != 0 {
-                ((ox + dx * t).fract(), (oz + dz * t).fract())
-            } else {
-                ((ox + dx * t).fract(), (oy + dy * t).fract())
-            };
-            return Some(Hit { block: b, x, y, z, nx, ny, nz, dist: t, u, v });
+            return Some(Hit { block: b, x, y, z, nx, ny, nz, dist: t });
         }
         if tmx < tmy && tmx < tmz { t = tmx; tmx += dtx; x += step_x; nx = -step_x; ny = 0; nz = 0; }
         else if tmy < tmz { t = tmy; tmy += dty; y += step_y; ny = -step_y; nx = 0; nz = 0; }
