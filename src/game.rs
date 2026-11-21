@@ -173,6 +173,7 @@ pub struct Game<P: Platform> {
     net_addr: String,
     menu_hover: usize,
     camera: u8,
+    show_debug: bool,
     time: f32,
     tick: u32,
     message: String,
@@ -377,6 +378,7 @@ impl<P: Platform> Game<P> {
             net_addr: String::from("127.0.0.1"),
             menu_hover: 0,
             camera: 0,
+            show_debug: false,
             time: 0.30,
             tick: 0,
             message: String::from("Punch trees for wood! WASD move, Shift sneak, E inventory"),
@@ -721,6 +723,9 @@ impl<P: Platform> Game<P> {
                         self.plat.set_capture(false);
                         self.plat.set_cursor(true);
                     }
+                    VK_F3 => {
+                        self.show_debug = !self.show_debug;
+                    }
                     VK_F4 => {
                         let next = self.mode.next();
                         self.set_mode(next);
@@ -983,7 +988,7 @@ impl<P: Platform> Game<P> {
         match self.screen {
             Screen::Title => {
                 let bx = (render::W as i32 - 200) / 2;
-                (0..5).map(|i| (bx, 116 + i as i32 * 26, 200, 21)).collect()
+                (0..5).map(|i| (bx, 108 + i as i32 * 25, 200, 21)).collect()
             }
             Screen::Multiplayer => {
                 let (px, py) = (50, 20);
@@ -3589,7 +3594,16 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         if self.ui != Ui::None { self.ui = Ui::None; }
         let hover = self.hover_index();
         let gm_label = format!("Game Mode: {}", self.mode.name());
-        render::draw_title(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
+        // Render live rotating 3D Minecraft world panorama behind the title menu
+        let pan_yaw = self.title_t * 0.14;
+        let pan_y = (self.spawn.1 + 12.0).clamp(44.0, 80.0);
+        let cam = Cam::from(pan_yaw, -0.14, self.spawn.0, pan_y, self.spawn.2);
+        let atlas = Textures::atlas();
+        let shader = packs::active_shader();
+        self.scene.clear();
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader);
+        render::upscale(&self.scene, &mut self.fb);
+        render::draw_title_overlay(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
     }
@@ -3726,6 +3740,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.camera,
                 self.time,
                 self.mode,
+                self.show_debug,
             );
             // crosshair progress
             if let Some((_, prog)) = self.mining {

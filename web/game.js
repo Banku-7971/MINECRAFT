@@ -171,7 +171,7 @@ const VK = {
   Escape: 27, Space: 32,
   ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
   KeyA: 65, KeyC: 67, KeyD: 68, KeyE: 69, KeyF: 70, KeyQ: 81, KeyS: 83, KeyT: 84, KeyW: 87,
-  F5: 116,
+  F3: 114, F5: 116,
   Digit1: 49, Digit2: 50, Digit3: 51, Digit4: 52, Digit5: 53,
   Digit6: 54, Digit7: 55, Digit8: 56, Digit9: 57,
   Numpad1: 97, Numpad2: 98, Numpad3: 99, Numpad4: 100, Numpad5: 101,
@@ -179,7 +179,7 @@ const VK = {
 };
 
 const preventDefault = new Set([
-  'Space', 'Tab', 'F5',
+  'Space', 'Tab', 'F3', 'F5',
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
 ]);
 

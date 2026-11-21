@@ -556,8 +556,8 @@ fn sky_color(dim: Dimension, dir_y: f32, time: f32, x: i32, y: i32) -> [f32; 3] 
             let t = ((dir_y * 0.5 + 0.5) * (1.0 - horizon) + horizon).clamp(0.0, 1.0);
             let night_top = [8.0, 14.0, 36.0];
             let night_bot = [22.0, 26.0, 56.0];
-            let day_top = [72.0, 148.0, 242.0];
-            let day_bot = [178.0, 218.0, 252.0];
+            let day_top = [110.0, 162.0, 252.0];
+            let day_bot = [188.0, 222.0, 255.0];
             let dusk = [240.0, 138.0, 88.0];
             let dusk_amt = (1.0 - sun.abs() * 3.0).clamp(0.0, 1.0) * 0.78;
             let mut c = [0.0; 3];
@@ -585,9 +585,9 @@ fn cloud_color(cam: &Cam, dx: f32, dy: f32, dz: f32, time: f32, day: f32) -> Opt
     let wz = ((cam.z + dz * t) / 14.0).floor() as i32;
     let h = th(wx / 2, wz / 2, 777) % 11;
     if h < 3 {
-        let edge = (wx & 1) == 0 && (wz & 1) == 0;
-        let v = if edge { 188.0 + day * 52.0 } else { 205.0 + day * 50.0 };
-        Some([v, v, (v + 6.0).min(255.0)])
+        let edge = (wx & 1) == 0 || (wz & 1) == 0;
+        let v = if edge { 196.0 + day * 50.0 } else { 216.0 + day * 39.0 };
+        Some([v.min(255.0), (v + 1.0).min(255.0), (v + 6.0).min(255.0)])
     } else { None }
 }
 
@@ -2022,42 +2022,54 @@ pub const HOT_Y: i32 = 238;
 pub fn hotbar_x(i: usize) -> i32 { W as i32 / 2 - (9 * (SLOT + 2)) / 2 + i as i32 * (SLOT + 2) }
 
 pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32, swing: f32) {
-    let bob_x = (walk_bob * 0.8).cos() * 3.0 - swing.sin() * 14.0;
-    let bob_y = (walk_bob * 1.6).sin().abs() * 3.0 + swing.sin() * 10.0;
-    let bx = (402.0 + bob_x) as i32;
-    let by = (188.0 + bob_y) as i32;
+    let bob_x = (walk_bob * 0.8).cos() * 3.5 - swing.sin() * 18.0;
+    let bob_y = (walk_bob * 1.6).sin().abs() * 3.5 + swing.sin() * 12.0;
     if item == 0 {
-        // Chunky angled 3D-shaded first-person Steve forearm emerging from bottom-right
-        for row in 0..84 {
-            let slant = ((row as f32) * 0.45) as i32;
-            let px = bx + 18 + slant;
-            let py = by + 10 + row;
-            if row > 54 {
-                fb.rect(px - 2, py, 22, 1, [44, 134, 152, 255]);
-                fb.rect(px + 20, py, 10, 1, [32, 102, 118, 255]);
+        // Authentic chunky 3D-perspective Steve arm emerging from bottom-right
+        let bx = (388.0 + bob_x) as i32;
+        let by = (178.0 + bob_y) as i32;
+        for row in 0..96 {
+            let slant = ((row as f32) * 0.56) as i32;
+            let px = bx + slant;
+            let py = by + row;
+            if py >= H as i32 { break; }
+            if row > 64 {
+                // Cyan shirt sleeve cuff
+                fb.rect(px - 2, py, 34, 1, [44, 134, 152, 255]);
+                fb.rect(px + 32, py, 14, 1, [30, 98, 114, 255]);
             } else {
-                fb.rect(px, py, 20, 1, [218, 170, 130, 255]);
-                fb.rect(px + 20, py, 9, 1, [168, 124, 90, 255]);
-                if row < 4 {
-                    fb.rect(px, py, 20, 1, [236, 192, 154, 255]);
+                // Forearm skin front + right shaded face + subtle top rim
+                fb.rect(px, py, 32, 1, [216, 168, 128, 255]);
+                fb.rect(px + 32, py, 13, 1, [166, 122, 88, 255]);
+                if row < 5 {
+                    fb.rect(px, py, 32, 1, [234, 190, 152, 255]);
+                    fb.rect(px + 32, py, 13, 1, [188, 144, 108, 255]);
                 }
             }
         }
+    } else if item < 256 && !is_flat_block_icon(item) {
+        // Classic Minecraft big isometric held block in the bottom-right foreground
+        let bx = (398.0 + bob_x) as i32;
+        let by = (188.0 + bob_y) as i32;
+        draw_item_icon(fb, bx, by, item, 58, tick);
     } else {
-        // Angled forearm + held 3D block or tool
-        for row in 0..56 {
-            let slant = ((row as f32) * 0.38) as i32;
-            let px = bx + 26 + slant;
-            let py = by + 32 + row;
-            if row > 34 {
-                fb.rect(px - 1, py, 18, 1, [44, 134, 152, 255]);
-                fb.rect(px + 17, py, 8, 1, [32, 102, 118, 255]);
+        // Tool / sword / flat item held in hand
+        let bx = (394.0 + bob_x) as i32;
+        let by = (182.0 + bob_y) as i32;
+        for row in 0..64 {
+            let slant = ((row as f32) * 0.48) as i32;
+            let px = bx + 28 + slant;
+            let py = by + 28 + row;
+            if py >= H as i32 { break; }
+            if row > 42 {
+                fb.rect(px - 1, py, 24, 1, [44, 134, 152, 255]);
+                fb.rect(px + 23, py, 10, 1, [30, 98, 114, 255]);
             } else {
-                fb.rect(px, py, 17, 1, [214, 166, 126, 255]);
-                fb.rect(px + 17, py, 7, 1, [166, 122, 88, 255]);
+                fb.rect(px, py, 22, 1, [214, 166, 126, 255]);
+                fb.rect(px + 22, py, 9, 1, [166, 122, 88, 255]);
             }
         }
-        draw_item_icon(fb, bx + 2, by + 2, item, 42, tick);
+        draw_item_icon(fb, bx + 4, by + 2, item, 42, tick);
     }
 }
 
@@ -2088,30 +2100,38 @@ pub fn draw_hud(
     camera: u8,
     time: f32,
     mode: GameMode,
+    show_debug: bool,
 ) {
     let hb_left = hotbar_x(0);
     if mode != GameMode::Spectator {
         if offhand != 0 {
             let ox = hb_left - SLOT - 8;
-            fb.rect(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, [28, 28, 30, 210]);
-            fb.frame(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, if shield_blocking { [220, 220, 255, 255] } else { [15, 15, 16, 255] });
+            fb.rect(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, [24, 24, 26, 220]);
+            fb.frame(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, if shield_blocking { [220, 220, 255, 255] } else { [18, 18, 20, 255] });
             draw_item_icon(fb, ox + 3, HOT_Y + 3, offhand, SLOT - 6, tick);
         }
-        fb.rect(hb_left - 2, HOT_Y - 2, 9 * (SLOT + 2) + 2, SLOT + 4, [28, 28, 30, 210]);
-        fb.frame(hb_left - 2, HOT_Y - 2, 9 * (SLOT + 2) + 2, SLOT + 4, [15, 15, 16, 255]);
+        // Classic Minecraft continuous hotbar frame
+        let bar_w = 9 * (SLOT + 2) + 2;
+        fb.rect(hb_left - 2, HOT_Y - 2, bar_w, SLOT + 4, [24, 24, 26, 210]);
+        fb.frame(hb_left - 2, HOT_Y - 2, bar_w, SLOT + 4, [72, 72, 76, 255]);
+        fb.frame(hb_left - 3, HOT_Y - 3, bar_w + 2, SLOT + 6, [18, 18, 20, 255]);
         for i in 0..9 {
             let x = hotbar_x(i);
-            fb.rect(x, HOT_Y, SLOT, SLOT, [110, 110, 114, 170]);
-            fb.frame(x, HOT_Y, SLOT, SLOT, [55, 55, 58, 255]);
-            if i == selected {
-                fb.frame(x - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, [245, 245, 245, 255]);
-                fb.frame(x - 1, HOT_Y - 1, SLOT + 2, SLOT + 2, [200, 200, 200, 255]);
-            }
+            fb.rect(x, HOT_Y, SLOT, SLOT, [118, 118, 122, 165]);
+            fb.rect(x, HOT_Y, SLOT, 1, [42, 42, 44, 220]);
+            fb.rect(x, HOT_Y, 1, SLOT, [42, 42, 44, 220]);
+            fb.rect(x + SLOT - 1, HOT_Y, 1, SLOT, [160, 160, 166, 180]);
+            fb.rect(x, HOT_Y + SLOT - 1, SLOT, 1, [160, 160, 166, 180]);
             if hot[i] != 0 { draw_item_icon(fb, x + 3, HOT_Y + 3, hot[i], SLOT - 6, tick); }
             if counts[i] > 1 {
                 text_shadow(fb, x + SLOT - 11, HOT_Y + SLOT - 7, &counts[i].to_string(), [255, 255, 255, 255], 1);
             }
         }
+        // Draw active selector box on top so its crisp double-bevel overlaps cleanly
+        let sx = hotbar_x(selected);
+        fb.frame(sx - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, [238, 238, 240, 255]);
+        fb.frame(sx - 1, HOT_Y - 1, SLOT + 2, SLOT + 2, [196, 196, 200, 255]);
+        fb.frame(sx - 3, HOT_Y - 3, SLOT + 6, SLOT + 6, [34, 34, 38, 220]);
         if mode == GameMode::Survival {
             if armor > 0 {
                 for i in 0..10 {
@@ -2173,11 +2193,13 @@ pub fn draw_hud(
     }
 
     let cx = W as i32 / 2; let cy = H as i32 / 2;
-    fb.rect(cx - 4, cy, 9, 1, [240, 240, 240, 200]);
-    fb.rect(cx, cy - 4, 1, 9, [240, 240, 240, 200]);
+    fb.rect(cx - 4, cy, 9, 1, [235, 235, 235, 210]);
+    fb.rect(cx, cy - 4, 1, 9, [235, 235, 235, 210]);
 
-    text_shadow(fb, 8, 8, &format!("{} ({})  XYZ {:.0} {:.0} {:.0}", biome.name(), dim.name(), pos.0, pos.1, pos.2), [240, 240, 240, 255], 1);
-    text_shadow(fb, 8, 18, &format!("FPS {}  CAM {}  TIME {:02}:00  [{}]", fps, camera, ((time * 24.0) as i32) % 24, mode.name()), [200, 230, 255, 255], 1);
+    if show_debug {
+        text_shadow(fb, 8, 8, &format!("{} ({})  XYZ {:.0} {:.0} {:.0}", biome.name(), dim.name(), pos.0, pos.1, pos.2), [240, 240, 240, 255], 1);
+        text_shadow(fb, 8, 18, &format!("FPS {}  CAM {}  TIME {:02}:00  [{}]", fps, camera, ((time * 24.0) as i32) % 24, mode.name()), [200, 230, 255, 255], 1);
+    }
 
     if let Some(hp) = dragon_hp {
         let bw = 180;
@@ -2281,23 +2303,29 @@ pub fn slot(fb: &mut Framebuffer, x: i32, y: i32, size: i32, hover: bool) {
 }
 
 pub fn button(fb: &mut Framebuffer, x: i32, y: i32, w: i32, h: i32, label: &str, hover: bool) {
-    let top = if hover { [120, 140, 186, 255] } else { [116, 116, 120, 255] };
-    let bot = if hover { [86, 106, 152, 255] } else { [82, 82, 86, 255] };
+    // Classic Minecraft stone-textured GUI button with bevel & hover highlight
     for r in 0..h {
-        let t = r as f32 / h.max(1) as f32;
-        let c = [
-            (top[0] as f32 * (1.0 - t) + bot[0] as f32 * t) as u8,
-            (top[1] as f32 * (1.0 - t) + bot[1] as f32 * t) as u8,
-            (top[2] as f32 * (1.0 - t) + bot[2] as f32 * t) as u8,
-            255,
-        ];
-        fb.rect(x, y + r, w, 1, c);
+        for c in 0..w {
+            let n = (th(c / 2, r / 2, 313) % 15) as i32 - 7;
+            let base = if hover { 120 } else { 116 };
+            let shade = base + n - (r * 14 / h.max(1));
+            let (rr, gg, bb) = if hover {
+                ((shade + 12).clamp(40, 220) as u8, (shade + 20).clamp(40, 220) as u8, (shade + 56).clamp(60, 245) as u8)
+            } else {
+                (shade.clamp(40, 210) as u8, shade.clamp(40, 210) as u8, (shade + 3).clamp(40, 210) as u8)
+            };
+            fb.set(x + c, y + r, rr, gg, bb, 255);
+        }
     }
-    fb.rect(x + 1, y + 1, w - 2, 1, [160, 160, 165, 255]);
-    let border = if hover { [255, 255, 255, 255] } else { [28, 28, 32, 255] };
+    fb.rect(x + 1, y + 1, w - 2, 1, if hover { [186, 198, 242, 255] } else { [170, 170, 174, 255] });
+    fb.rect(x + 1, y + 1, 1, h - 2, if hover { [170, 182, 226, 255] } else { [155, 155, 159, 255] });
+    fb.rect(x + 1, y + h - 2, w - 2, 1, [68, 68, 72, 255]);
+    fb.rect(x + w - 2, y + 1, 1, h - 2, [68, 68, 72, 255]);
+    let border = if hover { [255, 255, 255, 255] } else { [18, 18, 20, 255] };
     fb.frame(x, y, w, h, border);
     let tw = label.len() as i32 * 6;
-    text_shadow(fb, x + (w - tw) / 2, y + (h - 5) / 2, label, [255, 255, 255, 255], 1);
+    let txt_col = if hover { [255, 255, 160, 255] } else { [240, 240, 240, 255] };
+    text_shadow(fb, x + (w - tw) / 2, y + (h - 5) / 2, label, txt_col, 1);
 }
 
 pub fn draw_tooltip(fb: &mut Framebuffer, name: &str) {
@@ -2311,6 +2339,7 @@ pub fn draw_tooltip(fb: &mut Framebuffer, name: &str) {
     text_shadow(fb, x + 5, y + 4, name, [255, 255, 255, 255], 1);
 }
 
+#[allow(dead_code)]
 pub fn creeper_face(fb: &mut Framebuffer, x: i32, y: i32, scale: i32) {
     let g1 = [66, 146, 56, 255];
     let g2 = [52, 120, 44, 255];
@@ -2325,64 +2354,71 @@ pub fn creeper_face(fb: &mut Framebuffer, x: i32, y: i32, scale: i32) {
     fb.rect(x + 5 * scale, y + 7 * scale, 1 * scale, 1 * scale, dk);
 }
 
-pub fn draw_title(fb: &mut Framebuffer, buttons: &[&str], hover: usize, splash: &str, t: f32) {
-    let atlas = Textures::atlas();
-    for y in 0..H as i32 {
-        let f = y as f32 / H as f32;
-        let r = (92.0 * (1.0 - f) + 178.0 * f) as u8;
-        let g = (158.0 * (1.0 - f) + 216.0 * f) as u8;
-        let b = (238.0 * (1.0 - f) + 252.0 * f) as u8;
-        fb.rect(0, y, W as i32, 1, [r, g, b, 255]);
-    }
-    fb.rect(392, 24, 26, 26, [255, 250, 210, 255]);
-    fb.rect(396, 28, 18, 18, [255, 255, 235, 255]);
-    for i in 0..4 {
-        let cx = ((t * 9.0 + i as f32 * 150.0) % 620.0) - 70.0;
-        let cy = 36 + i * 20;
-        fb.rect(cx as i32, cy, 74, 10, [245, 246, 250, 255]);
-        fb.rect(cx as i32 + 12, cy - 7, 46, 8, [245, 246, 250, 255]);
-    }
-    // Textured voxel hills + real 16x16 Minecraft grass/dirt ground
-    let scroll = (t * 8.0) as i32;
-    for y in 198..H as i32 {
-        for x in 0..W as i32 {
-            let wx = (x + scroll) / 2;
-            let ground_y = 204 + ((wx as f32 * 0.04).sin() * 6.0) as i32;
-            if y < ground_y { continue; }
-            let dy = (y - ground_y) / 2;
-            let k = if dy < 16 { 2 } else { 3 };
-            let c = atlas.sample_kind(k, (wx & 15) as f32 / 16.0, (dy & 15) as f32 / 16.0, 0, false);
-            let shade = if dy < 16 { 0.96 } else { 0.80 };
-            fb.set(x, y, (c[0] as f32 * shade) as u8, (c[1] as f32 * shade) as u8, (c[2] as f32 * shade) as u8, 255);
-        }
-    }
+pub fn draw_title_overlay(fb: &mut Framebuffer, buttons: &[&str], hover: usize, splash: &str, t: f32) {
+    // Subtle translucent vignette over the live 3D rotating panorama
+    fb.rect(0, 0, W as i32, H as i32, [10, 14, 22, 42]);
 
+    // Classic chunky stone-chiseled MINECRAFT logo with 3D extruded shadow
     let title = "MINECRAFT";
     let scale = 4;
     let tw = title.len() as i32 * 6 * scale;
     let tx = (W as i32 - tw) / 2;
-    let bob = ((t * 1.6).sin() * 1.5) as i32;
-    text(fb, tx + 3, 28 + bob + 3, title, [40, 40, 40, 220], scale);
-    for (i, ch) in title.chars().enumerate() {
-        let c = if i % 2 == 0 { [225, 225, 225, 255] } else { [245, 245, 245, 255] };
-        text(fb, tx + i as i32 * 6 * scale, 28 + bob, &ch.to_string(), c, scale);
+    let ty = 26;
+    for d in (1..=4).rev() {
+        let du = d as u8;
+        let sh = [26 + du * 4, 26 + du * 4, 30 + du * 4, 230];
+        text(fb, tx + d, ty + d, title, sh, scale);
     }
-    fb.rect(tx, 28 + bob + 8 * scale + 1, tw, 2, [70, 70, 70, 160]);
+    for (i, ch) in title.chars().enumerate() {
+        let cx = tx + i as i32 * 6 * scale;
+        let g = glyph(ch);
+        for row in 0..5 {
+            for col in 0..5 {
+                if g[row] & (1 << (4 - col)) != 0 {
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let n = (th(cx + sx, row as i32 * scale + sy, 42) % 24) as i32 - 12;
+                            let base = 222 - (row as i32 * 10 + sy * 2) + n;
+                            let v = base.clamp(120, 248) as u8;
+                            fb.set(cx + col as i32 * scale + sx, ty + row as i32 * scale + sy, v, v, (v as u16 + 4).min(255) as u8, 255);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Edition subtitle bar underneath MINECRAFT
+    let sub = "JAVA EDITION";
+    let sub_w = sub.len() as i32 * 6;
+    text_shadow(fb, (W as i32 - sub_w) / 2, ty + 25, sub, [225, 228, 234, 255], 1);
 
+    // Classic bouncing yellow splash text cleanly below the subtitle
     let sw = splash.len() as i32 * 6;
-    let sx = tx + tw - sw;
-    let sy = 28 + bob + 8 * scale + 6 + ((t * 4.0).sin() * 2.0) as i32;
-    text_shadow(fb, sx, sy, splash, [255, 255, 40, 255], 1);
-
-    creeper_face(fb, W as i32 - 56, 98, 6);
+    let sx = (tx + tw - sw / 2).clamp(8, W as i32 - sw - 8);
+    let sy = ty + 38 + ((t * 4.5).sin() * 2.5) as i32;
+    text_shadow(fb, sx, sy, splash, [255, 255, 42, 255], 1);
 
     let bw = 200;
     let bx = (W as i32 - bw) / 2;
     for (i, label) in buttons.iter().enumerate() {
-        let y = 116 + i as i32 * 26;
+        let y = 108 + i as i32 * 25;
         button(fb, bx, y, bw, 21, label, hover == i);
     }
-    text_shadow(fb, 8, H as i32 - 14, "Minecraft Rust Edition", [235, 235, 235, 230], 1);
+    text_shadow(fb, 8, H as i32 - 12, "Minecraft 1.20 Rust", [235, 235, 235, 230], 1);
+    let cr = "Press F3 in-game for XYZ";
+    text_shadow(fb, W as i32 - cr.len() as i32 * 6 - 8, H as i32 - 12, cr, [225, 225, 230, 210], 1);
+}
+
+#[allow(dead_code)]
+pub fn draw_title(fb: &mut Framebuffer, buttons: &[&str], hover: usize, splash: &str, t: f32) {
+    for y in 0..H as i32 {
+        let f = y as f32 / H as f32;
+        let r = (110.0 * (1.0 - f) + 188.0 * f) as u8;
+        let g = (162.0 * (1.0 - f) + 222.0 * f) as u8;
+        let b = (252.0 * (1.0 - f) + 255.0 * f) as u8;
+        fb.rect(0, y, W as i32, 1, [r, g, b, 255]);
+    }
+    draw_title_overlay(fb, buttons, hover, splash, t);
 }
 
 // ===================== Survival Inventory =====================
