@@ -6,6 +6,7 @@ use crate::craft::{self, Stack, GRID};
 use crate::entities::{self, Drop, Mob, MobKind};
 use crate::items;
 use crate::net::{Net, NetEvent};
+use crate::packs;
 use crate::platform::{self as plat, Event, Platform};
 use crate::render::{self, Cam, EntityKind, Framebuffer, GameMode, Textures};
 use crate::sound::{Audio, Sfx};
@@ -139,7 +140,6 @@ pub struct Game<P: Platform> {
     pub audio: Audio,
     net: Net,
     world: World,
-    tex: Textures,
     scene: Framebuffer,
     fb: Framebuffer,
     pub player: Player,
@@ -342,7 +342,6 @@ impl<P: Platform> Game<P> {
             audio: Audio::new(),
             net: Net::offline(),
             world,
-            tex: Textures::new(),
             scene: Framebuffer::new(scene_w, scene_h),
             fb: Framebuffer::new(render::W, render::H),
             player,
@@ -443,7 +442,30 @@ impl<P: Platform> Game<P> {
             tool_dur: [0; HOT],
         };
         game.load_world();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            game.reload_native_packs();
+        }
         game
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reload_native_packs(&mut self) {
+        packs::reset_all_packs();
+        let mut count = 0usize;
+        for dir_name in ["packs", "runtime/packs"] {
+            let p = std::path::Path::new(dir_name);
+            if p.is_dir() {
+                for info in packs::scan_packs_dir(p) {
+                    count += 1;
+                    self.push_chat(&format!("Loaded [{}] {}: {}", info.kind.label(), info.name, info.description));
+                }
+            }
+        }
+        if count > 0 {
+            self.message = format!("Loaded {} pack(s) from packs/", count);
+            self.msg_timer = 4.0;
+        }
     }
 
     pub fn run(mut self) {
@@ -810,8 +832,46 @@ impl<P: Platform> Game<P> {
                 }
                 true
             }
+            Some("/shader") => {
+                let sh = if let Some(arg) = parts.get(1) {
+                    if let Ok(idx) = arg.parse::<usize>() {
+                        packs::set_shader_preset(idx)
+                    } else {
+                        let al = arg.to_ascii_lowercase();
+                        let idx = if al.contains("bsl") { 1 }
+                            else if al.contains("comp") { 2 }
+                            else if al.contains("sildur") { 3 }
+                            else if al.contains("nost") { 4 }
+                            else if al.contains("van") || al.contains("off") { 0 }
+                            else { return { let s = packs::cycle_shader_preset(); self.push_chat(&format!("Shader: {}", s.name)); true }; };
+                        packs::set_shader_preset(idx)
+                    }
+                } else {
+                    packs::cycle_shader_preset()
+                };
+                self.push_chat(&format!("Shader set to {}", sh.name));
+                true
+            }
+            Some("/packs") => {
+                let loaded = packs::loaded_packs();
+                if loaded.is_empty() {
+                    self.push_chat("No packs loaded. Drop .zip/.mrpack in packs/ or use the web Pack Loader.");
+                } else {
+                    for p in &loaded {
+                        self.push_chat(&format!("[{}] {}: {}", p.kind.label(), p.name, p.description));
+                    }
+                }
+                true
+            }
+            Some("/reloadpacks") => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.reload_native_packs();
+                #[cfg(target_arch = "wasm32")]
+                self.push_chat(&format!("{} pack(s) active in browser", packs::pack_count()));
+                true
+            }
             _ => {
-                self.push_chat("Commands: /gamemode <survival|creative|spectator>, /dim <overworld|nether|end>, /tp <x> <y> <z>");
+                self.push_chat("Commands: /gamemode, /dim, /tp <x> <y> <z>, /shader [0-4], /packs, /reloadpacks");
                 true
             }
         }
@@ -931,8 +991,8 @@ impl<P: Platform> Game<P> {
                 ]
             }
             Screen::Options => {
-                let (px, py) = (70, 22);
-                (0..5).map(|i| (px + 60, py + 38 + i * 28, 220, 22)).collect()
+                let (px, py, pw) = (64, 14, 352);
+                (0..7).map(|i| (px + 54, py + 26 + i * 26, pw - 108, 22)).collect()
             }
             Screen::Playing => Vec::new(),
         }
@@ -963,6 +1023,11 @@ impl<P: Platform> Game<P> {
                         1 => { self.music_on = !self.music_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on); }
                         2 => { self.pixel_scale = if self.pixel_scale >= 4 { 1 } else { self.pixel_scale + 1 }; let (sw, sh) = scene_dims(self.pixel_scale); self.scene = Framebuffer::new(sw, sh); }
                         3 => { self.camera = (self.camera + 1) % 3; }
+                        4 => { packs::cycle_shader_preset(); }
+                        5 => {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.reload_native_packs();
+                        }
                         _ => { if self.return_to_pause { self.return_to_pause = false; self.screen = Screen::Playing; self.ui = Ui::Pause; } else { self.screen = Screen::Title; } }
                     },
                     Screen::Playing => {}
@@ -3462,7 +3527,8 @@ impl<P: Platform> Game<P> {
 
     fn draw_options(&mut self) {
         let hover = self.hover_index();
-        render::draw_options_screen(&mut self.fb, self.sound_on, self.music_on, self.pixel_scale, self.camera, hover);
+        let sh = packs::active_shader();
+        render::draw_options_screen(&mut self.fb, self.sound_on, self.music_on, self.pixel_scale, self.camera, &sh.name, packs::pack_count(), hover);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
     }
@@ -3498,7 +3564,9 @@ impl<P: Platform> Game<P> {
         let mining_overlay = self.mining.map(|((mx, my, mz), prog)| {
             (mx, my, mz, (prog * 10.0).clamp(0.0, 9.0) as u8)
         });
-        render::render_world(&mut self.scene, &self.tex, &mut self.world, &cam, self.time, self.tick, mining_overlay);
+        let atlas = Textures::atlas();
+        let shader = packs::active_shader();
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, self.time, self.tick, mining_overlay, &shader);
         if self.mode != GameMode::Spectator && self.ui == Ui::None {
             if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, REACH, false) {
                 render::draw_block_outline(&mut self.scene, &cam, h.x, h.y, h.z);

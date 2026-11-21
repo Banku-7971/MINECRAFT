@@ -7,6 +7,7 @@ mod entities;
 mod game;
 mod items;
 mod net;
+mod packs;
 mod platform;
 mod render;
 mod sound;

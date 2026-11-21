@@ -1,5 +1,6 @@
 //! Crafting recipes and furnace smelting, Minecraft style.
 use crate::{items, world};
+use std::sync::{OnceLock, RwLock};
 
 pub const GRID: usize = 9;
 
@@ -15,11 +16,44 @@ impl Stack {
     pub fn is_empty(&self) -> bool { self.id == 0 || self.count == 0 }
 }
 
+#[derive(Clone)]
 pub struct Recipe {
     /// 3x3 pattern, 0 = empty. Rows are top to bottom.
     pub pattern: [u16; 9],
     pub out: u16,
     pub count: u32,
+}
+
+#[derive(Clone)]
+pub struct ShapelessRecipe {
+    pub ingredients: Vec<u16>,
+    pub out: u16,
+    pub count: u32,
+}
+
+static CUSTOM_SHAPED: OnceLock<RwLock<Vec<Recipe>>> = OnceLock::new();
+static CUSTOM_SHAPELESS: OnceLock<RwLock<Vec<ShapelessRecipe>>> = OnceLock::new();
+static CUSTOM_SMELT: OnceLock<RwLock<Vec<(u16, u16)>>> = OnceLock::new();
+
+pub fn clear_custom_recipes() {
+    if let Ok(mut g) = CUSTOM_SHAPED.get_or_init(|| RwLock::new(Vec::new())).write() { g.clear(); }
+    if let Ok(mut g) = CUSTOM_SHAPELESS.get_or_init(|| RwLock::new(Vec::new())).write() { g.clear(); }
+    if let Ok(mut g) = CUSTOM_SMELT.get_or_init(|| RwLock::new(Vec::new())).write() { g.clear(); }
+}
+
+pub fn add_custom_shaped(r: Recipe) {
+    if let Ok(mut g) = CUSTOM_SHAPED.get_or_init(|| RwLock::new(Vec::new())).write() { g.push(r); }
+}
+
+pub fn add_custom_shapeless(r: ShapelessRecipe) {
+    if let Ok(mut g) = CUSTOM_SHAPELESS.get_or_init(|| RwLock::new(Vec::new())).write() { g.push(r); }
+}
+
+pub fn add_custom_smelt(input: u16, output: u16) {
+    if let Ok(mut g) = CUSTOM_SMELT.get_or_init(|| RwLock::new(Vec::new())).write() {
+        g.retain(|(i, _)| *i != input);
+        g.push((input, output));
+    }
 }
 
 macro_rules! shaped {
@@ -138,10 +172,15 @@ pub fn recipes() -> Vec<Recipe> {
 
 /// Find a recipe whose pattern matches the 3x3 grid (any offset, 2x2 allowed).
 pub fn match_recipe(grid: &[Stack; GRID]) -> Option<Stack> {
-    let list = recipes();
+    let mut list = Vec::new();
+    if let Ok(custom) = CUSTOM_SHAPED.get_or_init(|| RwLock::new(Vec::new())).read() {
+        list.extend(custom.iter().cloned());
+    }
+    list.extend(recipes());
     let mut cells = [(0u16, 0usize); GRID];
     let mut min_x = 3usize; let mut min_y = 3usize; let mut max_x = 0usize; let mut max_y = 0usize;
     let mut any = false;
+    let mut flat_items: Vec<u16> = Vec::new();
     for y in 0..3 {
         for x in 0..3 {
             let st = grid[y * 3 + x];
@@ -149,6 +188,7 @@ pub fn match_recipe(grid: &[Stack; GRID]) -> Option<Stack> {
             cells[y * 3 + x] = (id, st.count as usize);
             if id != 0 {
                 any = true;
+                flat_items.push(id);
                 min_x = min_x.min(x); min_y = min_y.min(y);
                 max_x = max_x.max(x); max_y = max_y.max(y);
             }
@@ -166,6 +206,7 @@ pub fn match_recipe(grid: &[Stack; GRID]) -> Option<Stack> {
                 r_max_x = r_max_x.max(x); r_max_y = r_max_y.max(y);
             }
         }}
+        if r_max_x < r_min_x || r_max_y < r_min_y { continue; }
         if r_max_x - r_min_x + 1 != w || r_max_y - r_min_y + 1 != h { continue; }
         for y in 0..h { for x in 0..w {
             let want = r.pattern[(r_min_y + y) * 3 + (r_min_x + x)];
@@ -173,6 +214,17 @@ pub fn match_recipe(grid: &[Stack; GRID]) -> Option<Stack> {
             if want != got { continue 'outer; }
         }}
         return Some(Stack::new(r.out, r.count));
+    }
+    if let Ok(sl) = CUSTOM_SHAPELESS.get_or_init(|| RwLock::new(Vec::new())).read() {
+        flat_items.sort_unstable();
+        for r in sl.iter() {
+            if r.ingredients.len() != flat_items.len() { continue; }
+            let mut want = r.ingredients.clone();
+            want.sort_unstable();
+            if want == flat_items {
+                return Some(Stack::new(r.out, r.count));
+            }
+        }
     }
     None
 }
@@ -185,6 +237,11 @@ pub fn consume(grid: &mut [Stack; GRID]) {
 }
 
 pub fn smelt_result(id: u16) -> Option<u16> {
+    if let Ok(custom) = CUSTOM_SMELT.get_or_init(|| RwLock::new(Vec::new())).read() {
+        if let Some((_, out)) = custom.iter().find(|(inp, _)| *inp == id) {
+            return Some(*out);
+        }
+    }
     use items::*;
     Some(match id {
         world::IRON_ORE => IRON_INGOT,
