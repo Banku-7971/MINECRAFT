@@ -12,9 +12,13 @@ use crate::render::{self, Cam, EntityKind, Framebuffer, GameMode, Textures};
 use crate::sound::{Audio, Sfx};
 use crate::world::{self, Dimension, World};
 
+#[path = "commands.rs"]
+mod commands;
+
 pub const HOT: usize = 9;
 pub const STORE: usize = 27;
-const REACH: f32 = 5.5;
+const DEFAULT_BLOCK_REACH: f32 = 4.5;
+const DEFAULT_ENTITY_REACH: f32 = 3.0;
 
 pub struct Player {
     pub x: f32, pub y: f32, pub z: f32, pub vy: f32,
@@ -227,6 +231,9 @@ pub struct Game<P: Platform> {
     mouse_right: bool,
     potion_fire: f32,
     potion_speed: f32,
+    potion_jump: f32,
+    potion_strength: f32,
+    potion_regen: f32,
     elytra_gliding: bool,
     enchant_slots: [Stack; 2],
     anvil_slots: [Stack; 2],
@@ -241,6 +248,22 @@ pub struct Game<P: Platform> {
     crop_timer: f32,
     spawner_timer: f32,
     tool_dur: [u16; HOT],
+    block_reach_base: f32,
+    entity_reach_base: f32,
+    weather: u8,
+    weather_timer: f32,
+    difficulty: u8,
+    speed_mul: f32,
+    rule_keep_inventory: bool,
+    rule_daylight_cycle: bool,
+    rule_mob_spawning: bool,
+    rule_mob_griefing: bool,
+    rule_fall_damage: bool,
+    rule_drowning_damage: bool,
+    rule_weather_cycle: bool,
+    chat_history: Vec<String>,
+    chat_hist_idx: Option<usize>,
+    ignore_open_char: bool,
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -432,6 +455,9 @@ impl<P: Platform> Game<P> {
             mouse_right: false,
             potion_fire: 0.0,
             potion_speed: 0.0,
+            potion_jump: 0.0,
+            potion_strength: 0.0,
+            potion_regen: 0.0,
             elytra_gliding: false,
             enchant_slots: [Stack::EMPTY; 2],
             anvil_slots: [Stack::EMPTY; 2],
@@ -446,6 +472,22 @@ impl<P: Platform> Game<P> {
             crop_timer: 0.0,
             spawner_timer: 0.0,
             tool_dur: [0; HOT],
+            block_reach_base: DEFAULT_BLOCK_REACH,
+            entity_reach_base: DEFAULT_ENTITY_REACH,
+            weather: 0,
+            weather_timer: 240.0,
+            difficulty: 2,
+            speed_mul: 1.0,
+            rule_keep_inventory: false,
+            rule_daylight_cycle: true,
+            rule_mob_spawning: true,
+            rule_mob_griefing: true,
+            rule_fall_damage: true,
+            rule_drowning_damage: true,
+            rule_weather_cycle: true,
+            chat_history: Vec::new(),
+            chat_hist_idx: None,
+            ignore_open_char: false,
         };
         game.load_world();
         #[cfg(not(target_arch = "wasm32"))]
@@ -497,6 +539,21 @@ impl<P: Platform> Game<P> {
     ///
     /// Native builds pace this with `Platform::sleep_ms`; the WebAssembly
     /// build calls it from JavaScript once per animation frame.
+    #[inline]
+    pub fn block_reach(&self) -> f32 {
+        self.block_reach_base + if self.mode == GameMode::Creative { 0.5 } else { 0.0 }
+    }
+
+    #[inline]
+    pub fn entity_reach(&self) -> f32 {
+        self.entity_reach_base + if self.mode == GameMode::Creative { 2.0 } else { 0.0 }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn is_chat_open(&self) -> bool {
+        self.screen == Screen::Playing && self.ui == Ui::Chat
+    }
+
     pub fn frame(&mut self) {
         if self.plat.should_quit() || self.quit { return; }
         let now = self.plat.now();
@@ -541,7 +598,13 @@ impl<P: Platform> Game<P> {
             match e {
                 Event::Close => { self.quit = true; }
                 Event::Resize(_, _) => {}
-                Event::FocusLost => { self.keys.clear(); self.mouse_left = false; self.sprinting = false; }
+                Event::FocusLost => {
+                    self.keys.clear();
+                    self.mouse_left = false;
+                    self.mouse_right = false;
+                    self.mining = None;
+                    self.sprinting = false;
+                }
                 Event::MouseMove { dx, dy } => {
                     if self.screen == Screen::Playing && (self.ui == Ui::None || self.ui == Ui::Chat) {
                         let sens = 0.0026;
@@ -563,7 +626,9 @@ impl<P: Platform> Game<P> {
                     }
                 }
                 Event::Char(c) => {
-                    if self.ui == Ui::Chat {
+                    if self.ignore_open_char {
+                        self.ignore_open_char = false;
+                    } else if self.ui == Ui::Chat {
                         if !c.is_control() && self.chat_input.len() < 80 { self.chat_input.push(c); }
                     } else if self.ui == Ui::Creative {
                         if !c.is_control() && self.creative_search.len() < 24 {
@@ -598,8 +663,16 @@ impl<P: Platform> Game<P> {
                                 Ui::None => {
                                     self.plat.set_capture(true);
                                     if self.mode != GameMode::Spectator {
-                                        if b == 0 { self.mouse_left = true; self.try_attack(); }
-                                        else if b == 1 { self.mouse_right = true; self.try_use(); }
+                                        if b == 0 {
+                                            self.mouse_left = true;
+                                            self.try_attack();
+                                        } else if b == 1 {
+                                            self.mouse_right = true;
+                                            self.place_cd = 0.0;
+                                            self.try_use(true);
+                                        } else if b == 2 {
+                                            self.pick_block();
+                                        }
                                     }
                                 }
                             }
@@ -630,6 +703,7 @@ impl<P: Platform> Game<P> {
                 }
             }
         }
+        self.ignore_open_char = false;
     }
 
     fn key_pressed(&mut self, code: u32) {
@@ -651,18 +725,47 @@ impl<P: Platform> Game<P> {
                     if code == VK_RETURN {
                         let text = self.chat_input.clone();
                         if !text.is_empty() {
+                            if self.chat_history.last() != Some(&text) {
+                                self.chat_history.push(text.clone());
+                                if self.chat_history.len() > 40 { self.chat_history.remove(0); }
+                            }
                             if !self.handle_command(&text) {
                                 self.chat_lines.push((format!("<Player> {}", text), 0.0));
                                 self.net.send(format!("CHAT|Player|{}", text));
                             }
                         }
                         self.chat_input.clear();
+                        self.chat_hist_idx = None;
                         self.ui = Ui::None;
                         self.plat.set_capture(true);
+                    } else if code == VK_TAB {
+                        if let Some(comp) = commands::autocomplete(&self.chat_input) {
+                            self.chat_input = comp;
+                        }
+                    } else if code == VK_UP {
+                        if !self.chat_history.is_empty() {
+                            let idx = match self.chat_hist_idx {
+                                None => self.chat_history.len() - 1,
+                                Some(i) => i.saturating_sub(1),
+                            };
+                            self.chat_hist_idx = Some(idx);
+                            self.chat_input = self.chat_history[idx].clone();
+                        }
+                    } else if code == VK_DOWN {
+                        if let Some(i) = self.chat_hist_idx {
+                            if i + 1 < self.chat_history.len() {
+                                self.chat_hist_idx = Some(i + 1);
+                                self.chat_input = self.chat_history[i + 1].clone();
+                            } else {
+                                self.chat_hist_idx = None;
+                                self.chat_input.clear();
+                            }
+                        }
                     } else if code == VK_BACK {
                         self.chat_input.pop();
                     } else if code == VK_ESCAPE {
                         self.chat_input.clear();
+                        self.chat_hist_idx = None;
                         self.ui = Ui::None;
                         self.plat.set_capture(true);
                     }
@@ -720,6 +823,20 @@ impl<P: Platform> Game<P> {
                     VK_T => {
                         self.ui = Ui::Chat;
                         self.chat_input.clear();
+                        self.chat_hist_idx = None;
+                        self.ignore_open_char = true;
+                        self.mouse_left = false;
+                        self.mouse_right = false;
+                        self.plat.set_capture(false);
+                        self.plat.set_cursor(true);
+                    }
+                    VK_SLASH => {
+                        self.ui = Ui::Chat;
+                        self.chat_input = String::from("/");
+                        self.chat_hist_idx = None;
+                        self.ignore_open_char = true;
+                        self.mouse_left = false;
+                        self.mouse_right = false;
                         self.plat.set_capture(false);
                         self.plat.set_cursor(true);
                     }
@@ -792,98 +909,7 @@ impl<P: Platform> Game<P> {
     }
 
     fn handle_command(&mut self, cmd: &str) -> bool {
-        let trim = cmd.trim();
-        if !trim.starts_with('/') { return false; }
-        let parts: Vec<&str> = trim.split_whitespace().collect();
-        match parts.first().copied() {
-            Some("/gamemode") | Some("/gm") => {
-                if let Some(arg) = parts.get(1) {
-                    match arg.to_ascii_lowercase().as_str() {
-                        "survival" | "s" | "0" => self.set_mode(GameMode::Survival),
-                        "creative" | "c" | "1" => self.set_mode(GameMode::Creative),
-                        "spectator" | "sp" | "3" => self.set_mode(GameMode::Spectator),
-                        _ => self.push_chat("Usage: /gamemode <survival|creative|spectator>"),
-                    }
-                } else {
-                    let next = self.mode.next();
-                    self.set_mode(next);
-                }
-                true
-            }
-            Some("/dim") | Some("/dimension") => {
-                if let Some(arg) = parts.get(1) {
-                    match arg.to_ascii_lowercase().as_str() {
-                        "overworld" | "ow" | "0" => self.travel_to(Dimension::Overworld, self.spawn.0, self.spawn.1, self.spawn.2),
-                        "nether" | "1" => {
-                            let nx = (self.player.x / 8.0).floor() + 0.5;
-                            let nz = (self.player.z / 8.0).floor() + 0.5;
-                            self.travel_to(Dimension::Nether, nx, 36.0, nz);
-                        }
-                        "end" | "2" => self.travel_to(Dimension::End, 0.5, 62.5, -18.5),
-                        _ => self.push_chat("Usage: /dim <overworld|nether|end>"),
-                    }
-                } else {
-                    self.push_chat("Usage: /dim <overworld|nether|end>");
-                }
-                true
-            }
-            Some("/tp") => {
-                if parts.len() >= 4 {
-                    if let (Ok(x), Ok(y), Ok(z)) = (parts[1].parse::<f32>(), parts[2].parse::<f32>(), parts[3].parse::<f32>()) {
-                        self.player.x = x; self.player.y = y; self.player.z = z;
-                        self.player.vy = 0.0; self.fall_y = y;
-                        self.push_chat(&format!("Teleported to {:.1} {:.1} {:.1}", x, y, z));
-                    } else {
-                        self.push_chat("Usage: /tp <x> <y> <z>");
-                    }
-                } else {
-                    self.push_chat("Usage: /tp <x> <y> <z>");
-                }
-                true
-            }
-            Some("/shader") => {
-                let sh = if let Some(arg) = parts.get(1) {
-                    if let Ok(idx) = arg.parse::<usize>() {
-                        packs::set_shader_preset(idx)
-                    } else {
-                        let al = arg.to_ascii_lowercase();
-                        let idx = if al.contains("bsl") { 1 }
-                            else if al.contains("comp") { 2 }
-                            else if al.contains("sildur") { 3 }
-                            else if al.contains("nost") { 4 }
-                            else if al.contains("van") || al.contains("off") { 0 }
-                            else { return { let s = packs::cycle_shader_preset(); self.push_chat(&format!("Shader: {}", s.name)); true }; };
-                        packs::set_shader_preset(idx)
-                    }
-                } else {
-                    packs::cycle_shader_preset()
-                };
-                self.push_chat(&format!("Shader set to {}", sh.name));
-                true
-            }
-            Some("/packs") => {
-                let loaded = packs::loaded_packs();
-                if loaded.is_empty() {
-                    self.push_chat("No packs loaded. Drop .zip/.mrpack in packs/ or use the web Pack Loader.");
-                } else {
-                    for p in &loaded {
-                        self.push_chat(&format!("[{}] {}: {}", p.kind.label(), p.name, p.description));
-                    }
-                }
-                true
-            }
-            Some("/reloadpacks") => {
-                #[cfg(not(target_arch = "wasm32"))]
-                self.reload_native_packs();
-                #[cfg(target_arch = "wasm32")]
-                self.push_chat(&format!("{} pack(s) active in browser", packs::pack_count()));
-                true
-            }
-            _ => {
-                self.push_chat("Commands: /gamemode, /dim, /tp <x> <y> <z>, /shader [0-4], /packs, /reloadpacks");
-                true
-            }
-        }
+        commands::execute(self, cmd)
     }
 
     fn start_singleplayer(&mut self) {
@@ -1753,25 +1779,35 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
 }
 
     fn try_attack(&mut self) {
-        if self.attack_cd > 0.0 { return; }
-        self.attack_cd = 0.25;
-        self.swing_timer = 0.22;
         let (dx, dy, dz) = self.look_dir();
         let (ex, ey, ez) = self.eye();
-        // mobs first
+        let e_reach = self.entity_reach();
+        let block_dist = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, e_reach, false)
+            .map_or(f32::INFINITY, |h| h.dist);
+
+        // Check mobs first within official entity_interaction_range (not behind a solid block)
         let mut best: Option<(usize, f32)> = None;
         for (i, m) in self.mobs.iter().enumerate() {
             let h = m.kind.height();
             let ox = m.x - ex; let oy = (m.y + h * 0.5) - ey; let oz = m.z - ez;
             let proj = ox * dx + oy * dy + oz * dz;
-            if proj <= 0.0 || proj > 4.0 { continue; }
+            if proj <= 0.0 || proj > e_reach || proj > block_dist + 0.15 { continue; }
             let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
-            if cx * cx + cy * cy + cz * cz < 0.6 * 0.6 && best.map_or(true, |(_, t)| proj < t) { best = Some((i, proj)); }
+            let hit_r = (m.kind.radius() + 0.35).max(0.65);
+            if cx * cx + cy * cy + cz * cz < hit_r * hit_r && best.map_or(true, |(_, t)| proj < t) {
+                best = Some((i, proj));
+            }
         }
         if let Some((i, _)) = best {
+            if self.attack_cd > 0.0 { return; }
+            self.attack_cd = 0.25;
+            self.swing_timer = 0.22;
+            self.mining = None;
             let held_id = self.player.held().id;
             let ench = self.player.enchants.get(&held_id).copied().unwrap_or(0) as f32;
+            let str_bonus = if self.potion_strength > 0.0 { 3.0 } else { 0.0 };
             let dmg = match held_id {
+                items::NETHERITE_SWORD => 8.0,
                 items::DIAMOND_SWORD => 7.0,
                 items::IRON_SWORD => 6.0,
                 items::WOOD_SWORD => 4.0,
@@ -1779,7 +1815,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 items::IRON_AXE => 5.0,
                 items::WOOD_AXE => 3.5,
                 _ => 1.0 + items::tool_tier(held_id) as f32 * 0.6,
-            } + ench * 1.5;
+            } + ench * 1.5 + str_bonus;
             self.mobs[i].hp -= dmg;
             self.mobs[i].hurt = 0.45;
             let kdx = self.mobs[i].x - self.player.x;
@@ -1791,8 +1827,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             self.mobs[i].vy = self.mobs[i].vy.max(2.6);
             self.mobs[i].on_ground = false;
             if !self.mobs[i].kind.hostile() {
-                self.mobs[i].panic = 2.4;
-                self.mobs[i].timer = 0.25;
+                self.mobs[i].panic = 4.0;
+                self.mobs[i].timer = 0.0;
             }
             self.damage_held_tool();
             self.plat.play(Sfx::MobHurt);
@@ -1818,7 +1854,31 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
             return;
         }
+        self.swing_timer = 0.22;
+        if self.mode == GameMode::Creative {
+            self.creative_break_cd = 0.0;
+        }
         self.mine_step(0.05);
+    }
+
+    fn pick_block(&mut self) {
+        if self.mode == GameMode::Spectator { return; }
+        let (dx, dy, dz) = self.look_dir();
+        let (ex, ey, ez) = self.eye();
+        let reach = self.block_reach();
+        if let Some(h) = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, reach, false) {
+            let mut item_id = h.block;
+            if item_id == world::DOOR_OPEN { item_id = world::DOOR; }
+            if item_id == world::IRON_DOOR_OPEN { item_id = world::IRON_DOOR; }
+            if item_id == world::END_PORTAL_FRAME_EYE { item_id = world::END_PORTAL_FRAME; }
+            if let Some(slot) = self.player.hot.iter().position(|s| !s.is_empty() && s.id == item_id) {
+                self.player.selected = slot;
+                self.plat.play(Sfx::Click);
+            } else if self.mode == GameMode::Creative {
+                self.player.hot[self.player.selected] = Stack::new(item_id, 64);
+                self.plat.play(Sfx::Click);
+            }
+        }
     }
 
     fn damage_held_tool(&mut self) {
@@ -1857,7 +1917,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         if self.mode == GameMode::Spectator { self.mining = None; return; }
         let (dx, dy, dz) = self.look_dir();
         let (ex, ey, ez) = self.eye();
-        let hit = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, REACH, false);
+        let reach = self.block_reach();
+        let hit = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, reach, false);
         let Some(h) = hit else { self.mining = None; return; };
         if self.mode == GameMode::Creative {
             if self.creative_break_cd <= 0.0 {
@@ -1973,16 +2034,18 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         self.notify_fluid_neighbors(x, y, z);
     }
 
-    fn try_use(&mut self) {
+    fn try_use(&mut self, from_click: bool) {
         if self.place_cd > 0.0 { return; }
-        self.place_cd = 0.2;
+        self.place_cd = 0.20;
         let (dx, dy, dz) = self.look_dir();
         let (ex, ey, ez) = self.eye();
+        let b_reach = self.block_reach();
+        let e_reach = self.entity_reach();
         let held = self.player.held();
 
         // Bucket scooping (needs include_liquid = true)
-        if held.id == items::BUCKET {
-            if let Some(lh) = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, REACH, true) {
+        if from_click && held.id == items::BUCKET {
+            if let Some(lh) = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, b_reach, true) {
                 if lh.block == world::WATER || lh.block == world::LAVA {
                     let dim_i = self.world.dim.idx() as u8;
                     let is_water = lh.block == world::WATER;
@@ -2006,73 +2069,79 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
         }
 
-        // Vehicle mounting / dismounting
-        if self.riding.is_some() && !self.keys.contains(&plat::VK_SHIFT) {
+        // Vehicle mounting / dismounting (on click only)
+        if from_click && self.riding.is_some() && !self.keys.contains(&plat::VK_SHIFT) {
             self.riding = None;
             self.player.vy = 4.0;
             self.plat.play(Sfx::Click);
             return;
         }
-        for (vi, v) in self.vehicles.iter().enumerate() {
-            let ox = v.x - ex; let oy = (v.y + 0.4) - ey; let oz = v.z - ez;
-            let proj = ox * dx + oy * dy + oz * dz;
-            if proj > 0.0 && proj < 4.5 {
-                let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
-                if cx * cx + cy * cy + cz * cz < 0.9 * 0.9 {
-                    self.riding = Some(vi);
-                    self.message = String::from("Mounted! Press Space to dismount");
-                    self.msg_timer = 2.0;
-                    self.plat.play(Sfx::Click);
-                    return;
+        if from_click {
+            for (vi, v) in self.vehicles.iter().enumerate() {
+                let ox = v.x - ex; let oy = (v.y + 0.4) - ey; let oz = v.z - ez;
+                let proj = ox * dx + oy * dy + oz * dz;
+                if proj > 0.0 && proj <= e_reach {
+                    let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
+                    if cx * cx + cy * cy + cz * cz < 0.9 * 0.9 {
+                        self.riding = Some(vi);
+                        self.message = String::from("Mounted! Press Space to dismount");
+                        self.msg_timer = 2.0;
+                        self.plat.play(Sfx::Click);
+                        return;
+                    }
                 }
             }
         }
 
-        // Mob interactions: Villager Trade, Wolf Tame/Sit, Passive Breeding
+        // Mob interactions: Villager Trade, Wolf Tame/Sit, Passive Breeding (on click only)
         let mut spawn_baby: Option<(MobKind, f32, f32, f32)> = None;
-        for m in self.mobs.iter_mut() {
-            let ox = m.x - ex; let oy = (m.y + 0.7) - ey; let oz = m.z - ez;
-            let proj = ox * dx + oy * dy + oz * dz;
-            if proj <= 0.0 || proj > 4.5 { continue; }
-            let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
-            if cx * cx + cy * cy + cz * cz >= 0.85 * 0.85 { continue; }
-            if m.kind == MobKind::Villager {
-                self.ui = Ui::Trade;
-                self.plat.set_capture(false);
-                self.plat.set_cursor(true);
-                self.plat.play(Sfx::Click);
-                return;
-            }
-            if m.kind == MobKind::Wolf {
-                if !m.tamed && held.id == items::BONE {
-                    m.tamed = true;
-                    m.hp = 20.0;
+        if from_click {
+            for m in self.mobs.iter_mut() {
+                let ox = m.x - ex; let oy = (m.y + 0.7) - ey; let oz = m.z - ez;
+                let proj = ox * dx + oy * dy + oz * dz;
+                if proj <= 0.0 || proj > e_reach { continue; }
+                let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
+                if cx * cx + cy * cy + cz * cz >= 0.85 * 0.85 { continue; }
+                if m.kind == MobKind::Villager {
+                    self.ui = Ui::Trade;
+                    self.mouse_right = false;
+                    self.mouse_left = false;
+                    self.plat.set_capture(false);
+                    self.plat.set_cursor(true);
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
+                if m.kind == MobKind::Wolf {
+                    if !m.tamed && held.id == items::BONE {
+                        m.tamed = true;
+                        m.hp = 20.0;
+                        if self.mode == GameMode::Survival {
+                            let s = &mut self.player.hot[self.player.selected];
+                            s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+                        }
+                        self.message = String::from("Tamed Wolf!");
+                        self.msg_timer = 2.5;
+                        self.plat.play(Sfx::LevelUp);
+                        return;
+                    } else if m.tamed {
+                        m.sitting = !m.sitting;
+                        self.message = String::from(if m.sitting { "Wolf sitting" } else { "Wolf following" });
+                        self.msg_timer = 1.5;
+                        self.plat.play(Sfx::Click);
+                        return;
+                    }
+                }
+                if matches!(m.kind, MobKind::Cow | MobKind::Sheep | MobKind::Pig | MobKind::Chicken)
+                    && matches!(held.id, world::WHEAT | items::CARROT) && m.breed_cd <= 0.0
+                {
+                    m.breed_cd = 20.0;
                     if self.mode == GameMode::Survival {
                         let s = &mut self.player.hot[self.player.selected];
                         s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
                     }
-                    self.message = String::from("Tamed Wolf!");
-                    self.msg_timer = 2.5;
-                    self.plat.play(Sfx::LevelUp);
-                    return;
-                } else if m.tamed {
-                    m.sitting = !m.sitting;
-                    self.message = String::from(if m.sitting { "Wolf sitting" } else { "Wolf following" });
-                    self.msg_timer = 1.5;
-                    self.plat.play(Sfx::Click);
-                    return;
+                    spawn_baby = Some((m.kind, m.x + 0.5, m.y, m.z + 0.5));
+                    break;
                 }
-            }
-            if matches!(m.kind, MobKind::Cow | MobKind::Sheep | MobKind::Pig | MobKind::Chicken)
-                && matches!(held.id, world::WHEAT | items::CARROT) && m.breed_cd <= 0.0
-            {
-                m.breed_cd = 20.0;
-                if self.mode == GameMode::Survival {
-                    let s = &mut self.player.hot[self.player.selected];
-                    s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
-                }
-                spawn_baby = Some((m.kind, m.x + 0.5, m.y, m.z + 0.5));
-                break;
             }
         }
         if let Some((kind, bx, by, bz)) = spawn_baby {
@@ -2131,8 +2200,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         }
 
         // Boat placement on Water
-        if held.id == items::BOAT {
-            if let Some(lh) = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, REACH, true) {
+        if from_click && held.id == items::BOAT {
+            if let Some(lh) = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, b_reach, true) {
                 if lh.block == world::WATER {
                     self.vehicles.push(Vehicle { is_boat: true, x: lh.x as f32 + 0.5, y: lh.y as f32 + 0.65, z: lh.z as f32 + 0.5, yaw: self.player.yaw });
                     if self.mode == GameMode::Survival {
@@ -2159,12 +2228,12 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         }
 
         // Shears on Sheep
-        if held.id == items::SHEARS {
+        if from_click && held.id == items::SHEARS {
             for m in self.mobs.iter_mut() {
                 if m.kind == MobKind::Sheep {
                     let ox = m.x - ex; let oy = (m.y + 0.7) - ey; let oz = m.z - ez;
                     let proj = ox * dx + oy * dy + oz * dz;
-                    if proj > 0.0 && proj < 4.5 {
+                    if proj > 0.0 && proj <= e_reach {
                         let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
                         if cx * cx + cy * cy + cz * cz < 0.8 * 0.8 {
                             self.drops.push(Drop::new(m.x, m.y + 0.8, m.z, world::WOOL_WHITE));
@@ -2177,9 +2246,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
         }
 
-        let hit = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, REACH, false);
+        let hit = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, b_reach, false);
         let Some(h) = hit else {
-            if held.id == items::EYE_OF_ENDER {
+            if from_click && held.id == items::EYE_OF_ENDER {
                 let dx_s = 100.0 - self.player.x;
                 let dz_s = -140.0 - self.player.z;
                 let dist = (dx_s * dx_s + dz_s * dz_s).sqrt();
@@ -2193,12 +2262,14 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
 
         let sneaking = self.keys.contains(&plat::VK_SHIFT);
         // Shift + Right-click bypasses interactive blocks so you can place blocks on them (Minecraft sneak-place).
-        if !sneaking {
+        if from_click && !sneaking {
             match h.block {
-                world::CRAFTING => { self.open_inventory(true); return; }
+                world::CRAFTING => { self.mouse_right = false; self.mouse_left = false; self.open_inventory(true); return; }
                 world::FURNACE => {
                     self.ui = Ui::Furnace;
                     self.ui_block = target;
+                    self.mouse_right = false;
+                    self.mouse_left = false;
                     self.furnaces.entry(target).or_insert_with(Furnace::new);
                     self.plat.set_capture(false);
                     self.plat.set_cursor(true);
@@ -2206,12 +2277,16 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     return;
                 }
                 world::CHEST => {
+                    self.mouse_right = false;
+                    self.mouse_left = false;
                     self.open_chest(target);
                     return;
                 }
                 world::ENCHANTING => {
                     self.ui = Ui::Enchant;
                     self.ui_block = target;
+                    self.mouse_right = false;
+                    self.mouse_left = false;
                     self.plat.set_capture(false);
                     self.plat.set_cursor(true);
                     self.plat.play(Sfx::Click);
@@ -2220,6 +2295,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 world::ANVIL => {
                     self.ui = Ui::Anvil;
                     self.ui_block = target;
+                    self.mouse_right = false;
+                    self.mouse_left = false;
                     self.plat.set_capture(false);
                     self.plat.set_cursor(true);
                     self.plat.play(Sfx::Click);
@@ -2228,6 +2305,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 world::BREWING_STAND => {
                     self.ui = Ui::Brewing;
                     self.ui_block = target;
+                    self.mouse_right = false;
+                    self.mouse_left = false;
                     self.brewing_stands.entry(target).or_insert_with(BrewingStand::new);
                     self.plat.set_capture(false);
                     self.plat.set_cursor(true);
@@ -2236,12 +2315,12 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 }
                 world::DOOR => {
                     self.world.set(h.x, h.y, h.z, world::DOOR_OPEN);
-                    self.plat.play(Sfx::Click);
+                    self.plat.play(Sfx::Door);
                     return;
                 }
                 world::DOOR_OPEN => {
                     self.world.set(h.x, h.y, h.z, world::DOOR);
-                    self.plat.play(Sfx::Click);
+                    self.plat.play(Sfx::Door);
                     return;
                 }
                 world::IRON_DOOR | world::IRON_DOOR_OPEN => {
@@ -2477,12 +2556,14 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             };
             let existing = self.world.get(px, py, pz);
             if !world::is_replaceable(existing) { return; }
-            self.swing_timer = 0.20;
-            let (fx, fy, fz) = (px as f32 + 0.5, py as f32, pz as f32 + 0.5);
-            if (fx - self.player.x).abs() < 0.9 && (fz - self.player.z).abs() < 0.9
-                && fy + 1.0 > self.player.y && fy < self.player.y + 1.8 {
-                return;
+            if world::is_solid(held.id) {
+                let (fx, fy, fz) = (px as f32 + 0.5, py as f32, pz as f32 + 0.5);
+                if (fx - self.player.x).abs() < 0.78 && (fz - self.player.z).abs() < 0.78
+                    && fy + 1.0 > self.player.y + 0.02 && fy < self.player.y + 1.78 {
+                    return;
+                }
             }
+            self.swing_timer = 0.20;
             self.world.set(px, py, pz, held.id);
             self.net.send(format!("BLOCK|{}|{}|{}|{}", px, py, pz, held.id));
             if self.mode == GameMode::Survival {
@@ -2836,8 +2917,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 m.kb_vz += (kdz / kd) * kb;
                 m.vy = m.vy.max(3.2);
                 if !m.kind.hostile() {
-                    m.panic = 2.4;
-                    m.timer = 0.25;
+                    m.panic = 4.0;
+                    m.timer = 0.0;
                 }
             }
         }
@@ -2858,6 +2939,16 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         self.hurt_cd = (self.hurt_cd - dt).max(0.0);
         self.potion_fire = (self.potion_fire - dt).max(0.0);
         self.potion_speed = (self.potion_speed - dt).max(0.0);
+        self.potion_jump = (self.potion_jump - dt).max(0.0);
+        self.potion_strength = (self.potion_strength - dt).max(0.0);
+        if self.potion_regen > 0.0 {
+            self.potion_regen = (self.potion_regen - dt).max(0.0);
+            self.player.hp = (self.player.hp + dt * 1.2).min(20.0);
+        }
+        if self.rule_weather_cycle && self.weather > 0 {
+            self.weather_timer -= dt;
+            if self.weather_timer <= 0.0 { self.weather = 0; }
+        }
         let mut expired_btns = Vec::new();
         for (pos, t) in self.buttons.iter_mut() {
             *t -= dt;
@@ -2868,7 +2959,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             self.redstone_dirty = true;
         }
         for l in self.chat_lines.iter_mut() { l.1 += dt; }
-        self.time = (self.time + dt * 0.0016) % 1.0;
+        if self.rule_daylight_cycle {
+            self.time = (self.time + dt * 0.0016) % 1.0;
+        }
         let day = (self.time * std::f32::consts::TAU).sin() * 0.5 + 0.5;
 
         // multiplayer pump
@@ -2965,6 +3058,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     4.3
                 };
                 if self.potion_speed > 0.0 { speed *= 1.35; }
+                speed *= self.speed_mul;
                 if under_b == world::SOUL_SAND { speed *= 0.55; }
                 if under_b == world::ICE { speed *= 1.28; }
                 if in_cobweb { speed *= 0.25; }
@@ -3013,7 +3107,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     }
                 } else {
                     if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
-                        self.player.vy = 8.4;
+                        self.player.vy = if self.potion_jump > 0.0 { 11.2 } else { 8.4 };
                         self.player.on_ground = false;
                         self.plat.play(Sfx::Jump);
                     }
@@ -3030,7 +3124,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                             if pre_vy < -5.8 {
                                 self.plat.play(Sfx::Land);
                             }
-                            if self.mode == GameMode::Survival {
+                            if self.mode == GameMode::Survival && self.rule_fall_damage {
                                 let fall_dist = self.fall_y - self.player.y;
                                 if fall_dist > 3.5 && self.grace <= 0.0 {
                                     let dmg = (fall_dist - 3.0).floor();
@@ -3066,6 +3160,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     self.mine_step(dt);
                     if self.swing_timer <= 0.02 { self.swing_timer = 0.22; }
                 }
+                if self.mouse_right {
+                    self.try_use(false);
+                }
             }
         }
 
@@ -3096,8 +3193,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     m.vy = m.vy.max(2.4);
                     m.on_ground = false;
                     if !m.kind.hostile() {
-                        m.panic = 2.4;
-                        m.timer = 0.25;
+                        m.panic = 4.0;
+                        m.timer = 0.0;
                     }
                     hit_mob = true;
                     self.plat.play(Sfx::MobHurt);
@@ -3204,7 +3301,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
         }
         for (bx, by, bz) in creeper_blasts {
-            self.explode(bx, by, bz, 3.2);
+            if self.rule_mob_griefing {
+                self.explode(bx, by, bz, 3.2);
+            } else {
+                self.plat.play(Sfx::Explode);
+            }
         }
         self.mobs.retain(|m| m.hp > 0.0 && (m.x - self.player.x).abs() < 75.0 && (m.z - self.player.z).abs() < 75.0);
         for i in 0..self.mobs.len() {
@@ -3257,7 +3358,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
 
         // spawn mobs
         self.spawn_timer += dt;
-        if self.spawn_timer > 1.8 {
+        if self.rule_mob_spawning && self.spawn_timer > 1.8 {
             self.spawn_timer = 0.0;
             if self.mobs.len() < 26 {
                 let a = (self.tick as f32 * 0.618).sin() * 6.283;
@@ -3433,7 +3534,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let head_b = self.world.get(self.player.x.floor() as i32, (self.player.y + 1.55).floor() as i32, self.player.z.floor() as i32);
         let feet_b = self.world.get(self.player.x.floor() as i32, (self.player.y + 0.1).floor() as i32, self.player.z.floor() as i32);
         let under_b = self.world.get(self.player.x.floor() as i32, (self.player.y - 0.1).floor() as i32, self.player.z.floor() as i32);
-        if head_b == world::WATER {
+        if head_b == world::WATER && self.rule_drowning_damage {
             self.player.air = (self.player.air - dt * 0.7).max(0.0);
             if self.player.air <= 0.0 {
                 self.drown_cd -= dt;
@@ -3514,6 +3615,20 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.msg_timer = 4.0;
                 self.plat.play(Sfx::LevelUp);
             } else {
+                if !self.rule_keep_inventory {
+                    for s in self.player.hot.iter_mut() {
+                        if !s.is_empty() {
+                            self.drops.push(Drop::new(self.player.x, self.player.y + 0.5, self.player.z, s.id));
+                            *s = Stack::EMPTY;
+                        }
+                    }
+                    for s in self.player.store.iter_mut() {
+                        if !s.is_empty() {
+                            self.drops.push(Drop::new(self.player.x, self.player.y + 0.5, self.player.z, s.id));
+                            *s = Stack::EMPTY;
+                        }
+                    }
+                }
                 self.ui = Ui::Death;
                 self.mouse_left = false;
                 self.mouse_right = false;
@@ -3667,7 +3782,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let shader = packs::active_shader();
         render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, self.time, self.tick, mining_overlay, &shader);
         if self.mode != GameMode::Spectator && self.ui == Ui::None {
-            if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, REACH, false) {
+            let b_reach = self.block_reach();
+            if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, b_reach, false) {
                 render::draw_block_outline(&mut self.scene, &cam, h.x, h.y, h.z);
             }
         }
@@ -3701,6 +3817,21 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             render::draw_drop_sprite(&mut self.scene, &cam, mx, my, mz, id, self.tick, day);
         }
         render::upscale(&self.scene, &mut self.fb);
+
+        if self.weather > 0 && self.world.dim == Dimension::Overworld {
+            let dim_tint = if self.weather == 2 { 55 } else { 32 };
+            self.fb.rect(0, 0, render::W as i32, render::H as i32, [28, 36, 54, dim_tint]);
+            let drops_n = if self.weather == 2 { 110 } else { 75 };
+            for i in 0..drops_n {
+                let h = ((i as u32).wrapping_mul(2654435761)) ^ (i as u32 >> 3);
+                let rx = ((h.wrapping_add(self.tick.wrapping_mul(3))) % render::W as u32) as i32;
+                let ry = (((h >> 11).wrapping_add(self.tick.wrapping_mul(16))) % render::H as u32) as i32;
+                self.fb.rect(rx, ry, 1, 7, [155, 190, 240, 140]);
+            }
+            if self.weather == 2 && (self.tick % 190) < 2 {
+                self.fb.rect(0, 0, render::W as i32, render::H as i32, [235, 242, 255, 110]);
+            }
+        }
 
         if self.ui == Ui::None || self.ui == Ui::Chat {
             if self.camera == 0 && self.mode != GameMode::Spectator {
