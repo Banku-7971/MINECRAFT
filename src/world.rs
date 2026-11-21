@@ -642,6 +642,14 @@ pub fn is_solid(id: u16) -> bool {
     )
 }
 
+pub fn is_targetable(id: u16) -> bool {
+    !matches!(id, AIR | WATER | LAVA | NETHER_PORTAL | END_PORTAL)
+}
+
+pub fn is_replaceable(id: u16) -> bool {
+    matches!(id, AIR | WATER | LAVA | TALL_GRASS | SNOW_LAYER)
+}
+
 pub fn is_opaque(id: u16) -> bool {
     is_solid(id)
         && !matches!(
@@ -995,7 +1003,22 @@ impl RenderCache {
         let lx = (rx & 15) as usize;
         let lz = (rz & 15) as usize;
         let ci = (cxi * CACHE_SIDE + czi) * CHUNK_LEN;
-        self.light[ci + (y as usize * CHUNK as usize + lx) * CHUNK as usize + lz]
+        self.light[ci + (y as usize * CHUNK as usize + lx) * CHUNK as usize + lz] & 0x0F
+    }
+
+    #[inline(always)]
+    pub fn get_sky_light(&self, x: i32, y: i32, z: i32) -> u8 {
+        if y >= WORLD_H as i32 { return 15; }
+        if y < 0 { return 0; }
+        let rx = x - self.ox;
+        let rz = z - self.oz;
+        if (rx as u32) >= CACHE_BLOCKS as u32 || (rz as u32) >= CACHE_BLOCKS as u32 { return 15; }
+        let cxi = (rx >> 4) as usize;
+        let czi = (rz >> 4) as usize;
+        let lx = (rx & 15) as usize;
+        let lz = (rz & 15) as usize;
+        let ci = (cxi * CACHE_SIDE + czi) * CHUNK_LEN;
+        (self.light[ci + (y as usize * CHUNK as usize + lx) * CHUNK as usize + lz] >> 4) & 0x0F
     }
 
     #[inline(always)]
@@ -1014,20 +1037,57 @@ impl RenderCache {
     pub fn rebuild_light(&mut self) {
         self.light.fill(0);
         let mut q: std::collections::VecDeque<(i32, i32, i32, u8)> = std::collections::VecDeque::new();
+        let mut sq: std::collections::VecDeque<(i32, i32, i32, u8)> = std::collections::VecDeque::new();
+        let base_sky = match self.dim {
+            Dimension::Overworld => 15u8,
+            Dimension::End => 11u8,
+            Dimension::Nether => 4u8,
+        };
+
         for cxi in 0..CACHE_SIDE {
             for czi in 0..CACHE_SIDE {
                 let ci = (cxi * CACHE_SIDE + czi) * CHUNK_LEN;
                 let bx = self.ox + cxi as i32 * CHUNK;
                 let bz = self.oz + czi as i32 * CHUNK;
+                if self.dim != Dimension::Nether {
+                    for lx in 0..CHUNK as usize {
+                        for lz in 0..CHUNK as usize {
+                            let mut sky = base_sky;
+                            for y in (0..WORLD_H).rev() {
+                                let idx = ci + (y * CHUNK as usize + lx) * CHUNK as usize + lz;
+                                let id = self.data[idx];
+                                if is_opaque(id) {
+                                    break;
+                                }
+                                if matches!(
+                                    id,
+                                    WATER | ICE | LEAVES | BIRCH_LEAVES | SPRUCE_LEAVES | JUNGLE_LEAVES | DARK_LEAVES
+                                ) {
+                                    sky = sky.saturating_sub(2);
+                                }
+                                if sky > 0 {
+                                    self.light[idx] = (self.light[idx] & 0x0F) | (sky << 4);
+                                    if sky > 1 {
+                                        sq.push_back((bx + lx as i32, y as i32, bz + lz as i32, sky));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 for y in 0..WORLD_H {
                     let yoff = ci + y * CHUNK as usize * CHUNK as usize;
                     for lx in 0..CHUNK as usize {
                         let xoff = yoff + lx * CHUNK as usize;
                         for lz in 0..CHUNK as usize {
-                            let id = self.data[xoff + lz];
+                            let idx = xoff + lz;
+                            let id = self.data[idx];
+                            if self.dim == Dimension::Nether && !is_opaque(id) {
+                                self.light[idx] = (self.light[idx] & 0x0F) | (base_sky << 4);
+                            }
                             let e = emits_light(id);
                             if e > 0 {
-                                self.light[xoff + lz] = e;
+                                self.light[idx] = (self.light[idx] & 0xF0) | (e & 0x0F);
                                 q.push_back((bx + lx as i32, y as i32, bz + lz as i32, e));
                             }
                         }
@@ -1037,9 +1097,22 @@ impl RenderCache {
         }
         for &(lx, ly, lz) in &self.lit {
             if let Some(i) = self.idx_of(lx, ly, lz) {
-                if self.data[i] == LAMP && self.light[i] < 15 {
-                    self.light[i] = 15;
+                if self.data[i] == LAMP && (self.light[i] & 0x0F) < 15 {
+                    self.light[i] = (self.light[i] & 0xF0) | 15;
                     q.push_back((lx, ly, lz, 15));
+                }
+            }
+        }
+        while let Some((x, y, z, sl)) = sq.pop_front() {
+            if sl <= 1 { continue; }
+            let nsl = sl - 1;
+            for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
+                let nx = x + dx; let ny = y + dy; let nz = z + dz;
+                if let Some(ni) = self.idx_of(nx, ny, nz) {
+                    if !is_opaque(self.data[ni]) && ((self.light[ni] >> 4) & 0x0F) < nsl {
+                        self.light[ni] = (self.light[ni] & 0x0F) | (nsl << 4);
+                        sq.push_back((nx, ny, nz, nsl));
+                    }
                 }
             }
         }
@@ -1049,8 +1122,8 @@ impl RenderCache {
             for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
                 let nx = x + dx; let ny = y + dy; let nz = z + dz;
                 if let Some(ni) = self.idx_of(nx, ny, nz) {
-                    if !is_opaque(self.data[ni]) && self.light[ni] < nlv {
-                        self.light[ni] = nlv;
+                    if !is_opaque(self.data[ni]) && (self.light[ni] & 0x0F) < nlv {
+                        self.light[ni] = (self.light[ni] & 0xF0) | nlv;
                         q.push_back((nx, ny, nz, nlv));
                     }
                 }
@@ -1284,6 +1357,14 @@ pub fn hit_uv(ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, t: f32, nx: 
 }
 
 pub fn raycast(world: &mut World, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max_dist: f32, include_liquid: bool) -> Option<Hit> {
+    raycast_opt(world, ox, oy, oz, dx, dy, dz, max_dist, include_liquid, true)
+}
+
+pub fn raycast_solid(world: &mut World, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max_dist: f32) -> Option<Hit> {
+    raycast_opt(world, ox, oy, oz, dx, dy, dz, max_dist, false, false)
+}
+
+fn raycast_opt(world: &mut World, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max_dist: f32, include_liquid: bool, hit_non_solid: bool) -> Option<Hit> {
     let mut x = ox.floor() as i32;
     let mut y = oy.floor() as i32;
     let mut z = oz.floor() as i32;
@@ -1303,7 +1384,12 @@ pub fn raycast(world: &mut World, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, d
     let mut t = 0.0;
     for _ in 0..220 {
         let b = world.get(x, y, z);
-        let solid = is_solid(b) || (include_liquid && (b == WATER || b == LAVA || b == NETHER_PORTAL || b == END_PORTAL));
+        let hit_b = if hit_non_solid {
+            is_targetable(b)
+        } else {
+            is_solid(b)
+        };
+        let solid = hit_b || (include_liquid && (b == WATER || b == LAVA || b == NETHER_PORTAL || b == END_PORTAL));
         if solid && t > 0.0001 {
             return Some(Hit { block: b, x, y, z, nx, ny, nz, dist: t });
         }

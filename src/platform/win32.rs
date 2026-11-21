@@ -121,6 +121,7 @@ const PM_REMOVE: u32 = 0x0001;
 const WM_DESTROY: u32 = 0x0002;
 const WM_SIZE: u32 = 0x0005;
 const WM_KILLFOCUS: u32 = 0x0008;
+const WM_PAINT: u32 = 0x000F;
 const WM_CLOSE: u32 = 0x0010;
 const WM_QUIT: u32 = 0x0012;
 const WM_ERASEBKGND: u32 = 0x0014;
@@ -197,6 +198,8 @@ extern "system" {
     fn ClientToScreen(hWnd: HWND, lpPoint: *mut POINT) -> i32;
     fn GetDC(hWnd: HWND) -> HDC;
     fn ReleaseDC(hWnd: HWND, hDC: HDC) -> i32;
+    fn ValidateRect(hWnd: HWND, lpRect: *const RECT) -> i32;
+    fn SetProcessDPIAware() -> i32;
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> HCURSOR;
     fn LoadIconW(hInstance: HINSTANCE, lpIconName: *const u16) -> HICON;
     fn ShowCursor(bShow: i32) -> i32;
@@ -304,6 +307,10 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: usize, lparam: 
             0
         }
         WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            ValidateRect(hwnd, null());
+            0
+        }
         WM_SIZE => {
             let cw = (lparam & 0xFFFF) as i16 as i32;
             let ch = ((lparam >> 16) & 0xFFFF) as i16 as i32;
@@ -433,6 +440,7 @@ impl Win32 {
         });
 
         let hwnd = unsafe {
+            SetProcessDPIAware();
             let hinst = GetModuleHandleW(null());
             let cls = wide("MinecraftWindowClass");
             let wtitle = wide(title);
@@ -445,7 +453,7 @@ impl Win32 {
                 hInstance: hinst,
                 hIcon: LoadIconW(null_mut(), IDI_APPLICATION as *const u16),
                 hCursor: LoadCursorW(null_mut(), IDC_ARROW as *const u16),
-                hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
+                hbrBackground: null_mut(),
                 lpszMenuName: null(),
                 lpszClassName: cls.as_ptr(),
                 hIconSm: null_mut(),

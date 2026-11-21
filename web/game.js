@@ -43,6 +43,128 @@ let firstFrame = true;
 let activeModrinthType = 'resourcepack';
 let activeMods = [];
 
+// WebAudio Synthesizer (Title/In-Game calm piano music + material footsteps + mob/combat SFX)
+let audioCtx = null;
+let musicNextAt = 0;
+let musicStep = 0;
+const MUSIC_MELODY = [523.25, 392.0, 329.63, 392.0, 440.0, 392.0, 329.63, 261.63, 392.0, 329.63, 261.63, 329.63, 440.0, 523.25, 440.0, 392.0];
+const MUSIC_CHORDS = [[261.63, 329.63, 392.0], [220.0, 261.63, 329.63], [174.61, 220.0, 261.63], [196.0, 246.94, 293.66]];
+
+function ensureAudio() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    audioCtx = new AC();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+function playTone(freq, dur, vol, type = 'sine', slideTo = null) {
+  const ctx = ensureAudio();
+  if (!ctx || ctx.state !== 'running') return;
+  const t = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(40, slideTo), t + dur);
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(vol, t + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+}
+
+function playNoise(dur, vol, filterFreq = 900) {
+  const ctx = ensureAudio();
+  if (!ctx || ctx.state !== 'running') return;
+  const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const flt = ctx.createBiquadFilter();
+  flt.type = 'lowpass';
+  flt.frequency.value = filterFreq;
+  const gain = ctx.createGain();
+  const t = ctx.currentTime;
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(flt);
+  flt.connect(gain);
+  gain.connect(ctx.destination);
+  src.start(t);
+}
+
+function playWebSfx(id) {
+  switch (id) {
+    case 0: playTone(1200, 0.04, 0.06, 'triangle'); break; // Click
+    case 1: playTone(175, 0.08, 0.14, 'triangle', 95); playNoise(0.06, 0.06, 600); break; // Place
+    case 2: playNoise(0.14, 0.16, 1200); playTone(140, 0.09, 0.09, 'square', 65); break; // Break
+    case 3:
+    case 4: playNoise(0.08, 0.08, 650); playTone(105, 0.05, 0.06, 'sine', 70); break; // StepGrass
+    case 5: playTone(420, 0.05, 0.09, 'triangle', 220); playNoise(0.05, 0.07, 1800); break; // StepStone
+    case 6: playTone(215, 0.07, 0.10, 'triangle', 140); break; // StepWood
+    case 7: playNoise(0.10, 0.08, 2200); break; // StepSand
+    case 8: playNoise(0.15, 0.09, 850); break; // StepWater
+    case 9: playTone(165, 0.10, 0.08, 'sine', 330); break; // Jump
+    case 10: playTone(95, 0.10, 0.11, 'triangle', 55); break; // Land
+    case 11: playTone(300, 0.18, 0.14, 'sawtooth', 110); break; // Hurt
+    case 12: playTone(250, 0.14, 0.14, 'triangle', 95); playNoise(0.08, 0.09, 1100); break; // MobHurt
+    case 13: playTone(340, 0.24, 0.12, 'triangle', 80); break; // MobDie
+    case 14: playTone(880, 0.06, 0.07, 'square', 1180); break; // Pickup
+    case 15: playTone(660, 0.08, 0.07, 'square'); break; // Craft
+    case 17: playNoise(0.45, 0.22, 420); playTone(65, 0.35, 0.16, 'sawtooth', 40); break; // Explode
+    case 19: playTone(105, 0.42, 0.10, 'sawtooth', 85); break; // Zombie
+    case 20: playTone(620, 0.12, 0.07, 'square', 440); break; // Skeleton
+    case 21: playTone(148, 0.45, 0.11, 'sawtooth', 118); break; // Cow
+    case 22: playTone(290, 0.34, 0.09, 'triangle', 260); break; // Sheep
+    case 23: playTone(195, 0.20, 0.10, 'triangle', 250); break; // Pig
+    case 24: playTone(690, 0.12, 0.07, 'triangle', 840); break; // Chicken
+    case 25: playNoise(0.18, 0.09, 1900); break; // Spider
+    case 26: playNoise(0.40, 0.12, 2400); break; // Creeper
+    case 27: playTone(240, 0.28, 0.09, 'sawtooth', 150); break; // Enderman
+    case 29: playTone(523, 0.09, 0.08, 'triangle'); setTimeout(() => playTone(784, 0.12, 0.08, 'triangle'), 80); break; // LevelUp
+    default: playNoise(0.08, 0.06, 900); break;
+  }
+}
+
+function pumpAudio() {
+  if (!wasm) return;
+  const flags = wasm.game_audio_flags ? wasm.game_audio_flags() : 3;
+  const musicOn = (flags & 1) !== 0;
+  const soundOn = (flags & 2) !== 0;
+  if (wasm.game_audio_pop) {
+    let s;
+    while ((s = wasm.game_audio_pop()) >= 0) {
+      if (soundOn) playWebSfx(s);
+    }
+  }
+  if (musicOn && audioCtx && audioCtx.state === 'running') {
+    const now = audioCtx.currentTime;
+    if (now >= musicNextAt) {
+      musicNextAt = now + 0.92;
+      const mel = MUSIC_MELODY[musicStep % MUSIC_MELODY.length];
+      playTone(mel, 1.35, 0.045, 'sine');
+      if (musicStep % 4 === 0) {
+        const chord = MUSIC_CHORDS[(musicStep / 4) % MUSIC_CHORDS.length];
+        for (const f of chord) playTone(f * 0.5, 2.4, 0.028, 'sine');
+      }
+      musicStep++;
+    }
+  }
+}
+
+['pointerdown', 'keydown'].forEach(ev => {
+  window.addEventListener(ev, () => ensureAudio(), { passive: true });
+});
+
 const VK = {
   Backspace: 8, Tab: 9, Enter: 13,
   ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17,
@@ -387,6 +509,7 @@ function loop() {
   if (!wasm) return;
   wasm.game_frame();
   drawFrame();
+  pumpAudio();
   if (firstFrame) {
     firstFrame = false;
     setStatus('Ready - click to play');

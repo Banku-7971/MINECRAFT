@@ -1,27 +1,70 @@
 #![cfg_attr(not(windows), allow(dead_code))]
-//! Procedural sound: a tiny software mixer with Minecraft-style effects and a
-//! calm looping soundtrack. Pure Rust, no assets, so the .exe stays self-contained.
+//! Procedural sound: a software mixer with Minecraft-style material footsteps,
+//! jump/land, mob sounds, combat SFX, and a calm looping soundtrack.
+//! Pure Rust, zero external assets, works on Windows (WinMM) and Web (WebAudio queue).
+
+use std::collections::VecDeque;
+use std::sync::{OnceLock, Mutex};
 
 pub const SAMPLE_RATE: u32 = 22050;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum Sfx {
-    Click,
-    Place,
-    Break,
-    Step,
-    Hurt,
-    Pickup,
-    Craft,
-    Furnace,
-    Explode,
-    Splash,
-    Zombie,
-    Skeleton,
-    Cow,
-    Sheep,
-    Door,
-    LevelUp,
+    Click = 0,
+    Place = 1,
+    Break = 2,
+    Step = 3,
+    StepGrass = 4,
+    StepStone = 5,
+    StepWood = 6,
+    StepSand = 7,
+    StepWater = 8,
+    Jump = 9,
+    Land = 10,
+    Hurt = 11,
+    MobHurt = 12,
+    MobDie = 13,
+    Pickup = 14,
+    Craft = 15,
+    Furnace = 16,
+    Explode = 17,
+    Splash = 18,
+    Zombie = 19,
+    Skeleton = 20,
+    Cow = 21,
+    Sheep = 22,
+    Pig = 23,
+    Chicken = 24,
+    Spider = 25,
+    Creeper = 26,
+    Enderman = 27,
+    Door = 28,
+    LevelUp = 29,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+static WEB_SFX_QUEUE: OnceLock<Mutex<VecDeque<u8>>> = OnceLock::new();
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn push_web_sfx(s: Sfx) {
+    let q = WEB_SFX_QUEUE.get_or_init(|| Mutex::new(VecDeque::with_capacity(32)));
+    if let Ok(mut g) = q.lock() {
+        if g.len() < 32 {
+            g.push_back(s as u8);
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn pop_web_sfx() -> i32 {
+    let q = WEB_SFX_QUEUE.get_or_init(|| Mutex::new(VecDeque::with_capacity(32)));
+    if let Ok(mut g) = q.lock() {
+        if let Some(id) = g.pop_front() {
+            return id as i32;
+        }
+    }
+    -1
 }
 
 struct Voice {
@@ -44,20 +87,34 @@ impl Audio {
     pub fn new() -> Self {
         let sfx = vec![
             (Sfx::Click, synth_click()),
-            (Sfx::Place, synth_thud(180.0, 0.09, 0.5)),
+            (Sfx::Place, synth_thud(185.0, 0.09, 0.50)),
             (Sfx::Break, synth_break()),
-            (Sfx::Step, synth_thud(120.0, 0.06, 0.25)),
+            (Sfx::Step, synth_step_grass()),
+            (Sfx::StepGrass, synth_step_grass()),
+            (Sfx::StepStone, synth_step_stone()),
+            (Sfx::StepWood, synth_step_wood()),
+            (Sfx::StepSand, synth_step_sand()),
+            (Sfx::StepWater, synth_noise(0.16, 0.24, 700.0)),
+            (Sfx::Jump, synth_jump()),
+            (Sfx::Land, synth_thud(95.0, 0.12, 0.42)),
             (Sfx::Hurt, synth_hurt()),
+            (Sfx::MobHurt, synth_mob_hurt()),
+            (Sfx::MobDie, synth_mob_die()),
             (Sfx::Pickup, synth_blip(880.0, 0.07)),
             (Sfx::Craft, synth_blip(660.0, 0.09)),
-            (Sfx::Furnace, synth_noise(0.25, 0.2, 900.0)),
+            (Sfx::Furnace, synth_noise(0.25, 0.20, 900.0)),
             (Sfx::Explode, synth_explode()),
-            (Sfx::Splash, synth_noise(0.3, 0.25, 500.0)),
-            (Sfx::Zombie, synth_growl(110.0, 0.55)),
-            (Sfx::Skeleton, synth_blip(340.0, 0.12)),
-            (Sfx::Cow, synth_growl(150.0, 0.4)),
-            (Sfx::Sheep, synth_growl(320.0, 0.3)),
-            (Sfx::Door, synth_thud(90.0, 0.18, 0.4)),
+            (Sfx::Splash, synth_noise(0.30, 0.25, 500.0)),
+            (Sfx::Zombie, synth_growl(105.0, 0.55)),
+            (Sfx::Skeleton, synth_rattle()),
+            (Sfx::Cow, synth_cow()),
+            (Sfx::Sheep, synth_sheep()),
+            (Sfx::Pig, synth_pig()),
+            (Sfx::Chicken, synth_chicken()),
+            (Sfx::Spider, synth_spider()),
+            (Sfx::Creeper, synth_noise(0.45, 0.34, 1400.0)),
+            (Sfx::Enderman, synth_enderman()),
+            (Sfx::Door, synth_thud(90.0, 0.18, 0.40)),
             (Sfx::LevelUp, synth_arp()),
         ];
         Audio {
@@ -74,8 +131,8 @@ impl Audio {
     pub fn play(&mut self, s: Sfx) {
         if !self.sound_on { return; }
         if let Some((_, data)) = self.sfx.iter().find(|(k, _)| *k == s) {
-            if self.voices.len() < 12 {
-                self.voices.push(Voice { data: data.clone(), pos: 0, volume: 0.55 });
+            if self.voices.len() < 16 {
+                self.voices.push(Voice { data: data.clone(), pos: 0, volume: 0.58 });
             }
         }
     }
@@ -86,7 +143,7 @@ impl Audio {
         for i in 0..n {
             let mut v = 0.0f32;
             if self.music_on && !self.music.is_empty() {
-                v += self.music[self.music_pos] as f32 / 32768.0 * 0.55;
+                v += self.music[self.music_pos] as f32 / 32768.0 * 0.58;
                 self.music_pos += 1;
                 if self.music_pos >= self.music.len() { self.music_pos = 0; }
             }
@@ -120,6 +177,77 @@ fn synth_thud(freq: f32, dur: f32, vol: f32) -> Vec<i16> {
         out.push((s.clamp(-1.0, 1.0) * 32000.0) as i16);
     }
     out
+}
+
+fn synth_step_grass() -> Vec<i16> {
+    let n = (0.085 * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    let mut st = 5151u32;
+    let mut prev = 0.0f32;
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        prev = prev * 0.55 + noise * 0.45;
+        let thump = (t * 105.0 * 6.283).sin() * 0.35;
+        let s = (prev * 0.8 + thump) * env(t, 0.004, 0.032) * 0.34;
+        out.push((s.clamp(-1.0, 1.0) * 32000.0) as i16);
+    }
+    out
+}
+
+fn synth_step_stone() -> Vec<i16> {
+    let n = (0.070 * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    let mut st = 9191u32;
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        let tap = (t * 420.0 * 6.283).sin() * 0.55 + (t * 890.0 * 6.283).sin() * 0.25;
+        let s = (tap + noise * 0.35) * env(t, 0.001, 0.018) * 0.38;
+        out.push((s.clamp(-1.0, 1.0) * 32000.0) as i16);
+    }
+    out
+}
+
+fn synth_step_wood() -> Vec<i16> {
+    let n = (0.080 * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let knock = (t * 215.0 * 6.283).sin() * 0.72 + (t * 430.0 * 6.283).sin() * 0.25;
+        let s = knock * env(t, 0.002, 0.025) * 0.40;
+        out.push((s.clamp(-1.0, 1.0) * 32000.0) as i16);
+    }
+    out
+}
+
+fn synth_step_sand() -> Vec<i16> {
+    let n = (0.105 * SAMPLE_RATE as f32) as usize;
+    let mut out = Vec::with_capacity(n);
+    let mut st = 31337u32;
+    let mut last = 0.0f32;
+    for i in 0..n {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        let hp = noise - last * 0.65;
+        last = noise;
+        let s = hp * env(t, 0.006, 0.042) * 0.30;
+        out.push((s.clamp(-1.0, 1.0) * 32000.0) as i16);
+    }
+    out
+}
+
+fn synth_jump() -> Vec<i16> {
+    let n = (0.11 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let f = 140.0 + t * 1400.0;
+        let s = (t * f * 6.283).sin() * env(t, 0.005, 0.045) * 0.26;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
 }
 
 fn synth_click() -> Vec<i16> {
@@ -169,6 +297,30 @@ fn synth_hurt() -> Vec<i16> {
     }).collect()
 }
 
+fn synth_mob_hurt() -> Vec<i16> {
+    let n = (0.16 * SAMPLE_RATE as f32) as usize;
+    let mut st = 4141u32;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        let f = 260.0 - t * 650.0;
+        let smack = (t * f.max(90.0) * 6.283).sin() * 0.65 + noise * 0.35;
+        let s = smack * env(t, 0.002, 0.055) * 0.52;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_mob_die() -> Vec<i16> {
+    let n = (0.28 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let f = 360.0 * (-t * 4.5).exp() + 70.0;
+        let s = (t * f * 6.283).sin() * env(t, 0.004, 0.11) * 0.45;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
 fn synth_blip(freq: f32, dur: f32) -> Vec<i16> {
     let n = (dur * SAMPLE_RATE as f32) as usize;
     (0..n).map(|i| {
@@ -189,6 +341,84 @@ fn synth_growl(base: f32, dur: f32) -> Vec<i16> {
         let wob = (t * 22.0 * 6.283).sin() * 12.0;
         let tone = ((base + wob) * t * 6.283).sin();
         let s = (tone * 0.7 + noise * 0.3) * env(t, 0.03, dur * 0.45) * 0.35;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_cow() -> Vec<i16> {
+    let n = (0.52 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let f = 148.0 - (t * 3.0).sin() * 18.0 - t * 25.0;
+        let tone = (t * f * 6.283).sin() * 0.65 + (t * f * 2.0 * 6.283).sin() * 0.25;
+        let s = tone * env(t, 0.05, 0.22) * 0.36;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_sheep() -> Vec<i16> {
+    let n = (0.38 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let vib = (t * 28.0 * 6.283).sin() * 24.0;
+        let f = 290.0 + vib;
+        let tone = (t * f * 6.283).sin() * 0.6 + (t * f * 2.0 * 6.283).sin() * 0.25;
+        let s = tone * env(t, 0.025, 0.16) * 0.32;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_pig() -> Vec<i16> {
+    let n = (0.24 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let f = 195.0 + (t * 45.0 * 6.283).sin() * 35.0;
+        let tone = (t * f * 6.283).sin() * 0.7 + (t * f * 1.5 * 6.283).sin() * 0.2;
+        let s = tone * env(t, 0.015, 0.09) * 0.35;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_chicken() -> Vec<i16> {
+    let n = (0.18 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let f = if t < 0.08 { 680.0 + t * 1400.0 } else { 540.0 + (t - 0.08) * 1100.0 };
+        let s = (t * f * 6.283).sin() * env(t, 0.008, 0.05) * 0.28;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_rattle() -> Vec<i16> {
+    let n = (0.20 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let pulse = if ((t * 36.0) as i32) % 2 == 0 { 1.0 } else { 0.15 };
+        let s = (t * 620.0 * 6.283).sin() * pulse * env(t, 0.005, 0.07) * 0.30;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_spider() -> Vec<i16> {
+    let n = (0.22 * SAMPLE_RATE as f32) as usize;
+    let mut st = 54321u32;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        let modl = (t * 50.0 * 6.283).sin() * 0.5 + 0.5;
+        let s = (noise * 0.5 + (t * 920.0 * 6.283).sin() * 0.3) * modl * env(t, 0.01, 0.09) * 0.30;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_enderman() -> Vec<i16> {
+    let n = (0.36 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let f1 = 220.0 + (t * 14.0 * 6.283).sin() * 90.0;
+        let f2 = 445.0 - t * 240.0;
+        let s = ((t * f1 * 6.283).sin() * 0.5 + (t * f2 * 6.283).sin() * 0.4) * env(t, 0.02, 0.15) * 0.32;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
@@ -223,21 +453,19 @@ fn synth_arp() -> Vec<i16> {
 }
 
 fn note_hz(semi: i32) -> f32 {
-    // A4 = 69 -> 440 Hz
     440.0 * 2f32.powf((semi as f32 - 9.0) / 12.0)
 }
 
-/// A calm 8-bar loop built from soft piano-ish tones, bass and a little pad.
+/// Calm C418-inspired looping ambient soundtrack (soft felt piano + warm pad).
 fn render_music() -> Vec<i16> {
-    const BPM: f32 = 72.0;
+    const BPM: f32 = 66.0;
     let beat = 60.0 / BPM;
-    let step = beat / 2.0; // eighth notes
+    let step = beat / 2.0;
     let bars = 8usize;
     let steps = bars * 8;
     let total = (steps as f32 * step * SAMPLE_RATE as f32) as usize;
     let mut buf = vec![0.0f32; total];
 
-    // chords: Cmaj, Amin, Fmaj, Gmaj, Cmaj, Amin, Fmaj, Gsus
     let chords: [[i32; 3]; 8] = [
         [0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2],
         [0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2],
@@ -255,10 +483,10 @@ fn render_music() -> Vec<i16> {
             let idx = start + i;
             if idx >= buf.len() { break; }
             let t = i as f32 / SAMPLE_RATE as f32;
-            let a = env(t, 0.02, dur * 0.35);
-            let s = (t * freq * 6.283).sin() * 0.7
-                + (t * freq * 2.0 * 6.283).sin() * 0.2 * bright
-                + (t * freq * 3.0 * 6.283).sin() * 0.08 * bright;
+            let a = env(t, 0.025, dur * 0.38);
+            let s = (t * freq * 6.283).sin() * 0.72
+                + (t * freq * 2.0 * 6.283).sin() * 0.18 * bright
+                + (t * freq * 3.0 * 6.283).sin() * 0.06 * bright;
             buf[idx] += s * a * vol;
         }
     };
@@ -268,20 +496,19 @@ fn render_music() -> Vec<i16> {
         let chord = chords[(s / 8).min(7)];
         if s % 8 == 0 {
             for c in chord.iter() {
-                add_tone(&mut buf, start, note_hz(c - 12), 2.1, 0.22, 0.4);
+                add_tone(&mut buf, start, note_hz(c - 12), 2.3, 0.22, 0.35);
             }
         }
         if s % 2 == 0 {
             let c = chord[(s / 2) % 3] - 24;
-            add_tone(&mut buf, start, note_hz(c), 0.85, 0.20, 0.2);
+            add_tone(&mut buf, start, note_hz(c), 0.9, 0.20, 0.2);
         }
         if s % 2 == 0 {
             let m = melody[(s / 2) % 32];
-            add_tone(&mut buf, start, note_hz(m), 1.1, 0.16, 0.7);
+            add_tone(&mut buf, start, note_hz(m), 1.2, 0.18, 0.65);
         }
     }
 
-    // gentle low-pass to soften the result
     let mut prev = 0.0f32;
     for v in buf.iter_mut() {
         prev = prev * 0.62 + *v * 0.38;
@@ -289,4 +516,3 @@ fn render_music() -> Vec<i16> {
     }
     buf.iter().map(|v| (v.clamp(-1.0, 1.0) * 26000.0) as i16).collect()
 }
-

@@ -807,16 +807,19 @@ fn hit_model_boxes(
 
 #[inline]
 fn sun_shadow(cache: &RenderCache, hx: f32, hy: f32, hz: f32, sx: f32, sy: f32, sz: f32) -> f32 {
-    if sy <= 0.12 { return 0.72; }
-    for step in 1..=8 {
-        let d = step as f32 * 0.9;
+    if sy <= 0.12 { return 0.68; }
+    for step in 1..=12 {
+        let d = step as f32 * 0.72;
         let bx = (hx + sx * d).floor() as i32;
         let by = (hy + sy * d).floor() as i32;
         let bz = (hz + sz * d).floor() as i32;
         if by >= world::WORLD_H as i32 { break; }
         let b = cache.get(bx, by, bz);
         if world::is_opaque(b) {
-            return 0.64;
+            return 0.56;
+        }
+        if matches!(b, world::LEAVES | world::BIRCH_LEAVES | world::SPRUCE_LEAVES | world::JUNGLE_LEAVES | world::DARK_LEAVES) {
+            return 0.70;
         }
     }
     1.0
@@ -843,15 +846,20 @@ fn shade_voxel(
     let fl = face_light(nx, ny, nz, day);
     let ao_v = if apply_ao { ao_cache(cache, bx, by, bz, nx, ny, nz) } else { 0.94 };
     let emit = world::emits_light(b);
-    let mut lr = fl[0] * ao_v;
-    let mut lg = fl[1] * ao_v;
-    let mut lb = fl[2] * ao_v;
+    let sky_lv = cache
+        .get_sky_light(bx + nx, by + ny, bz + nz)
+        .max(cache.get_sky_light(bx, by, bz)) as f32
+        / 15.0;
+    let sky_mul = 0.09 + 0.91 * sky_lv.powf(1.25);
+    let mut lr = fl[0] * ao_v * sky_mul;
+    let mut lg = fl[1] * ao_v * sky_mul;
+    let mut lb = fl[2] * ao_v * sky_mul;
     let bl = cache.get_light(bx + nx, by + ny, bz + nz).max(cache.get_light(bx, by, bz)) as f32 / 15.0;
     if bl > 0.0 {
-        let warm = bl * 0.96 * shader.warm_torch;
-        lr = lr.max(warm * 1.10);
+        let warm = bl * 0.98 * shader.warm_torch;
+        lr = lr.max(warm * 1.12);
         lg = lg.max(warm * 0.96);
-        lb = lb.max(warm * 0.78);
+        lb = lb.max(warm * 0.76);
     }
     if emit > 0 {
         let e = (0.98 + emit as f32 * 0.025) * shader.warm_torch.min(1.35);
@@ -1111,6 +1119,19 @@ fn trace_ray(
                     let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
                     let (mut rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true, shader);
                     if a > 20 {
+                        // Gentle anti-Moiré filtering for distant/grazing terrain surfaces
+                        if t > 13.0 {
+                            let (rgb1, a1) = shade_voxel(
+                                tex, cache, b, x, y, z, nx, ny, nz,
+                                (u + 0.13).fract(), (v + 0.17).fract(), day, tick, true, shader,
+                            );
+                            if a1 > 20 {
+                                let m = ((t - 13.0) / 18.0).clamp(0.0, 0.55);
+                                rgb0[0] = rgb0[0] * (1.0 - m) + rgb1[0] * m;
+                                rgb0[1] = rgb0[1] * (1.0 - m) + rgb1[1] * m;
+                                rgb0[2] = rgb0[2] * (1.0 - m) + rgb1[2] * m;
+                            }
+                        }
                         if shader.sun_shadows && dim == Dimension::Overworld && day > 0.25 && t < 38.0 {
                             let sh = sun_shadow(
                                 cache,
@@ -1214,6 +1235,13 @@ fn trace_ray(
     )
 }
 
+const FOV_SCALE: f32 = 0.70;
+
+#[inline]
+fn focal_len(fb: &Framebuffer) -> f32 {
+    fb.h as f32 / (2.0 * FOV_SCALE)
+}
+
 pub fn render_world(
     fb: &mut Framebuffer,
     tex: &Textures,
@@ -1234,7 +1262,7 @@ pub fn render_world(
     let w = fb.w;
     let h = fb.h;
     let aspect = w as f32 / h as f32;
-    let scale = 0.78f32;
+    let scale = FOV_SCALE;
     let cache = world.sync_cache(cam.x, cam.z);
     let underwater = cache.get(cam.x.floor() as i32, cam.y.floor() as i32, cam.z.floor() as i32) == world::WATER;
 
@@ -1251,8 +1279,9 @@ pub fn render_world(
                 dx *= inv_len; dy *= inv_len; dz *= inv_len;
                 let sky = sky_color(dim, dy, time, px as i32, py as i32);
                 let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining, shader);
+                let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                 let pi = py * w + px;
-                fb.depth[pi] = dist;
+                fb.depth[pi] = dist * forward_cos;
                 let di = pi * 4;
                 fb.rgba[di] = rgb[0];
                 fb.rgba[di + 1] = rgb[1];
@@ -1286,8 +1315,9 @@ pub fn render_world(
                             dx *= inv_len; dy *= inv_len; dz *= inv_len;
                             let sky = sky_color(dim, dy, time, px as i32, py as i32);
                             let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining, shader);
+                            let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                             let pi = local_y * w + px;
-                            depth_band[pi] = dist;
+                            depth_band[pi] = dist * forward_cos;
                             let di = pi * 4;
                             rgba_band[di] = rgb[0];
                             rgba_band[di + 1] = rgb[1];
@@ -1307,13 +1337,13 @@ fn project(cam: &Cam, x: f32, y: f32, z: f32, fb: &Framebuffer) -> Option<(f32, 
     if d < 0.15 { return None; }
     let s = rx * cam.rx + ry * cam.ry + rz * cam.rz;
     let u = rx * cam.ux + ry * cam.uy + rz * cam.uz;
-    let focal = fb.w as f32 / 1.56;
+    let focal = focal_len(fb);
     Some((fb.w as f32 / 2.0 + s / d * focal, fb.h as f32 / 2.0 - u / d * focal, d))
 }
 
 /// Crisp wireframe highlight around the block the player is aiming at.
 pub fn draw_block_outline(fb: &mut Framebuffer, cam: &Cam, bx: i32, by: i32, bz: i32) {
-    let e = 0.006;
+    let e = 0.004;
     let x0 = bx as f32 - e; let x1 = bx as f32 + 1.0 + e;
     let y0 = by as f32 - e; let y1 = by as f32 + 1.0 + e;
     let z0 = bz as f32 - e; let z1 = bz as f32 + 1.0 + e;
@@ -1337,8 +1367,8 @@ pub fn draw_block_outline(fb: &mut Framebuffer, cam: &Cam, bx: i32, by: i32, bz:
             let d = ad + (bd - ad) * t;
             if px >= 0 && py >= 0 && px < fb.w as i32 && py < fb.h as i32 {
                 let td = fb.depth[py as usize * fb.w + px as usize];
-                if d <= td + 0.18 {
-                    fb.set(px, py, 20, 20, 24, 200);
+                if d <= td + 0.06 {
+                    fb.set(px, py, 20, 20, 24, 195);
                 }
             }
         }
@@ -1535,7 +1565,18 @@ fn raster_tri(
                 let v = ((w0 * v0.4 * v0.2 + w1 * v1.4 * v1.2 + w2 * v2.4 * v2.2) * z).clamp(0.0, 1.0);
                 let raw = if is_front_face && part.face != FaceArt::None {
                     face_pixel(part.face, u, v, part.col, part.col_alt)
-                } else if part.face == FaceArt::Cow && ((u * 4.0) as i32 + (v * 4.0) as i32) % 3 == 0 {
+                } else if part.face == FaceArt::Steve && (shade > 0.99 || v < 0.34 || shade < 0.75) {
+                    // Hair on top, back, and upper sides of Steve's head
+                    if shade < 0.75 && v > 0.72 { part.col } else { part.col_alt }
+                } else if part.face == FaceArt::Cow
+                    && (((u * 4.0) as i32 + (v * 4.0) as i32 * 2) % 3 == 0)
+                {
+                    part.col_alt
+                } else if part.face == FaceArt::Creeper && (((u * 6.0) as i32 + (v * 6.0) as i32) % 3 == 0) {
+                    part.col_alt
+                } else if part.face == FaceArt::Sheep && (((u * 5.0) as i32 ^ (v * 5.0) as i32) & 1 == 0) {
+                    part.col_alt
+                } else if v > 0.78 && part.pivot_y > 0.2 && part.pivot_y < 0.75 {
                     part.col_alt
                 } else {
                     part.col
@@ -1580,19 +1621,21 @@ pub fn draw_entity_3d(
     if dist > 72.0 { return; }
     if matches!(kind, EntityKind::Steve) && dist < 1.8 { return; }
 
-    // ground shadow
-    if let Some((gx, gy, gd)) = project(cam, wx, wy + 0.02, wz, fb) {
-        let rw = (0.50 / gd * (fb.w as f32 / 1.56)).max(1.0);
-        for yy in -rw as i32 / 3..=rw as i32 / 3 {
+    // ground shadow (aligned to focal length & flush on terrain)
+    let focal = focal_len(fb);
+    if let Some((gx, gy, gd)) = project(cam, wx, wy + 0.01, wz, fb) {
+        let rw = (0.42 / gd * focal).clamp(1.0, 22.0);
+        let ry_lim = (rw * 0.42).max(1.0) as i32;
+        for yy in -ry_lim..=ry_lim {
             let sy_i = gy as i32 + yy;
             if sy_i < 0 || sy_i >= fb.h as i32 { continue; }
             for xx in -rw as i32..=rw as i32 {
                 let sx_i = gx as i32 + xx;
                 if sx_i < 0 || sx_i >= fb.w as i32 { continue; }
-                if xx * xx + yy * yy * 9 > (rw * rw) as i32 { continue; }
+                if xx * xx + yy * yy * 6 > (rw * rw) as i32 { continue; }
                 let td = fb.depth[sy_i as usize * fb.w + sx_i as usize];
-                if td >= 74.0 || gd > td + 0.8 { continue; }
-                let a = ((1.0 - day * 0.45) * 42.0) as u8;
+                if td >= 74.0 || (gd - td).abs() > 0.45 { continue; }
+                let a = ((1.0 - day * 0.40) * 48.0) as u8;
                 fb.set(sx_i, sy_i, 10, 12, 16, a);
             }
         }
@@ -1605,7 +1648,6 @@ pub fn draw_entity_3d(
         EntityKind::Minecart => entities::vehicle_parts(false),
     };
     let (sy, cy) = (yaw.sin(), yaw.cos());
-    let focal = fb.w as f32 / 1.56;
     let hw = fb.w as f32 * 0.5;
     let hh = fb.h as f32 * 0.5;
     let light_base = 0.42 + day * 0.58;
@@ -1669,7 +1711,7 @@ pub fn draw_entity_3d(
 pub fn draw_drop_sprite(fb: &mut Framebuffer, cam: &Cam, x: f32, y: f32, z: f32, item: u16, tick: u32, day: f32) {
     let (sx, sy, dist) = match project(cam, x, y, z, fb) { Some(v) => v, None => return };
     if dist > 48.0 { return; }
-    let size = (0.36 / dist * (fb.w as f32 / 1.56)).clamp(4.0, 28.0) as i32;
+    let size = (0.34 / dist * focal_len(fb)).clamp(4.0, 26.0) as i32;
     let left = sx as i32 - size / 2;
     let top = sy as i32 - size;
     let light = 0.48 + day * 0.52;
@@ -1797,20 +1839,21 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
         let cx = size as f32 * 0.5;
         let cy = size as f32 * 0.5;
         let rx = size as f32 * 0.44;
-        let ry = size as f32 * 0.23;
+        let ry = size as f32 * 0.22;
         let h = size as f32 * 0.44;
+        let top_y = -h * 0.5;
         for py in 0..size {
             for px in 0..size {
                 let fx = px as f32 + 0.5 - cx;
                 let fy = py as f32 + 0.5 - cy;
-                // Isometric diamond top face centered at (0, -ry)
-                let ty = fy + ry;
+                // Isometric diamond top face centered at (0, top_y)
+                let ty = fy - top_y;
                 if (fx / rx).abs() + (ty / ry).abs() <= 1.0 {
                     let u = ((fx / rx + ty / ry) * 0.5 + 0.5).clamp(0.0, 0.999);
                     let v = ((ty / ry - fx / rx) * 0.5 + 0.5).clamp(0.0, 0.999);
                     let c = atlas.sample_kind(top_k, u, v, tick, anim);
                     if c[3] > 20 {
-                        let shade = 1.05;
+                        let shade = 1.06;
                         fb.set(
                             fb_x + px,
                             fb_y + py,
@@ -1822,9 +1865,9 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
                     }
                     continue;
                 }
-                // Left side face (-rx..0)
+                // Left side face (-rx..0) seamlessly flush with top diamond bottom-left edge
                 if fx >= -rx && fx < 0.0 {
-                    let top_edge = (fx + rx) / rx * ry;
+                    let top_edge = top_y + ((fx + rx) / rx) * ry;
                     if fy >= top_edge && fy <= top_edge + h {
                         let u = ((fx + rx) / rx).clamp(0.0, 0.999);
                         let v = ((fy - top_edge) / h).clamp(0.0, 0.999);
@@ -1843,9 +1886,9 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
                         continue;
                     }
                 }
-                // Right side face (0..rx)
+                // Right side face (0..rx) seamlessly flush with top diamond bottom-right edge
                 if fx >= 0.0 && fx <= rx {
-                    let top_edge = (rx - fx) / rx * ry;
+                    let top_edge = top_y + ((rx - fx) / rx) * ry;
                     if fy >= top_edge && fy <= top_edge + h {
                         let u = (fx / rx).clamp(0.0, 0.999);
                         let v = ((fy - top_edge) / h).clamp(0.0, 0.999);
@@ -1880,40 +1923,97 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
 
 fn heart(fb: &mut Framebuffer, x: i32, y: i32, state: u8) {
     let rows = [
-        [0, 1, 1, 0, 0, 1, 1, 0],
-        [1, 2, 2, 1, 1, 2, 2, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [1, 2, 2, 2, 2, 2, 2, 1],
-        [0, 1, 2, 2, 2, 2, 1, 0],
-        [0, 0, 1, 2, 2, 1, 0, 0],
-        [0, 0, 0, 1, 1, 0, 0, 0],
+        [0, 1, 1, 0, 0, 0, 1, 1, 0],
+        [1, 2, 2, 1, 0, 1, 2, 2, 1],
+        [1, 3, 3, 2, 1, 2, 2, 2, 1],
+        [1, 3, 2, 2, 2, 2, 2, 2, 1],
+        [1, 2, 2, 2, 2, 2, 2, 2, 1],
+        [0, 1, 2, 2, 2, 2, 2, 1, 0],
+        [0, 0, 1, 2, 2, 2, 1, 0, 0],
+        [0, 0, 0, 1, 2, 1, 0, 0, 0],
+        [0, 0, 0, 0, 1, 0, 0, 0, 0],
     ];
     for (r, bits) in rows.iter().enumerate() {
         for (c, &v) in bits.iter().enumerate() {
             if v == 1 {
-                fb.set(x + c as i32, y + r as i32, 20, 10, 12, 255);
-            } else if v == 2 {
+                fb.set(x + c as i32, y + r as i32, 18, 10, 12, 255);
+            } else if v >= 2 {
                 let filled = state == 2 || (state == 1 && c < 4);
                 if filled {
-                    let hi = r == 1 && (c == 1 || c == 2);
-                    if hi { fb.set(x + c as i32, y + r as i32, 255, 170, 170, 255); }
-                    else { fb.set(x + c as i32, y + r as i32, 232, 28, 36, 255); }
+                    if v == 3 {
+                        fb.set(x + c as i32, y + r as i32, 255, 188, 188, 255);
+                    } else if c >= 6 || r >= 6 {
+                        fb.set(x + c as i32, y + r as i32, 178, 18, 24, 255);
+                    } else {
+                        fb.set(x + c as i32, y + r as i32, 238, 32, 38, 255);
+                    }
                 } else {
-                    fb.set(x + c as i32, y + r as i32, 58, 42, 44, 255);
+                    fb.set(x + c as i32, y + r as i32, 48, 38, 40, 235);
                 }
             }
         }
     }
 }
 
-fn drumstick(fb: &mut Framebuffer, x: i32, y: i32, filled: bool) {
-    fb.rect(x, y, 7, 7, [24, 16, 12, 255]);
-    if filled {
-        fb.rect(x + 1, y + 1, 4, 4, [196, 122, 62, 255]);
-        fb.rect(x + 2, y + 2, 2, 2, [232, 168, 92, 255]);
-        fb.rect(x + 4, y + 4, 2, 2, [238, 228, 208, 255]);
-    } else {
-        fb.rect(x + 1, y + 1, 5, 5, [52, 44, 38, 255]);
+fn drumstick(fb: &mut Framebuffer, x: i32, y: i32, state: u8) {
+    // 9x9 Minecraft-style drumstick: 1=outline, 2=meat, 3=meat highlight, 4=bone
+    let rows = [
+        [0, 0, 0, 1, 1, 1, 0, 0, 0],
+        [0, 0, 1, 3, 3, 2, 1, 0, 0],
+        [0, 1, 3, 2, 2, 2, 2, 1, 0],
+        [0, 1, 2, 2, 2, 2, 2, 1, 0],
+        [0, 1, 2, 2, 2, 2, 1, 0, 0],
+        [0, 0, 1, 2, 2, 4, 1, 0, 0],
+        [0, 0, 0, 1, 1, 4, 4, 1, 0],
+        [0, 0, 0, 0, 0, 1, 4, 4, 1],
+        [0, 0, 0, 0, 0, 0, 1, 1, 0],
+    ];
+    for (r, bits) in rows.iter().enumerate() {
+        for (c, &v) in bits.iter().enumerate() {
+            if v == 1 {
+                fb.set(x + c as i32, y + r as i32, 22, 14, 10, 255);
+            } else if v >= 2 {
+                let filled = state == 2 || (state == 1 && (c + r) <= 7);
+                if !filled {
+                    fb.set(x + c as i32, y + r as i32, 48, 40, 36, 230);
+                } else if v == 4 {
+                    fb.set(x + c as i32, y + r as i32, 238, 228, 208, 255);
+                } else if v == 3 {
+                    fb.set(x + c as i32, y + r as i32, 234, 168, 92, 255);
+                } else {
+                    fb.set(x + c as i32, y + r as i32, 194, 114, 52, 255);
+                }
+            }
+        }
+    }
+}
+
+fn armor_icon(fb: &mut Framebuffer, x: i32, y: i32, state: u8) {
+    let rows = [
+        [0, 1, 1, 0, 0, 0, 1, 1, 0],
+        [1, 2, 2, 1, 1, 1, 2, 2, 1],
+        [1, 2, 3, 2, 2, 2, 2, 2, 1],
+        [1, 1, 2, 2, 2, 2, 2, 1, 1],
+        [0, 1, 2, 2, 2, 2, 2, 1, 0],
+        [0, 1, 2, 2, 2, 2, 2, 1, 0],
+        [0, 1, 2, 2, 2, 2, 2, 1, 0],
+        [0, 0, 1, 1, 1, 1, 1, 0, 0],
+    ];
+    for (r, bits) in rows.iter().enumerate() {
+        for (c, &v) in bits.iter().enumerate() {
+            if v == 1 {
+                fb.set(x + c as i32, y + r as i32, 22, 24, 30, 255);
+            } else if v >= 2 {
+                let filled = state == 2 || (state == 1 && c < 4);
+                if !filled {
+                    fb.set(x + c as i32, y + r as i32, 42, 46, 54, 220);
+                } else if v == 3 {
+                    fb.set(x + c as i32, y + r as i32, 225, 234, 248, 255);
+                } else {
+                    fb.set(x + c as i32, y + r as i32, 168, 182, 206, 255);
+                }
+            }
+        }
     }
 }
 
@@ -1921,19 +2021,43 @@ pub const SLOT: i32 = 24;
 pub const HOT_Y: i32 = 238;
 pub fn hotbar_x(i: usize) -> i32 { W as i32 / 2 - (9 * (SLOT + 2)) / 2 + i as i32 * (SLOT + 2) }
 
-pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32) {
-    let x = 412;
-    let y = 192;
+pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32, swing: f32) {
+    let bob_x = (walk_bob * 0.8).cos() * 3.0 - swing.sin() * 14.0;
+    let bob_y = (walk_bob * 1.6).sin().abs() * 3.0 + swing.sin() * 10.0;
+    let bx = (402.0 + bob_x) as i32;
+    let by = (188.0 + bob_y) as i32;
     if item == 0 {
-        // Clean 3D-shaded first-person Steve hand
-        fb.rect(x + 26, y + 36, 18, 42, [198, 152, 114, 255]);
-        fb.rect(x + 26, y + 36, 14, 40, [218, 170, 130, 255]);
-        fb.rect(x + 26, y + 36, 14, 4, [236, 192, 152, 255]);
-        fb.rect(x + 23, y + 68, 24, 10, [52, 126, 148, 255]);
+        // Chunky angled 3D-shaded first-person Steve forearm emerging from bottom-right
+        for row in 0..84 {
+            let slant = ((row as f32) * 0.45) as i32;
+            let px = bx + 18 + slant;
+            let py = by + 10 + row;
+            if row > 54 {
+                fb.rect(px - 2, py, 22, 1, [44, 134, 152, 255]);
+                fb.rect(px + 20, py, 10, 1, [32, 102, 118, 255]);
+            } else {
+                fb.rect(px, py, 20, 1, [218, 170, 130, 255]);
+                fb.rect(px + 20, py, 9, 1, [168, 124, 90, 255]);
+                if row < 4 {
+                    fb.rect(px, py, 20, 1, [236, 192, 154, 255]);
+                }
+            }
+        }
     } else {
-        fb.rect(x + 22, y + 32, 16, 40, [212, 165, 125, 255]);
-        fb.rect(x + 20, y + 64, 20, 8, [52, 126, 148, 255]);
-        draw_item_icon(fb, x, y, item, 42, tick);
+        // Angled forearm + held 3D block or tool
+        for row in 0..56 {
+            let slant = ((row as f32) * 0.38) as i32;
+            let px = bx + 26 + slant;
+            let py = by + 32 + row;
+            if row > 34 {
+                fb.rect(px - 1, py, 18, 1, [44, 134, 152, 255]);
+                fb.rect(px + 17, py, 8, 1, [32, 102, 118, 255]);
+            } else {
+                fb.rect(px, py, 17, 1, [214, 166, 126, 255]);
+                fb.rect(px + 17, py, 7, 1, [166, 122, 88, 255]);
+            }
+        }
+        draw_item_icon(fb, bx + 2, by + 2, item, 42, tick);
     }
 }
 
@@ -1992,31 +2116,25 @@ pub fn draw_hud(
             if armor > 0 {
                 for i in 0..10 {
                     let threshold = (i as u32 + 1) * 2;
-                    let ax = hb_left + i as i32 * 9;
-                    let ay = HOT_Y - 26;
-                    if armor >= threshold {
-                        fb.rect(ax, ay, 7, 7, [175, 185, 205, 255]);
-                        fb.frame(ax, ay, 7, 7, [40, 44, 52, 255]);
-                    } else if armor >= threshold - 1 {
-                        fb.rect(ax, ay, 4, 7, [175, 185, 205, 255]);
-                        fb.frame(ax, ay, 7, 7, [40, 44, 52, 255]);
-                    }
+                    let st = if armor >= threshold { 2 } else if armor >= threshold - 1 { 1 } else { 0 };
+                    armor_icon(fb, hb_left + i as i32 * 9, HOT_Y - 28, st);
                 }
             }
             for i in 0..10 {
                 let threshold = (i as f32 + 1.0) * 2.0;
                 let st = if health >= threshold { 2 } else if health >= threshold - 1.0 { 1 } else { 0 };
-                heart(fb, hb_left + i * 9, HOT_Y - 16, st);
+                heart(fb, hb_left + i * 9, HOT_Y - 18, st);
             }
             for i in 0..10 {
-                let filled = hunger >= (i as f32 + 1.0) * 2.0 - 0.5;
-                drumstick(fb, hb_left + 9 * (SLOT + 2) - 8 - i * 8, HOT_Y - 16, filled);
+                let threshold = (i as f32 + 1.0) * 2.0;
+                let st = if hunger >= threshold { 2 } else if hunger >= threshold - 1.0 { 1 } else { 0 };
+                drumstick(fb, hb_left + 9 * (SLOT + 2) - 9 - i * 9, HOT_Y - 18, st);
             }
             if air < 9.95 {
                 let bubbles = air.ceil().clamp(0.0, 10.0) as i32;
                 for i in 0..bubbles {
-                    let bx = hb_left + 9 * (SLOT + 2) - 8 - i * 8;
-                    let by = HOT_Y - 25;
+                    let bx = hb_left + 9 * (SLOT + 2) - 9 - i * 9;
+                    let by = HOT_Y - 28;
                     fb.rect(bx, by, 6, 6, [40, 140, 240, 220]);
                     fb.rect(bx + 1, by + 1, 2, 2, [215, 245, 255, 240]);
                 }

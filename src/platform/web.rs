@@ -7,7 +7,7 @@
 
 use crate::platform::{Event, Platform};
 use crate::render::Framebuffer;
-use crate::sound::Sfx;
+use crate::sound::{push_web_sfx, Sfx};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
@@ -26,7 +26,12 @@ thread_local! {
     static MOUSE: Cell<(i32, i32)> = Cell::new((240, 135));
     static QUIT: Cell<bool> = Cell::new(false);
     static FRAME: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    static SOUND_ON: Cell<bool> = Cell::new(true);
+    static MUSIC_ON: Cell<bool> = Cell::new(true);
 }
+
+pub fn sound_enabled() -> bool { SOUND_ON.with(|c| c.get()) }
+pub fn music_enabled() -> bool { MUSIC_ON.with(|c| c.get()) }
 
 pub struct Web;
 
@@ -73,11 +78,19 @@ impl Platform for Web {
         unsafe { js_now() }
     }
 
-    fn play(&mut self, _s: Sfx) {}
+    fn play(&mut self, s: Sfx) {
+        if sound_enabled() {
+            push_web_sfx(s);
+        }
+    }
 
-    fn set_music(&mut self, _on: bool) {}
+    fn set_music(&mut self, on: bool) {
+        MUSIC_ON.with(|c| c.set(on));
+    }
 
-    fn set_sound(&mut self, _on: bool) {}
+    fn set_sound(&mut self, on: bool) {
+        SOUND_ON.with(|c| c.set(on));
+    }
 
     fn set_cursor(&mut self, visible: bool) {
         unsafe { js_set_cursor(visible as u32) }
