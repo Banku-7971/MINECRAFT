@@ -7,6 +7,7 @@ const play = document.getElementById('play');
 const statustext = document.getElementById('statustext');
 
 const ctx = canvas.getContext('2d', { alpha: false });
+ctx.imageSmoothingEnabled = false;
 canvas.tabIndex = 0;
 
 let wasm = null;
@@ -24,7 +25,7 @@ const VK = {
   ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17,
   Escape: 27, Space: 32,
   ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
-  KeyA: 65, KeyD: 68, KeyE: 69, KeyF: 70, KeyQ: 81, KeyS: 83, KeyT: 84, KeyW: 87,
+  KeyA: 65, KeyC: 67, KeyD: 68, KeyE: 69, KeyF: 70, KeyQ: 81, KeyS: 83, KeyT: 84, KeyW: 87,
   F5: 116,
   Digit1: 49, Digit2: 50, Digit3: 51, Digit4: 52, Digit5: 53,
   Digit6: 54, Digit7: 55, Digit8: 56, Digit9: 57,
@@ -118,7 +119,7 @@ async function begin() {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
   // Click the title screen's Singleplayer button.
-  wasm.game_mouse_to(240, 143);
+  wasm.game_mouse_to(240, 126);
   wasm.game_mouse_button(0, 1);
   wasm.game_mouse_button(0, 0);
   wasm.game_frame();
@@ -177,10 +178,14 @@ function sendChar(ch) {
 document.addEventListener('keydown', e => {
   if (!playing || !wasm) return;
 
-  if (preventDefault.has(e.code)) e.preventDefault();
+  const isF5 = e.code === 'F5' || e.key === 'F5' || e.keyCode === 116;
+  if (isF5 || preventDefault.has(e.code)) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-  const code = VK[e.code];
+  const code = isF5 ? 116 : VK[e.code];
   if (code === undefined) {
     if (!e.repeat) sendChar(e.key);
     return;

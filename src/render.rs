@@ -1292,12 +1292,12 @@ fn face_pixel(face: FaceArt, u: f32, v: f32, base: [u8; 3], alt: [u8; 3]) -> [u8
 }
 
 fn transform_point(lx: f32, ly: f32, lz: f32, part: &Part3D, sy: f32, cy: f32, wx: f32, wy: f32, wz: f32) -> (f32, f32, f32) {
-    // swing around pivot_y in X axis
+    // swing around (pivot_y, part.cz) in X axis
     let dy = ly - part.pivot_y;
-    let dz = lz;
+    let dz = lz - part.cz;
     let (ss, cs) = (part.swing.sin(), part.swing.cos());
     let ry = part.pivot_y + dy * cs - dz * ss;
-    let rz = dy * ss + dz * cs;
+    let rz = part.cz + dy * ss + dz * cs;
     // rotate around Y by entity yaw
     let rx = lx * cy + rz * sy;
     let rz2 = -lx * sy + rz * cy;
@@ -1312,7 +1312,7 @@ fn raster_tri(
     part: &Part3D,
     is_front_face: bool,
     shade: f32,
-    flash: bool,
+    flash: u8,
     front_always: bool,
 ) {
     let min_x = v0.0.min(v1.0).min(v2.0).floor().max(0.0) as i32;
@@ -1340,7 +1340,7 @@ fn raster_tri(
             if !front_always && z >= fb.depth[idx] { continue; }
             fb.depth[idx] = z;
 
-            let c = if flash {
+            let c = if flash == 2 {
                 [245, 245, 245]
             } else {
                 let u = ((w0 * v0.3 * v0.2 + w1 * v1.3 * v1.2 + w2 * v2.3 * v2.2) * z).clamp(0.0, 1.0);
@@ -1352,11 +1352,20 @@ fn raster_tri(
                 } else {
                     part.col
                 };
-                [
+                let lit = [
                     (raw[0] as f32 * shade).min(255.0) as u8,
                     (raw[1] as f32 * shade).min(255.0) as u8,
                     (raw[2] as f32 * shade).min(255.0) as u8,
-                ]
+                ];
+                if flash == 1 {
+                    [
+                        ((lit[0] as f32 * 0.42 + 235.0 * 0.58).min(255.0)) as u8,
+                        (lit[1] as f32 * 0.30) as u8,
+                        (lit[2] as f32 * 0.30) as u8,
+                    ]
+                } else {
+                    lit
+                }
             };
             fb.set(px, py, c[0], c[1], c[2], 255);
         }
@@ -1373,7 +1382,7 @@ pub fn draw_entity_3d(
     walk: f32,
     day: f32,
     kind: EntityKind,
-    flash: bool,
+    flash: u8,
     front_always: bool,
 ) {
     let (_, _, dist) = match project(cam, wx, wy + 0.8, wz, fb) {
@@ -2581,19 +2590,21 @@ pub fn draw_multiplayer_screen(fb: &mut Framebuffer, addr: &str, status: &str, h
     text(fb, px + 10, py + 200, "Chat with T. Players and block edits sync live.", [60, 60, 60, 255], 1);
 }
 
-pub fn draw_options_screen(fb: &mut Framebuffer, sound: bool, music: bool, scale: i32, hover: usize) {
+pub fn draw_options_screen(fb: &mut Framebuffer, sound: bool, music: bool, scale: i32, camera: u8, hover: usize) {
     fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
-    let (px, py, pw, ph) = (70, 30, 340, 210);
+    let (px, py, pw, ph) = (70, 22, 340, 226);
     panel(fb, px, py, pw, ph);
     text(fb, px + 10, py + 8, "OPTIONS", [60, 60, 60, 255], 1);
+    let cam_name = match camera { 1 => "THIRD PERSON", 2 => "DISTANT", _ => "FIRST PERSON" };
     let items = [
         format!("SOUND: {}", if sound { "ON" } else { "OFF" }),
         format!("MUSIC: {}", if music { "ON" } else { "OFF" }),
         format!("PIXEL SCALE: {}x", scale),
+        format!("CAMERA (F5/C): {}", cam_name),
         "DONE".to_string(),
     ];
     for (i, label) in items.iter().enumerate() {
-        button(fb, px + 60, py + 44 + i as i32 * 30, pw - 120, 22, label, hover == i);
+        button(fb, px + 60, py + 38 + i as i32 * 28, pw - 120, 22, label, hover == i);
     }
     text(fb, px + 10, py + ph - 16, "Click options to cycle values", [90, 90, 90, 255], 1);
 }

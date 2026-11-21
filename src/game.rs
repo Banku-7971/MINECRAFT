@@ -232,6 +232,9 @@ pub struct Game<P: Platform> {
     piston_ext: HashSet<(i32, i32, i32)>,
     vehicles: Vec<Vehicle>,
     riding: Option<usize>,
+    player_kb_vx: f32,
+    player_kb_vz: f32,
+    player_walk: f32,
     crop_timer: f32,
     spawner_timer: f32,
     tool_dur: [u16; HOT],
@@ -306,12 +309,8 @@ fn scene_dims(scale: i32) -> (usize, usize) {
     }
 }
 
-// The browser is a little slower than the native build, so start at a
-// quarter-resolution scene (240x135) and let players change it in Options.
-#[cfg(target_arch = "wasm32")]
-const DEFAULT_PIXEL_SCALE: i32 = 4;
-#[cfg(not(target_arch = "wasm32"))]
-const DEFAULT_PIXEL_SCALE: i32 = 2;
+// Default to crisp 1:1 480x270 rendering (players can still adjust Pixel Scale in Options).
+const DEFAULT_PIXEL_SCALE: i32 = 1;
 
 impl<P: Platform> Game<P> {
     pub fn new(plat: P) -> Self {
@@ -328,7 +327,10 @@ impl<P: Platform> Game<P> {
             let z = spawn_z + a.sin() * d;
             let bm = world.biome(x as i32, z as i32);
             let k = entities::biome_mob(bm, world.dim, i * 17 + 3, 0.6);
-            mobs.push(Mob::spawn(k, x, world.highest_ground(x as i32, z as i32) as f32, z));
+            let sy = world.highest_ground(x.floor() as i32, z.floor() as i32) as f32;
+            if !entities::mob_collides(&mut world, x, sy, z, k.radius(), k.height()) {
+                mobs.push(Mob::spawn(k, x, sy, z));
+            }
         }
         #[cfg(target_arch = "wasm32")]
         let splash = "Now running in your browser!";
@@ -433,6 +435,9 @@ impl<P: Platform> Game<P> {
             piston_ext: HashSet::new(),
             vehicles: Vec::new(),
             riding: None,
+            player_kb_vx: 0.0,
+            player_kb_vz: 0.0,
+            player_walk: 0.0,
             crop_timer: 0.0,
             spawner_timer: 0.0,
             tool_dur: [0; HOT],
@@ -694,9 +699,9 @@ impl<P: Platform> Game<P> {
                         let next = self.mode.next();
                         self.set_mode(next);
                     }
-                    VK_F5 => {
+                    VK_F5 | VK_C => {
                         self.camera = (self.camera + 1) % 3;
-                        self.message = format!("Camera: {}", ["First person", "Third person", "Distant"][self.camera as usize]);
+                        self.message = format!("Camera: {}", ["First person", "Third person", "Third person front"][self.camera as usize]);
                         self.msg_timer = 2.0;
                     }
                     VK_SPACE => {
@@ -791,8 +796,22 @@ impl<P: Platform> Game<P> {
                 }
                 true
             }
+            Some("/tp") => {
+                if parts.len() >= 4 {
+                    if let (Ok(x), Ok(y), Ok(z)) = (parts[1].parse::<f32>(), parts[2].parse::<f32>(), parts[3].parse::<f32>()) {
+                        self.player.x = x; self.player.y = y; self.player.z = z;
+                        self.player.vy = 0.0; self.fall_y = y;
+                        self.push_chat(&format!("Teleported to {:.1} {:.1} {:.1}", x, y, z));
+                    } else {
+                        self.push_chat("Usage: /tp <x> <y> <z>");
+                    }
+                } else {
+                    self.push_chat("Usage: /tp <x> <y> <z>");
+                }
+                true
+            }
             _ => {
-                self.push_chat("Commands: /gamemode <survival|creative|spectator>, /dim <overworld|nether|end>");
+                self.push_chat("Commands: /gamemode <survival|creative|spectator>, /dim <overworld|nether|end>, /tp <x> <y> <z>");
                 true
             }
         }
@@ -912,8 +931,8 @@ impl<P: Platform> Game<P> {
                 ]
             }
             Screen::Options => {
-                let (px, py) = (70, 30);
-                (0..4).map(|i| (px + 60, py + 44 + i * 30, 220, 22)).collect()
+                let (px, py) = (70, 22);
+                (0..5).map(|i| (px + 60, py + 38 + i * 28, 220, 22)).collect()
             }
             Screen::Playing => Vec::new(),
         }
@@ -943,6 +962,7 @@ impl<P: Platform> Game<P> {
                         0 => { self.sound_on = !self.sound_on; self.audio.sound_on = self.sound_on; self.plat.set_sound(self.sound_on); }
                         1 => { self.music_on = !self.music_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on); }
                         2 => { self.pixel_scale = if self.pixel_scale >= 4 { 1 } else { self.pixel_scale + 1 }; let (sw, sh) = scene_dims(self.pixel_scale); self.scene = Framebuffer::new(sw, sh); }
+                        3 => { self.camera = (self.camera + 1) % 3; }
                         _ => { if self.return_to_pause { self.return_to_pause = false; self.screen = Screen::Playing; self.ui = Ui::Pause; } else { self.screen = Screen::Title; } }
                     },
                     Screen::Playing => {}
@@ -1649,7 +1669,19 @@ impl<P: Platform> Game<P> {
                 _ => 1.0 + items::tool_tier(held_id) as f32 * 0.6,
             } + ench * 1.5;
             self.mobs[i].hp -= dmg;
-            self.mobs[i].hurt = 0.4;
+            self.mobs[i].hurt = 0.45;
+            let kdx = self.mobs[i].x - self.player.x;
+            let kdz = self.mobs[i].z - self.player.z;
+            let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
+            let kb = if self.sprinting { 10.5 } else { 7.5 } + ench * 1.5;
+            self.mobs[i].kb_vx = (kdx / kd) * kb;
+            self.mobs[i].kb_vz = (kdz / kd) * kb;
+            self.mobs[i].vy = self.mobs[i].vy.max(4.6);
+            self.mobs[i].on_ground = false;
+            if !self.mobs[i].kind.hostile() {
+                self.mobs[i].panic = 4.5;
+                self.mobs[i].timer = 0.0;
+            }
             self.damage_held_tool();
             self.plat.play(Sfx::Hurt);
             if self.mobs[i].hp <= 0.0 {
@@ -2674,6 +2706,17 @@ impl<P: Platform> Game<P> {
             if md < blast_reach {
                 m.hp -= (1.0 - md / blast_reach) * 16.0;
                 m.hurt = 0.5;
+                let kdx = m.x - cx;
+                let kdz = m.z - cz;
+                let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
+                let kb = (1.0 - md / blast_reach) * 11.0;
+                m.kb_vx += (kdx / kd) * kb;
+                m.kb_vz += (kdz / kd) * kb;
+                m.vy = m.vy.max(5.0);
+                if !m.kind.hostile() {
+                    m.panic = 4.5;
+                    m.timer = 0.0;
+                }
             }
         }
         self.redstone_dirty = true;
@@ -2802,8 +2845,14 @@ impl<P: Platform> Game<P> {
                 if under_b == world::ICE { speed *= 1.28; }
                 if in_cobweb { speed *= 0.25; }
 
-                let vx = (sy * fwd + cy * strafe) * speed;
-                let vz = (-cy * fwd + sy * strafe) * speed;
+                let kb_decay = (1.0 - 8.5 * dt).max(0.0);
+                self.player_kb_vx *= kb_decay;
+                self.player_kb_vz *= kb_decay;
+                if self.player_kb_vx.abs() < 0.05 { self.player_kb_vx = 0.0; }
+                if self.player_kb_vz.abs() < 0.05 { self.player_kb_vz = 0.0; }
+
+                let vx = (sy * fwd + cy * strafe) * speed + self.player_kb_vx;
+                let vz = (-cy * fwd + sy * strafe) * speed + self.player_kb_vz;
 
                 let in_water = feet_b == world::WATER;
 
@@ -2868,7 +2917,11 @@ impl<P: Platform> Game<P> {
                     self.player.on_ground = false;
                     if self.player.y > self.fall_y { self.fall_y = self.player.y; }
                 }
-                if (vx.abs() + vz.abs()) > 0.1 && self.player.on_ground && !sneaking && !self.flying {
+                let move_mag = (vx * vx + vz * vz).sqrt();
+                if move_mag > 0.1 {
+                    self.player_walk += move_mag * dt * 2.2;
+                }
+                if move_mag > 0.1 && self.player.on_ground && !sneaking && !self.flying {
                     self.audio_timer += dt as f64;
                     if self.audio_timer > if sprinting { 0.28 } else { 0.42 } {
                         self.audio_timer = 0.0;
@@ -2900,11 +2953,18 @@ impl<P: Platform> Game<P> {
             let hit_b = self.world.get(bx, by, bz);
             let mut hit_mob = false;
             for m in self.mobs.iter_mut() {
-                if (m.x - ax).abs() < 0.7 && (m.z - az).abs() < 0.7 && ay >= m.y && ay <= m.y + 1.8 {
+                if (m.x - ax).abs() < 0.7 && (m.z - az).abs() < 0.7 && ay >= m.y && ay <= m.y + m.kind.height() {
                     m.hp -= 6.0;
-                    m.hurt = 0.4;
-                    m.vx += vx * 0.12;
-                    m.vz += vz * 0.12;
+                    m.hurt = 0.45;
+                    let hd = (vx * vx + vz * vz).sqrt().max(0.1);
+                    m.kb_vx = (vx / hd) * 6.5;
+                    m.kb_vz = (vz / hd) * 6.5;
+                    m.vy = m.vy.max(3.8);
+                    m.on_ground = false;
+                    if !m.kind.hostile() {
+                        m.panic = 4.5;
+                        m.timer = 0.0;
+                    }
                     hit_mob = true;
                     self.plat.play(Sfx::Hurt);
                     break;
@@ -3019,6 +3079,12 @@ impl<P: Platform> Game<P> {
                 if self.mode == GameMode::Survival && d < 1.8 && self.mobs[i].attack_cd <= 0.0 && self.hurt_cd <= 0.0 && self.grace <= 0.0 {
                     self.mobs[i].attack_cd = 1.2;
                     self.hurt_cd = 0.7;
+                    let kdx = self.player.x - self.mobs[i].x;
+                    let kdz = self.player.z - self.mobs[i].z;
+                    let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
+                    self.player_kb_vx = (kdx / kd) * 6.0;
+                    self.player_kb_vz = (kdz / kd) * 6.0;
+                    self.player.vy = self.player.vy.max(3.6);
                     self.damage_player(2.0, false);
                 }
             }
@@ -3052,7 +3118,9 @@ impl<P: Platform> Game<P> {
                     let bm = self.world.biome(x as i32, z as i32);
                     entities::biome_mob(bm, self.world.dim, self.tick.wrapping_mul(7919), day)
                 };
-                self.mobs.push(Mob::spawn(k, x, sy_m, z));
+                if !entities::mob_collides(&mut self.world, x, sy_m, z, k.radius(), k.height()) {
+                    self.mobs.push(Mob::spawn(k, x, sy_m, z));
+                }
             }
         }
 
@@ -3394,7 +3462,7 @@ impl<P: Platform> Game<P> {
 
     fn draw_options(&mut self) {
         let hover = self.hover_index();
-        render::draw_options_screen(&mut self.fb, self.sound_on, self.music_on, self.pixel_scale, hover);
+        render::draw_options_screen(&mut self.fb, self.sound_on, self.music_on, self.pixel_scale, self.camera, hover);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
     }
@@ -3404,22 +3472,27 @@ impl<P: Platform> Game<P> {
         // camera
         let (fx, fy, fz) = self.look_dir();
         let eye_y = self.eye().1;
-        let (cam_x, cam_y, cam_z) = if self.camera == 0 {
-            (self.player.x, eye_y, self.player.z)
+        let cam = if self.camera == 0 {
+            Cam::from(self.player.yaw, self.player.pitch, self.player.x, eye_y, self.player.z)
+        } else if self.camera == 1 {
+            let back = 3.8;
+            let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, -fx, -fy, -fz, back + 0.5, false) {
+                let d = (h.dist - 0.35).clamp(1.2, back);
+                (self.player.x - fx * d, eye_y - fy * d - 0.25 * (d / back), self.player.z - fz * d)
+            } else {
+                (self.player.x - fx * back, eye_y - fy * back - 0.25, self.player.z - fz * back)
+            };
+            Cam::from(self.player.yaw, self.player.pitch, cam_x, cam_y, cam_z)
         } else {
-            let back = if self.camera == 1 { 3.6 } else { 6.5 };
-            let tx = self.player.x - fx * back;
-            let ty = eye_y - fy * back - 0.35;
-            let tz = self.player.z - fz * back;
-            if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, -fx, -fy, -fz, back + 0.5, false) {
-                if h.dist > 1.0 {
-                    let min_back = if self.camera == 1 { 2.4 } else { 4.6 };
-                    let f = ((h.dist - 0.35).max(min_back) / back).min(1.0);
-                    (self.player.x - fx * back * f, eye_y - fy * back * f - 0.35 * f, self.player.z - fz * back * f)
-                } else { (tx, ty, tz) }
-            } else { (tx, ty, tz) }
+            let front = 3.8;
+            let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, front + 0.5, false) {
+                let d = (h.dist - 0.35).clamp(1.2, front);
+                (self.player.x + fx * d, eye_y + fy * d + 0.15 * (d / front), self.player.z + fz * d)
+            } else {
+                (self.player.x + fx * front, eye_y + fy * front + 0.15, self.player.z + fz * front)
+            };
+            Cam::from(self.player.yaw + std::f32::consts::PI, -self.player.pitch, cam_x, cam_y, cam_z)
         };
-        let cam = Cam::from(self.player.yaw, self.player.pitch, cam_x, cam_y, cam_z);
         self.scene.clear();
         self.fb.cursor = (self.mouse_x, self.mouse_y);
         let mining_overlay = self.mining.map(|((mx, my, mz), prog)| {
@@ -3432,18 +3505,19 @@ impl<P: Platform> Game<P> {
             }
         }
         if self.camera != 0 && self.mode != GameMode::Spectator {
-            render::draw_entity_3d(&mut self.scene, &cam, self.player.x, self.player.y, self.player.z, self.player.yaw, self.title_t * 2.0, day, EntityKind::Steve, false, true);
+            let steve_yaw = std::f32::consts::PI - self.player.yaw;
+            render::draw_entity_3d(&mut self.scene, &cam, self.player.x, self.player.y, self.player.z, steve_yaw, self.player_walk, day, EntityKind::Steve, 0, true);
         }
         for (_, (x, y, z, yaw, _)) in self.remote.iter() {
-            render::draw_entity_3d(&mut self.scene, &cam, *x, *y, *z, *yaw, self.title_t * 2.0, day, EntityKind::Steve, false, false);
+            render::draw_entity_3d(&mut self.scene, &cam, *x, *y, *z, *yaw, self.title_t * 2.0, day, EntityKind::Steve, 0, false);
         }
         for m in self.mobs.iter() {
-            let flash = m.hurt > 0.15 || (m.kind == MobKind::Creeper && m.fuse > 0.0 && (self.tick / 3) % 2 == 0);
+            let flash = if m.hurt > 0.05 { 1 } else if m.kind == MobKind::Creeper && m.fuse > 0.0 && (self.tick / 3) % 2 == 0 { 2 } else { 0 };
             render::draw_entity_3d(&mut self.scene, &cam, m.x, m.y, m.z, m.yaw, m.walk, day, EntityKind::Mob(m.kind), flash, false);
         }
         for v in self.vehicles.iter() {
             let kind = if v.is_boat { EntityKind::Boat } else { EntityKind::Minecart };
-            render::draw_entity_3d(&mut self.scene, &cam, v.x, v.y, v.z, v.yaw, 0.0, day, kind, false, false);
+            render::draw_entity_3d(&mut self.scene, &cam, v.x, v.y, v.z, v.yaw, 0.0, day, kind, 0, false);
         }
         for t in self.tnt_primed.iter() {
             let id = if (self.tick / 4) % 2 == 0 { world::SNOW } else { world::TNT };

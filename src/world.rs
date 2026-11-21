@@ -326,24 +326,46 @@ pub fn biome_at_dim(dim: Dimension, x: i32, z: i32) -> Biome {
     }
 }
 
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 pub fn surface_height(x: i32, z: i32) -> i32 {
-    let b = biome_at(x, z);
-    let rolling = fbm2(x as f32 / 96.0, z as f32 / 96.0, 4) * 9.0;
-    let detail = noise2(x as f32 / 22.0, z as f32 / 22.0) * 2.0;
-    let mut h = SEA as f32 + 6.0 + rolling + detail;
-    match b {
-        Biome::Ocean => h -= 12.0 + fbm2(x as f32 / 60.0, z as f32 / 60.0, 2) * 4.0,
-        Biome::Beach => h = SEA as f32 + 1.0 + detail * 0.5,
-        Biome::Desert | Biome::Savanna => h += 3.0,
-        Biome::Badlands => h += 10.0 + (fbm2(x as f32 / 36.0, z as f32 / 36.0, 2) * 8.0).abs(),
-        Biome::Swamp => h -= 3.0,
-        Biome::MushroomIsland => h = SEA as f32 + 4.0 + rolling * 0.4,
-        Biome::Mountains => h += 26.0 + fbm2(x as f32 / 48.0, z as f32 / 48.0, 3) * 12.0,
-        Biome::Snowy | Biome::Taiga => h += 4.0,
-        Biome::Jungle => h += 2.0,
-        _ => {}
-    }
-    h.max(4.0) as i32
+    let fx = x as f32;
+    let fz = z as f32;
+    let temp = fbm2(fx / 420.0 + 17.0, fz / 420.0 - 8.0, 3);
+    let humid = fbm2(fx / 360.0 - 31.0, fz / 360.0 + 12.0, 3);
+    let cont = fbm2(fx / 560.0, fz / 560.0, 3);
+    let weird = fbm2(fx / 290.0 + 73.0, fz / 290.0 - 51.0, 2);
+
+    let rolling = fbm2(fx / 96.0, fz / 96.0, 4) * 9.0;
+    let detail = noise2(fx / 22.0, fz / 22.0) * 2.0;
+
+    let ocean_t = smoothstep(-0.26, -0.20, cont);
+    let land_t = smoothstep(-0.16, -0.05, cont);
+    let mtn_t = smoothstep(0.22, 0.38, cont);
+
+    let ocean_h = SEA as f32 - 8.0 - smoothstep(-0.24, -0.45, cont) * 7.0 + fbm2(fx / 60.0, fz / 60.0, 2) * 3.5;
+    let beach_h = SEA as f32 + 1.0 + detail * 0.5;
+    let inland_h = SEA as f32 + 5.5 + rolling + detail;
+
+    let mut h = lerp(ocean_h, beach_h, ocean_t);
+    h = lerp(h, inland_h, land_t);
+
+    h += mtn_t * (22.0 + fbm2(fx / 48.0, fz / 48.0, 3) * 11.0);
+    let bad_w = land_t * smoothstep(0.18, 0.28, temp) * (1.0 - smoothstep(-0.30, -0.20, humid));
+    h += bad_w * (8.0 + (fbm2(fx / 36.0, fz / 36.0, 2) * 7.0).abs());
+    let swamp_w = land_t * smoothstep(0.20, 0.30, humid) * (1.0 - smoothstep(0.02, 0.10, temp));
+    h -= swamp_w * 3.5;
+    let warm_w = land_t * smoothstep(0.18, 0.28, temp);
+    h += warm_w * 2.0;
+    let cold_w = land_t * (1.0 - smoothstep(-0.14, -0.02, temp));
+    h += cold_w * 3.0;
+    let mush_w = (1.0 - smoothstep(-0.38, -0.28, cont)) * smoothstep(0.30, 0.40, weird);
+    h = lerp(h, SEA as f32 + 4.0 + rolling * 0.4, mush_w);
+
+    h.max(4.0).round() as i32
 }
 
 fn cave_at(x: i32, y: i32, z: i32) -> bool {
@@ -354,14 +376,16 @@ fn cave_at(x: i32, y: i32, z: i32) -> bool {
 }
 
 fn ore_at(x: i32, y: i32, z: i32) -> Option<u16> {
-    let h = hash3(x / 2, y / 2, z / 2);
+    let (ox, oy, oz) = (x.div_euclid(2), y.div_euclid(2), z.div_euclid(2));
+    let h = hash3(ox, oy, oz);
     if y < 16 && h % 190 == 0 { return Some(DIAMOND_ORE); }
     if y < 30 && h % 97 == 0 { return Some(GOLD_ORE); }
     if y < 46 && h % 47 == 0 { return Some(IRON_ORE); }
     if y < 60 && h % 31 == 0 { return Some(COAL_ORE); }
-    if y < 40 && hash3(x / 3, y / 3, z / 3) % 140 == 0 { return Some(REDSTONE_ORE); }
-    if y < 32 && hash3(x / 3 + 7, y / 3, z / 3 - 5) % 135 == 0 { return Some(LAPIS_ORE); }
-    if y < 44 && hash3(x / 4, y / 4, z / 4) % 110 == 0 { return Some(EMERALD_ORE); }
+    let (rx, ry, rz) = (x.div_euclid(3), y.div_euclid(3), z.div_euclid(3));
+    if y < 40 && hash3(rx, ry, rz) % 140 == 0 { return Some(REDSTONE_ORE); }
+    if y < 32 && hash3(rx + 7, ry, rz - 5) % 135 == 0 { return Some(LAPIS_ORE); }
+    if y < 44 && hash3(x.div_euclid(4), y.div_euclid(4), z.div_euclid(4)) % 110 == 0 { return Some(EMERALD_ORE); }
     None
 }
 
@@ -699,7 +723,7 @@ fn generate_overworld_chunk(cx: i32, cz: i32) -> Chunk {
                             };
                         }
                     }
-                } else if y <= SEA && (b == Biome::Ocean || b == Biome::Beach || b == Biome::Swamp) {
+                } else if y <= SEA && (h < SEA || matches!(b, Biome::Ocean | Biome::Beach | Biome::Swamp)) {
                     id = WATER;
                 }
                 if has_struct && y >= 16 {

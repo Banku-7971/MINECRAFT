@@ -19,6 +19,7 @@ pub const VK_UP: u32 = 0x26;
 pub const VK_RIGHT: u32 = 0x27;
 pub const VK_DOWN: u32 = 0x28;
 pub const VK_A: u32 = 0x41;
+pub const VK_C: u32 = 0x43;
 pub const VK_D: u32 = 0x44;
 pub const VK_E: u32 = 0x45;
 pub const VK_F: u32 = 0x46;

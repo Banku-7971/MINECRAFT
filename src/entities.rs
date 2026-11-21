@@ -183,6 +183,36 @@ impl MobKind {
             _ => 1.8,
         }
     }
+
+    pub fn radius(self) -> f32 {
+        match self {
+            MobKind::Chicken | MobKind::Parrot => 0.22,
+            MobKind::Pig | MobKind::Wolf => 0.36,
+            MobKind::Cow | MobKind::Sheep | MobKind::Villager | MobKind::PolarBear => 0.42,
+            MobKind::Spider => 0.52,
+            MobKind::Slime => 0.46,
+            _ => 0.32,
+        }
+    }
+}
+
+pub fn mob_collides(world: &mut World, x: f32, y: f32, z: f32, r: f32, h: f32) -> bool {
+    let x0 = (x - r).floor() as i32;
+    let x1 = (x + r).floor() as i32;
+    let y0 = (y + 0.05).floor() as i32;
+    let y1 = (y + h - 0.05).floor() as i32;
+    let z0 = (z - r).floor() as i32;
+    let z1 = (z + r).floor() as i32;
+    for bx in x0..=x1 {
+        for by in y0..=y1 {
+            for bz in z0..=z1 {
+                if world::is_solid(world.get(bx, by, bz)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 pub fn steve_parts(walk: f32) -> Vec<Part3D> {
@@ -398,9 +428,12 @@ pub struct Mob {
     pub vx: f32,
     pub vy: f32,
     pub vz: f32,
+    pub kb_vx: f32,
+    pub kb_vz: f32,
     pub yaw: f32,
     pub hp: f32,
     pub timer: f32,
+    pub panic: f32,
     pub attack_cd: f32,
     pub ranged_cd: f32,
     pub breed_cd: f32,
@@ -415,8 +448,8 @@ pub struct Mob {
 impl Mob {
     pub fn spawn(kind: MobKind, x: f32, y: f32, z: f32) -> Self {
         Self {
-            kind, x, y, z, vx: 0.0, vy: 0.0, vz: 0.0, yaw: 0.0,
-            hp: kind.health(), timer: 0.0, attack_cd: 0.0, ranged_cd: 2.0, breed_cd: 0.0,
+            kind, x, y, z, vx: 0.0, vy: 0.0, vz: 0.0, kb_vx: 0.0, kb_vz: 0.0, yaw: 0.0,
+            hp: kind.health(), timer: 0.0, panic: 0.0, attack_cd: 0.0, ranged_cd: 2.0, breed_cd: 0.0,
             hurt: 0.0, fuse: 0.0, walk: 0.0, on_ground: true, tamed: false, sitting: false,
         }
     }
@@ -434,10 +467,17 @@ impl Mob {
         ignore_player: bool,
     ) {
         self.timer -= dt;
+        self.panic = (self.panic - dt).max(0.0);
         self.attack_cd = (self.attack_cd - dt).max(0.0);
         self.ranged_cd = (self.ranged_cd - dt).max(0.0);
         self.breed_cd = (self.breed_cd - dt).max(0.0);
         self.hurt = (self.hurt - dt).max(0.0);
+        let kb_decay = (1.0 - 9.0 * dt).max(0.0);
+        self.kb_vx *= kb_decay;
+        self.kb_vz *= kb_decay;
+        if self.kb_vx.abs() < 0.05 { self.kb_vx = 0.0; }
+        if self.kb_vz.abs() < 0.05 { self.kb_vz = 0.0; }
+
         let dx = px - self.x;
         let dz = pz - self.z;
         let dist = (dx * dx + dz * dz).sqrt();
@@ -475,15 +515,20 @@ impl Mob {
             self.yaw = tdx.atan2(tdz);
             let target_y = if hostile_active && dist < 24.0 { py + 2.0 } else { 70.0 + (t * 2.0).sin() * 4.0 };
             self.vy = (target_y - self.y).clamp(-4.0, 4.0);
-            self.x += self.vx * dt;
+            self.x += (self.vx + self.kb_vx) * dt;
             self.y += self.vy * dt;
-            self.z += self.vz * dt;
+            self.z += (self.vz + self.kb_vz) * dt;
             self.walk += dt * 7.0;
             return;
         }
 
         if self.kind.flying() {
-            if hostile_active && dist < 24.0 && dist > 2.5 {
+            if self.panic > 0.0 && !self.kind.hostile() {
+                let away = (-dx).atan2(-dz) + ((tick as f32 * 0.7).sin()) * 0.5;
+                self.vx = away.sin() * 4.0;
+                self.vz = away.cos() * 4.0;
+                self.yaw = away;
+            } else if hostile_active && dist < 24.0 && dist > 2.5 {
                 self.vx = dx / dist * 2.6;
                 self.vz = dz / dist * 2.6;
                 self.yaw = dx.atan2(dz);
@@ -497,9 +542,9 @@ impl Mob {
             let g = world.highest_ground(self.x.floor() as i32, self.z.floor() as i32) as f32;
             let hover = g + if self.kind == MobKind::Ghast { 5.5 } else { 2.4 };
             self.vy = (hover - self.y).clamp(-2.5, 2.5);
-            self.x += self.vx * dt;
+            self.x += (self.vx + self.kb_vx) * dt;
             self.y += self.vy * dt;
-            self.z += self.vz * dt;
+            self.z += (self.vz + self.kb_vz) * dt;
             self.walk += dt * 5.0;
             return;
         }
@@ -513,7 +558,18 @@ impl Mob {
             if self.kind == MobKind::Creeper {
                 self.fuse = (self.fuse - dt * 2.0).max(0.0);
             }
-            if hostile_active && dist < 18.0 && dist > 1.0 {
+            if self.panic > 0.0 && !self.kind.hostile() {
+                if self.timer <= 0.0 {
+                    self.timer = 0.55;
+                    let away = (-dx).atan2(-dz);
+                    let jitter = ((tick as f32 * 1.9 + self.x * 0.7) % 1.4) - 0.7;
+                    let ang = away + jitter;
+                    let sp = if matches!(self.kind, MobKind::Chicken | MobKind::Wolf) { 4.5 } else { 3.9 };
+                    self.vx = ang.sin() * sp;
+                    self.vz = ang.cos() * sp;
+                    self.yaw = ang;
+                }
+            } else if hostile_active && dist < 18.0 && dist > 1.0 {
                 let sp = if matches!(self.kind, MobKind::Spider | MobKind::WitherSkeleton) { 3.1 } else { 2.4 };
                 self.vx = dx / dist * sp;
                 self.vz = dz / dist * sp;
@@ -537,35 +593,63 @@ impl Mob {
             self.on_ground = false;
         }
 
-        let speed_xz = (self.vx * self.vx + self.vz * self.vz).sqrt();
+        let r = self.kind.radius();
+        let h = self.kind.height();
+        let move_vx = self.vx + self.kb_vx;
+        let move_vz = self.vz + self.kb_vz;
+
+        let speed_xz = (move_vx * move_vx + move_vz * move_vz).sqrt();
         if speed_xz > 0.1 && self.on_ground {
             self.walk += speed_xz * dt * 3.0;
         }
 
-        let nx = self.x + self.vx * dt;
-        let nz = self.z + self.vz * dt;
-        let blocked_x = world::is_solid(world.get(nx.floor() as i32, (self.y + 0.4).floor() as i32, self.z.floor() as i32));
-        let blocked_z = world::is_solid(world.get(self.x.floor() as i32, (self.y + 0.4).floor() as i32, nz.floor() as i32));
-
-        if (blocked_x || blocked_z) && self.on_ground {
-            let head_clear = !world::is_solid(world.get(nx.floor() as i32, (self.y + 1.5).floor() as i32, nz.floor() as i32));
-            if head_clear {
-                self.vy = 6.8;
-                self.on_ground = false;
+        // If mob somehow ended up inside a solid block, push it up to free space
+        if mob_collides(world, self.x, self.y, self.z, r, h) {
+            if !mob_collides(world, self.x, self.y + 1.0, self.z, r, h) {
+                self.y += 1.0;
+                self.vy = 0.0;
+            } else {
+                let gx = self.x.floor() as i32;
+                let gz = self.z.floor() as i32;
+                let gy = world.highest_ground(gx, gz) as f32;
+                if (gy - self.y).abs() <= 3.0 && !mob_collides(world, self.x, gy, self.z, r, h) {
+                    self.y = gy;
+                    self.vy = 0.0;
+                }
             }
         }
-        if !blocked_x { self.x = nx; }
-        if !blocked_z { self.z = nz; }
+
+        let nx = self.x + move_vx * dt;
+        let nz = self.z + move_vz * dt;
+        let blocked_x = mob_collides(world, nx, self.y, self.z, r, h);
+        let blocked_z = mob_collides(world, self.x, self.y, nz, r, h);
+
+        if (blocked_x || blocked_z) && self.on_ground {
+            let can_step_x = !blocked_x || !mob_collides(world, nx, self.y + 1.05, self.z, r, h);
+            let can_step_z = !blocked_z || !mob_collides(world, self.x, self.y + 1.05, nz, r, h);
+            if can_step_x && can_step_z {
+                self.vy = 6.8;
+                self.on_ground = false;
+            } else {
+                // Bounce/turn away from obstacle instead of pushing against wall
+                if blocked_x { self.kb_vx = 0.0; }
+                if blocked_z { self.kb_vz = 0.0; }
+                if self.panic > 0.0 { self.timer = 0.0; }
+            }
+        }
+        if !blocked_x { self.x = nx; } else { self.kb_vx = 0.0; }
+        if !blocked_z { self.z = nz; } else { self.kb_vz = 0.0; }
 
         self.vy -= 22.0 * dt;
         let ny = self.y + self.vy * dt;
-        let foot_b = world.get(self.x.floor() as i32, ny.floor() as i32, self.z.floor() as i32);
-        let head_b = world.get(self.x.floor() as i32, (ny + self.kind.height() - 0.1).floor() as i32, self.z.floor() as i32);
-        if self.vy < 0.0 && world::is_solid(foot_b) {
-            self.y = ny.floor() + 1.0;
+        if self.vy < 0.0 && mob_collides(world, self.x, ny, self.z, r, h) {
+            self.y = (ny + 0.05).floor() + 1.0;
+            if mob_collides(world, self.x, self.y, self.z, r, h) {
+                self.y = ny.ceil();
+            }
             self.vy = 0.0;
             self.on_ground = true;
-        } else if self.vy > 0.0 && world::is_solid(head_b) {
+        } else if self.vy > 0.0 && mob_collides(world, self.x, ny, self.z, r, h) {
             self.vy = 0.0;
         } else {
             self.y = ny;
