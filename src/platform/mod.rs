@@ -30,6 +30,7 @@ pub const VK_W: u32 = 0x57;
 pub const VK_F3: u32 = 0x72;
 pub const VK_F4: u32 = 0x73;
 pub const VK_F5: u32 = 0x74;
+pub const VK_SLASH: u32 = 0xBF;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event {

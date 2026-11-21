@@ -235,3 +235,40 @@ pub extern "C" fn game_audio_flags() -> u32 {
     let s = if web::sound_enabled() { 2 } else { 0 };
     m | s
 }
+
+#[no_mangle]
+pub extern "C" fn game_chat_open() -> u32 {
+    GAME.with(|cell| {
+        if let Some(g) = cell.borrow().as_ref() {
+            if g.is_chat_open() { 1 } else { 0 }
+        } else {
+            0
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn game_sound_version() -> u32 {
+    crate::packs::custom_sound_version()
+}
+
+#[no_mangle]
+pub extern "C" fn game_sound_count() -> usize {
+    crate::packs::custom_sound_count()
+}
+
+#[no_mangle]
+pub extern "C" fn game_sound_sfx(idx: usize) -> i32 {
+    crate::packs::custom_sound_at(idx).map(|(id, _, _)| id as i32).unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn game_sound_ptr(idx: usize) -> *const u8 {
+    crate::packs::custom_sound_at(idx).map(|(_, p, _)| p).unwrap_or(core::ptr::null())
+}
+
+#[no_mangle]
+pub extern "C" fn game_sound_len(idx: usize) -> usize {
+    crate::packs::custom_sound_at(idx).map(|(_, _, l)| l).unwrap_or(0)
+}
+

@@ -618,11 +618,16 @@ impl Mob {
             }
             if self.panic > 0.0 && !self.kind.hostile() {
                 if self.timer <= 0.0 {
-                    self.timer = 0.75;
+                    self.timer = 0.45;
                     let away = (-dx).atan2(-dz);
-                    let jitter = ((tick as f32 * 1.9 + self.x * 0.7) % 1.4) - 0.7;
+                    let jitter = ((tick as f32 * 1.9 + self.x * 0.7) % 1.1) - 0.55;
                     let ang = away + jitter;
-                    let sp = if matches!(self.kind, MobKind::Chicken | MobKind::Wolf) { 2.4 } else { 2.1 };
+                    let sp = match self.kind {
+                        MobKind::Wolf => 4.8,
+                        MobKind::Cow | MobKind::Pig | MobKind::Sheep => 4.2,
+                        MobKind::Chicken => 3.9,
+                        _ => 4.0,
+                    };
                     self.vx = ang.sin() * sp;
                     self.vz = ang.cos() * sp;
                     self.yaw = ang;
@@ -682,18 +687,20 @@ impl Mob {
         let blocked_x = mob_collides(world, nx, self.y, self.z, r, h);
         let blocked_z = mob_collides(world, self.x, self.y, nz, r, h);
 
-        let kb_mag = self.kb_vx.abs() + self.kb_vz.abs();
         if (blocked_x || blocked_z) && self.on_ground {
-            let can_step_x = !blocked_x || !mob_collides(world, nx, self.y + 1.05, self.z, r, h);
-            let can_step_z = !blocked_z || !mob_collides(world, self.x, self.y + 1.05, nz, r, h);
-            if can_step_x && can_step_z && self.hurt <= 0.12 && kb_mag < 1.2 {
-                self.vy = 5.2;
+            let can_step_x = blocked_x && !mob_collides(world, nx, self.y + 1.05, self.z, r, h);
+            let can_step_z = blocked_z && !mob_collides(world, self.x, self.y + 1.05, nz, r, h);
+            let step_ok = (!blocked_x || can_step_x) && (!blocked_z || can_step_z);
+            if step_ok || can_step_x || can_step_z {
+                // 7.7 upward impulse under 22.0 gravity reaches ~1.35 blocks so mobs reliably clear 1-block ledges
+                self.vy = 7.7;
                 self.on_ground = false;
             } else {
-                // Bounce/turn away from obstacle instead of pushing or bunny-hopping against wall
-                if blocked_x { self.kb_vx = 0.0; self.vx = -self.vx * 0.5; }
-                if blocked_z { self.kb_vz = 0.0; self.vz = -self.vz * 0.5; }
-                if self.panic > 0.0 { self.timer = 0.0; }
+                // Wall is 2+ blocks tall: turn away instead of getting stuck
+                if blocked_x { self.kb_vx = 0.0; self.vx = -self.vx * 0.75; }
+                if blocked_z { self.kb_vz = 0.0; self.vz = -self.vz * 0.75; }
+                self.yaw = self.vx.atan2(self.vz);
+                if self.panic > 0.0 { self.timer = 0.25; }
             }
         }
         if !blocked_x { self.x = nx; } else { self.kb_vx = 0.0; }
@@ -804,3 +811,42 @@ impl Drop {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panicking_cow_is_fast_and_jumps_one_block() {
+        let mut world = World::new();
+        // Flat stone floor at y = 39 (top at y = 40.0) and a 1-block-tall step at z = 6..10
+        for x in -4..=12 {
+            for z in -4..=16 {
+                for y in 38..=45 {
+                    world.set(x, y, z, world::AIR);
+                }
+                world.set(x, 39, z, world::STONE);
+                if z >= 6 {
+                    world.set(x, 40, z, world::STONE);
+                }
+            }
+        }
+        let mut cow = Mob::spawn(MobKind::Cow, 4.5, 40.0, 4.0);
+        cow.panic = 4.0;
+        cow.hurt = 0.45;
+        cow.timer = 0.0;
+        // Player behind cow at z = 1.0 -> cow runs in +z toward the 1-block ledge at z = 6
+        let mut max_y = cow.y;
+        let mut max_speed = 0.0f32;
+        for t in 0..80 {
+            cow.update(&mut world, 4.5, 40.0, 1.0, 0.03, t, 1.0, 0.0, false);
+            max_y = max_y.max(cow.y);
+            let sp = (cow.vx * cow.vx + cow.vz * cow.vz).sqrt();
+            max_speed = max_speed.max(sp);
+        }
+        assert!(max_speed >= 4.0, "expected panic speed >= 4.0 m/s, got {}", max_speed);
+        assert!(max_y > 41.0, "expected cow to jump over 1-block ledge (y > 41.0), got {}", max_y);
+        assert!(cow.y >= 40.99 && cow.z >= 5.5, "expected cow to climb onto 1-block step, got y={} z={}", cow.y, cow.z);
+    }
+}
+

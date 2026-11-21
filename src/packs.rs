@@ -6,6 +6,7 @@
 use crate::craft;
 use crate::items;
 use crate::render::{ShaderConfig, Textures};
+use crate::sound::Sfx;
 use crate::world;
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
@@ -46,6 +47,8 @@ pub struct PackRegistry {
     pub shader_preset_idx: usize,
     pub active_textures: Textures,
     pub mod_downloads: Vec<(String, String)>,
+    pub custom_sounds: Vec<(u8, Vec<u8>)>,
+    pub sounds_version: u32,
 }
 
 impl PackRegistry {
@@ -56,6 +59,8 @@ impl PackRegistry {
             shader_preset_idx: 0,
             active_textures: Textures::new(),
             mod_downloads: Vec::new(),
+            custom_sounds: Vec::new(),
+            sounds_version: 0,
         }
     }
 }
@@ -114,10 +119,35 @@ pub fn reset_all_packs() {
     if let Ok(mut r) = registry().write() {
         r.packs.clear();
         r.mod_downloads.clear();
+        r.custom_sounds.clear();
+        r.sounds_version = r.sounds_version.wrapping_add(1);
         r.active_textures.reset();
         r.active_shader = ShaderConfig::preset(r.shader_preset_idx);
         Textures::set_active(&r.active_textures);
     }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn custom_sound_version() -> u32 {
+    registry().read().map(|r| r.sounds_version).unwrap_or(0)
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn custom_sound_count() -> usize {
+    registry().read().map(|r| r.custom_sounds.len()).unwrap_or(0)
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn custom_sound_at(idx: usize) -> Option<(u8, *const u8, usize)> {
+    registry().read().ok().and_then(|r| {
+        r.custom_sounds.get(idx).map(|(sfx, bytes)| (*sfx, bytes.as_ptr(), bytes.len()))
+    })
+}
+
+pub fn custom_sound_bytes(sfx_id: u8) -> Option<Vec<u8>> {
+    registry().read().ok().and_then(|r| {
+        r.custom_sounds.iter().find(|(id, _)| *id == sfx_id).map(|(_, b)| b.clone())
+    })
 }
 
 /// Summary string returned to UI / JS when a pack is loaded.
@@ -141,6 +171,7 @@ pub fn load_pack_bytes(filename: &str, bytes: &[u8]) -> Result<LoadedPackInfo, S
     let mut is_curseforge = false;
     let mut has_shaders = false;
     let mut has_textures = false;
+    let mut has_sounds = false;
     let mut has_recipes = false;
     let mut description = String::new();
     let mut pack_title = filename
@@ -235,6 +266,8 @@ pub fn load_pack_bytes(filename: &str, bytes: &[u8]) -> Result<LoadedPackInfo, S
             if ln.ends_with(".png") {
                 has_textures = true;
             }
+        } else if ln.contains("sounds/") && (ln.ends_with(".ogg") || ln.ends_with(".wav")) {
+            has_sounds = true;
         } else if (ln.contains("/recipes/") || ln.contains("/recipe/")) && ln.ends_with(".json") {
             has_recipes = true;
         } else if (ln.contains("overrides/") || ln.contains("resourcepacks/") || ln.contains("shaderpacks/"))
@@ -307,6 +340,34 @@ pub fn load_pack_bytes(filename: &str, bytes: &[u8]) -> Result<LoadedPackInfo, S
         }
     }
 
+    // 2b) Extract Minecraft resource-pack sounds (.ogg / .wav under sounds/)
+    let mut sounds_added = 0usize;
+    if has_sounds {
+        let mut loaded_sfx: Vec<(u8, Vec<u8>)> = Vec::new();
+        for (name, data) in &entries {
+            let ln = name.to_ascii_lowercase().replace('\\', "/");
+            if !(ln.ends_with(".ogg") || ln.ends_with(".wav")) {
+                continue;
+            }
+            if let Some(sfx) = map_minecraft_sound_sfx(&ln) {
+                let id = sfx as u8;
+                if !loaded_sfx.iter().any(|(existing, _)| *existing == id) && !data.is_empty() {
+                    loaded_sfx.push((id, data.clone()));
+                    sounds_added += 1;
+                }
+            }
+        }
+        if !loaded_sfx.is_empty() {
+            if let Ok(mut r) = registry().write() {
+                for (id, bytes) in loaded_sfx {
+                    r.custom_sounds.retain(|(k, _)| *k != id);
+                    r.custom_sounds.push((id, bytes));
+                }
+                r.sounds_version = r.sounds_version.wrapping_add(1);
+            }
+        }
+    }
+
     // 3) Parse datapack recipes (data/*/recipes/*.json or data/*/recipe/*.json)
     if has_recipes {
         for (name, data) in &entries {
@@ -331,9 +392,9 @@ pub fn load_pack_bytes(filename: &str, bytes: &[u8]) -> Result<LoadedPackInfo, S
 
     let kind = if is_mrpack || is_curseforge {
         PackKind::ModPack
-    } else if has_shaders && !has_textures {
+    } else if has_shaders && !has_textures && !has_sounds {
         PackKind::ShaderPack
-    } else if has_recipes && !has_textures && !has_shaders {
+    } else if has_recipes && !has_textures && !has_shaders && !has_sounds {
         PackKind::DataPack
     } else {
         PackKind::ResourcePack
@@ -341,7 +402,15 @@ pub fn load_pack_bytes(filename: &str, bytes: &[u8]) -> Result<LoadedPackInfo, S
 
     if description.is_empty() {
         description = match kind {
-            PackKind::ResourcePack => format!("{} textures applied", textures_replaced),
+            PackKind::ResourcePack => {
+                if sounds_added > 0 && textures_replaced > 0 {
+                    format!("{} textures, {} sounds applied", textures_replaced, sounds_added)
+                } else if sounds_added > 0 {
+                    format!("{} sounds applied", sounds_added)
+                } else {
+                    format!("{} textures applied", textures_replaced)
+                }
+            }
             PackKind::ShaderPack => String::from("OptiFine/Iris shader config active"),
             PackKind::DataPack => format!("{} custom recipes registered", recipes_added),
             PackKind::ModPack => format!("{} mods indexed", mod_files.len()),
@@ -1961,3 +2030,33 @@ fn parse_json_str(b: &[u8], i: &mut usize) -> Option<String> {
     }
     None
 }
+
+fn map_minecraft_sound_sfx(ln: &str) -> Option<Sfx> {
+    if ln.contains("/click") || ln.contains("ui/button/click") { return Some(Sfx::Click); }
+    if ln.contains("random/pop") { return Some(Sfx::Pickup); }
+    if ln.contains("random/levelup") || ln.contains("orb") { return Some(Sfx::LevelUp); }
+    if ln.contains("random/explode") { return Some(Sfx::Explode); }
+    if ln.contains("door_open") || ln.contains("door/open") { return Some(Sfx::Door); }
+    if ln.contains("liquid/splash") || ln.contains("swim") { return Some(Sfx::Splash); }
+    if ln.contains("dig/stone") || ln.contains("block/stone/break") { return Some(Sfx::Break); }
+    if ln.contains("dig/grass") || ln.contains("dig/wood") { return Some(Sfx::Place); }
+    if ln.contains("step/grass") { return Some(Sfx::StepGrass); }
+    if ln.contains("step/stone") { return Some(Sfx::StepStone); }
+    if ln.contains("step/wood") { return Some(Sfx::StepWood); }
+    if ln.contains("step/sand") || ln.contains("step/gravel") { return Some(Sfx::StepSand); }
+    if ln.contains("damage/hit") || ln.contains("player/hurt") { return Some(Sfx::Hurt); }
+    if ln.contains("damage/fallbig") || ln.contains("damage/fallsmall") { return Some(Sfx::Land); }
+    if ln.contains("mob/cow/say") { return Some(Sfx::Cow); }
+    if ln.contains("mob/sheep/say") { return Some(Sfx::Sheep); }
+    if ln.contains("mob/pig/say") { return Some(Sfx::Pig); }
+    if ln.contains("mob/chicken/say") { return Some(Sfx::Chicken); }
+    if ln.contains("mob/zombie/say") { return Some(Sfx::Zombie); }
+    if ln.contains("mob/skeleton/say") { return Some(Sfx::Skeleton); }
+    if ln.contains("mob/spider/say") { return Some(Sfx::Spider); }
+    if ln.contains("mob/creeper/say") || ln.contains("random/fuse") { return Some(Sfx::Creeper); }
+    if ln.contains("mob/endermen/idle") || ln.contains("mob/enderman/idle") { return Some(Sfx::Enderman); }
+    if ln.contains("mob/") && ln.contains("hurt") { return Some(Sfx::MobHurt); }
+    if ln.contains("mob/") && ln.contains("death") { return Some(Sfx::MobDie); }
+    None
+}
+

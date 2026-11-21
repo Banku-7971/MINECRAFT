@@ -130,6 +130,14 @@ impl Audio {
 
     pub fn play(&mut self, s: Sfx) {
         if !self.sound_on { return; }
+        if let Some(custom) = crate::packs::custom_sound_bytes(s as u8) {
+            if let Some(pcm) = decode_wav_pcm(&custom) {
+                if self.voices.len() < 16 {
+                    self.voices.push(Voice { data: pcm, pos: 0, volume: 0.72 });
+                }
+                return;
+            }
+        }
         if let Some((_, data)) = self.sfx.iter().find(|(k, _)| *k == s) {
             if self.voices.len() < 16 {
                 self.voices.push(Voice { data: data.clone(), pos: 0, volume: 0.58 });
@@ -251,23 +259,31 @@ fn synth_jump() -> Vec<i16> {
 }
 
 fn synth_click() -> Vec<i16> {
-    let n = (0.05 * SAMPLE_RATE as f32) as usize;
+    let n = (0.045 * SAMPLE_RATE as f32) as usize;
+    let mut st = 1093u32;
     (0..n).map(|i| {
         let t = i as f32 / SAMPLE_RATE as f32;
-        let s = (t * 1400.0 * 6.283).sin() * env(t, 0.001, 0.01) * 0.35;
-        (s * 32000.0) as i16
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        let tone = (t * 980.0 * 6.283).sin() * 0.65 + (t * 1950.0 * 6.283).sin() * 0.25 + noise * 0.20;
+        let s = tone * env(t, 0.001, 0.008) * 0.34;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
 
 fn synth_break() -> Vec<i16> {
-    let n = (0.18 * SAMPLE_RATE as f32) as usize;
+    let n = (0.19 * SAMPLE_RATE as f32) as usize;
     let mut out = Vec::with_capacity(n);
     let mut st = 987654321u32;
+    let mut lp = 0.0f32;
     for i in 0..n {
         let t = i as f32 / SAMPLE_RATE as f32;
         st = st.wrapping_mul(1103515245).wrapping_add(12345);
         let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
-        let s = noise * env(t, 0.002, 0.05) * 0.5;
+        lp = lp * 0.45 + noise * 0.55;
+        let crack = (t * 190.0 * 6.283 * (1.0 - t * 2.5).max(0.3)).sin() * 0.42;
+        let grit = lp * 0.65 + (noise - lp) * 0.35;
+        let s = (grit + crack) * env(t, 0.002, 0.055) * 0.48;
         out.push((s.clamp(-1.0, 1.0) * 32000.0) as i16);
     }
     out
@@ -288,11 +304,15 @@ fn synth_noise(dur: f32, vol: f32, _tone: f32) -> Vec<i16> {
 }
 
 fn synth_hurt() -> Vec<i16> {
-    let n = (0.22 * SAMPLE_RATE as f32) as usize;
+    let n = (0.17 * SAMPLE_RATE as f32) as usize;
+    let mut st = 8080u32;
     (0..n).map(|i| {
         let t = i as f32 / SAMPLE_RATE as f32;
-        let f = 320.0 - t * 700.0;
-        let s = (t * f.max(80.0) * 6.283).sin() * env(t, 0.005, 0.08) * 0.5;
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        let f = 185.0 - t * 420.0;
+        let thud = (t * f.max(70.0) * 6.283).sin() * 0.55 + noise * 0.45;
+        let s = thud * env(t, 0.002, 0.05) * 0.52;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
@@ -322,11 +342,13 @@ fn synth_mob_die() -> Vec<i16> {
 }
 
 fn synth_blip(freq: f32, dur: f32) -> Vec<i16> {
+    // Crisp Minecraft-style item pop / chime
     let n = (dur * SAMPLE_RATE as f32) as usize;
     (0..n).map(|i| {
         let t = i as f32 / SAMPLE_RATE as f32;
-        let sq = if (t * freq * 2.0).fract() < 0.5 { 1.0 } else { -1.0 };
-        let s = sq * env(t, 0.002, dur * 0.6) * 0.3;
+        let f = freq * (1.0 + t * 5.0);
+        let s = ((t * f * 6.283).sin() * 0.78 + (t * f * 2.0 * 6.283).sin() * 0.22)
+            * env(t, 0.001, dur * 0.42) * 0.34;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
@@ -439,17 +461,83 @@ fn synth_explode() -> Vec<i16> {
 }
 
 fn synth_arp() -> Vec<i16> {
-    let notes = [523.25, 659.25, 783.99, 1046.5];
-    let per = (0.09 * SAMPLE_RATE as f32) as usize;
+    let notes = [659.25, 830.61, 987.77, 1318.51];
+    let per = (0.08 * SAMPLE_RATE as f32) as usize;
     let mut out = Vec::new();
     for (k, f) in notes.iter().enumerate() {
         for i in 0..per {
-            let t = (i + k * per) as f32 / SAMPLE_RATE as f32;
-            let s = (t * f * 6.283).sin() * env(i as f32 / SAMPLE_RATE as f32, 0.004, 0.09) * 0.3;
+            let t = i as f32 / SAMPLE_RATE as f32;
+            let tone = (t * f * 6.283).sin() * 0.75 + (t * f * 2.0 * 6.283).sin() * 0.25;
+            let tail = if k == 3 { 0.14 } else { 0.07 };
+            let s = tone * env(t, 0.002, tail) * 0.30;
             out.push((s.clamp(-1.0, 1.0) * 32000.0) as i16);
         }
     }
     out
+}
+
+fn decode_wav_pcm(bytes: &[u8]) -> Option<Vec<i16>> {
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut i = 12usize;
+    let mut channels = 1u16;
+    let mut rate = SAMPLE_RATE;
+    let mut bits = 16u16;
+    let mut data_slice: Option<&[u8]> = None;
+    while i + 8 <= bytes.len() {
+        let id = &bytes[i..i + 4];
+        let sz = u32::from_le_bytes([bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]]) as usize;
+        let start = i + 8;
+        let end = start.saturating_add(sz).min(bytes.len());
+        if id == b"fmt " && sz >= 16 {
+            let fmt = u16::from_le_bytes([bytes[start], bytes[start + 1]]);
+            if fmt != 1 { return None; }
+            channels = u16::from_le_bytes([bytes[start + 2], bytes[start + 3]]).max(1);
+            rate = u32::from_le_bytes([bytes[start + 4], bytes[start + 5], bytes[start + 6], bytes[start + 7]]).max(4000);
+            bits = u16::from_le_bytes([bytes[start + 14], bytes[start + 15]]);
+        } else if id == b"data" {
+            data_slice = Some(&bytes[start..end]);
+            break;
+        }
+        i = end + (sz & 1);
+    }
+    let raw = data_slice?;
+    let mut mono = Vec::new();
+    let ch = channels as usize;
+    if bits == 16 {
+        let step = 2 * ch;
+        let mut p = 0usize;
+        while p + step <= raw.len() {
+            let mut acc = 0i32;
+            for c in 0..ch {
+                acc += i16::from_le_bytes([raw[p + c * 2], raw[p + c * 2 + 1]]) as i32;
+            }
+            mono.push((acc / ch as i32) as i16);
+            p += step;
+        }
+    } else if bits == 8 {
+        let mut p = 0usize;
+        while p + ch <= raw.len() {
+            let mut acc = 0i32;
+            for c in 0..ch {
+                acc += ((raw[p + c] as i32) - 128) * 256;
+            }
+            mono.push((acc / ch as i32) as i16);
+            p += ch;
+        }
+    } else {
+        return None;
+    }
+    if mono.is_empty() { return None; }
+    if rate == SAMPLE_RATE { return Some(mono); }
+    let out_len = ((mono.len() as f64) * (SAMPLE_RATE as f64 / rate as f64)).round().max(1.0) as usize;
+    let mut resampled = Vec::with_capacity(out_len);
+    for idx in 0..out_len {
+        let src = (idx as f64 * rate as f64 / SAMPLE_RATE as f64) as usize;
+        resampled.push(mono[src.min(mono.len() - 1)]);
+    }
+    Some(resampled)
 }
 
 fn note_hz(semi: i32) -> f32 {
