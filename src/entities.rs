@@ -199,7 +199,7 @@ impl MobKind {
 pub fn mob_collides(world: &mut World, x: f32, y: f32, z: f32, r: f32, h: f32) -> bool {
     let x0 = (x - r).floor() as i32;
     let x1 = (x + r).floor() as i32;
-    let y0 = (y + 0.05).floor() as i32;
+    let y0 = (y + 0.08).floor() as i32;
     let y1 = (y + h - 0.05).floor() as i32;
     let z0 = (z - r).floor() as i32;
     let z1 = (z + r).floor() as i32;
@@ -213,6 +213,24 @@ pub fn mob_collides(world: &mut World, x: f32, y: f32, z: f32, r: f32, h: f32) -
         }
     }
     false
+}
+
+/// Find exact top Y of the solid ground beneath a mob's footprint `(x ± r, z ± r)`.
+pub fn ground_top_at(world: &mut World, x: f32, y_probe: f32, z: f32, r: f32) -> Option<f32> {
+    let x0 = (x - r).floor() as i32;
+    let x1 = (x + r).floor() as i32;
+    let z0 = (z - r).floor() as i32;
+    let z1 = (z + r).floor() as i32;
+    let by = y_probe.floor() as i32;
+    let mut best: Option<i32> = None;
+    for bx in x0..=x1 {
+        for bz in z0..=z1 {
+            if world::is_solid(world.get(bx, by, bz)) {
+                best = Some(best.map_or(by, |b| b.max(by)));
+            }
+        }
+    }
+    best.map(|b| (b + 1) as f32)
 }
 
 pub fn steve_parts(walk: f32) -> Vec<Part3D> {
@@ -288,13 +306,21 @@ pub fn mob_parts(kind: MobKind, walk: f32) -> Vec<Part3D> {
         ],
         MobKind::Spider => vec![
             Part3D { cx: 0.0, cy: 0.44, cz: 0.36, hx: 0.24, hy: 0.20, hz: 0.22, pivot_y: 0.44, swing: 0.0, col: [48, 42, 46], col_alt: [32, 28, 32], face: FaceArt::Spider },
-            Part3D { cx: 0.0, cy: 0.46, cz: -0.22, hx: 0.32, hy: 0.24, hz: 0.36, pivot_y: 0.46, swing: 0.0, col: [40, 36, 40], col_alt: [28, 24, 28], face: FaceArt::None },
-            Part3D { cx: -0.50, cy: 0.24, cz: 0.24, hx: 0.26, hy: 0.07, hz: 0.07, pivot_y: 0.32, swing: s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
-            Part3D { cx: 0.50, cy: 0.24, cz: 0.24, hx: 0.26, hy: 0.07, hz: 0.07, pivot_y: 0.32, swing: -s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
-            Part3D { cx: -0.52, cy: 0.24, cz: 0.0, hx: 0.28, hy: 0.07, hz: 0.07, pivot_y: 0.32, swing: -s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
-            Part3D { cx: 0.52, cy: 0.24, cz: 0.0, hx: 0.28, hy: 0.07, hz: 0.07, pivot_y: 0.32, swing: s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
-            Part3D { cx: -0.50, cy: 0.24, cz: -0.24, hx: 0.26, hy: 0.07, hz: 0.07, pivot_y: 0.32, swing: s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
-            Part3D { cx: 0.50, cy: 0.24, cz: -0.24, hx: 0.26, hy: 0.07, hz: 0.07, pivot_y: 0.32, swing: -s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            // Mandibles
+            Part3D { cx: -0.09, cy: 0.31, cz: 0.59, hx: 0.04, hy: 0.05, hz: 0.04, pivot_y: 0.31, swing: 0.0, col: [26, 22, 26], col_alt: [85, 22, 22], face: FaceArt::None },
+            Part3D { cx: 0.09, cy: 0.31, cz: 0.59, hx: 0.04, hy: 0.05, hz: 0.04, pivot_y: 0.31, swing: 0.0, col: [26, 22, 26], col_alt: [85, 22, 22], face: FaceArt::None },
+            // Thorax + Abdomen
+            Part3D { cx: 0.0, cy: 0.43, cz: 0.08, hx: 0.18, hy: 0.16, hz: 0.14, pivot_y: 0.43, swing: 0.0, col: [44, 38, 42], col_alt: [30, 26, 30], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.46, cz: -0.26, hx: 0.32, hy: 0.24, hz: 0.36, pivot_y: 0.46, swing: 0.0, col: [38, 34, 38], col_alt: [26, 22, 26], face: FaceArt::None },
+            // 8 legs (4 per side)
+            Part3D { cx: -0.50, cy: 0.22, cz: 0.26, hx: 0.26, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            Part3D { cx: 0.50, cy: 0.22, cz: 0.26, hx: 0.26, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: -s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            Part3D { cx: -0.54, cy: 0.22, cz: 0.08, hx: 0.28, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: -s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            Part3D { cx: 0.54, cy: 0.22, cz: 0.08, hx: 0.28, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            Part3D { cx: -0.54, cy: 0.22, cz: -0.10, hx: 0.28, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            Part3D { cx: 0.54, cy: 0.22, cz: -0.10, hx: 0.28, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: -s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            Part3D { cx: -0.48, cy: 0.22, cz: -0.28, hx: 0.26, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: -s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
+            Part3D { cx: 0.48, cy: 0.22, cz: -0.28, hx: 0.26, hy: 0.06, hz: 0.06, pivot_y: 0.32, swing: s, col: [54, 46, 50], col_alt: [34, 30, 34], face: FaceArt::None },
         ],
         MobKind::Ghast => {
             let mut p = vec![
@@ -326,7 +352,13 @@ pub fn mob_parts(kind: MobKind, walk: f32) -> Vec<Part3D> {
         ],
         MobKind::Wolf => vec![
             Part3D { cx: 0.0, cy: 0.64, cz: 0.40, hx: 0.18, hy: 0.18, hz: 0.18, pivot_y: 0.64, swing: 0.0, col: [212, 206, 198], col_alt: [164, 158, 150], face: FaceArt::Wolf },
-            Part3D { cx: 0.0, cy: 0.54, cz: -0.04, hx: 0.18, hy: 0.18, hz: 0.34, pivot_y: 0.54, swing: 0.0, col: [204, 198, 190], col_alt: [158, 152, 144], face: FaceArt::None },
+            // Snout + pointed ears + collar + tail
+            Part3D { cx: 0.0, cy: 0.58, cz: 0.62, hx: 0.09, hy: 0.07, hz: 0.08, pivot_y: 0.58, swing: 0.0, col: [188, 182, 174], col_alt: [38, 34, 34], face: FaceArt::None },
+            Part3D { cx: -0.12, cy: 0.85, cz: 0.36, hx: 0.05, hy: 0.06, hz: 0.04, pivot_y: 0.85, swing: 0.0, col: [184, 178, 170], col_alt: [148, 128, 124], face: FaceArt::None },
+            Part3D { cx: 0.12, cy: 0.85, cz: 0.36, hx: 0.05, hy: 0.06, hz: 0.04, pivot_y: 0.85, swing: 0.0, col: [184, 178, 170], col_alt: [148, 128, 124], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.58, cz: 0.18, hx: 0.21, hy: 0.20, hz: 0.12, pivot_y: 0.58, swing: 0.0, col: [222, 216, 208], col_alt: [176, 168, 158], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.54, cz: -0.06, hx: 0.18, hy: 0.18, hz: 0.34, pivot_y: 0.54, swing: 0.0, col: [204, 198, 190], col_alt: [158, 152, 144], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.58, cz: -0.48, hx: 0.06, hy: 0.06, hz: 0.16, pivot_y: 0.60, swing: s * 0.3, col: [194, 188, 180], col_alt: [148, 142, 134], face: FaceArt::None },
             Part3D { cx: -0.11, cy: 0.18, cz: 0.20, hx: 0.07, hy: 0.18, hz: 0.07, pivot_y: 0.36, swing: s, col: [192, 186, 178], col_alt: [148, 142, 134], face: FaceArt::None },
             Part3D { cx: 0.11, cy: 0.18, cz: 0.20, hx: 0.07, hy: 0.18, hz: 0.07, pivot_y: 0.36, swing: -s, col: [192, 186, 178], col_alt: [148, 142, 134], face: FaceArt::None },
             Part3D { cx: -0.11, cy: 0.18, cz: -0.24, hx: 0.07, hy: 0.18, hz: 0.07, pivot_y: 0.36, swing: -s, col: [192, 186, 178], col_alt: [148, 142, 134], face: FaceArt::None },
@@ -334,7 +366,11 @@ pub fn mob_parts(kind: MobKind, walk: f32) -> Vec<Part3D> {
         ],
         MobKind::PolarBear => vec![
             Part3D { cx: 0.0, cy: 1.02, cz: 0.58, hx: 0.24, hy: 0.22, hz: 0.22, pivot_y: 1.02, swing: 0.0, col: [242, 244, 248], col_alt: [210, 218, 226], face: FaceArt::PolarBear },
+            Part3D { cx: 0.0, cy: 0.94, cz: 0.82, hx: 0.12, hy: 0.09, hz: 0.08, pivot_y: 0.94, swing: 0.0, col: [232, 236, 242], col_alt: [38, 38, 42], face: FaceArt::None },
+            Part3D { cx: -0.18, cy: 1.25, cz: 0.54, hx: 0.06, hy: 0.05, hz: 0.04, pivot_y: 1.25, swing: 0.0, col: [232, 236, 242], col_alt: [196, 204, 214], face: FaceArt::None },
+            Part3D { cx: 0.18, cy: 1.25, cz: 0.54, hx: 0.06, hy: 0.05, hz: 0.04, pivot_y: 1.25, swing: 0.0, col: [232, 236, 242], col_alt: [196, 204, 214], face: FaceArt::None },
             Part3D { cx: 0.0, cy: 0.88, cz: -0.02, hx: 0.36, hy: 0.32, hz: 0.52, pivot_y: 0.88, swing: 0.0, col: [238, 240, 244], col_alt: [208, 214, 224], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.96, cz: -0.56, hx: 0.09, hy: 0.09, hz: 0.07, pivot_y: 0.96, swing: 0.0, col: [242, 244, 248], col_alt: [210, 218, 226], face: FaceArt::None },
             Part3D { cx: -0.22, cy: 0.30, cz: 0.34, hx: 0.13, hy: 0.30, hz: 0.13, pivot_y: 0.60, swing: s, col: [230, 234, 240], col_alt: [198, 206, 216], face: FaceArt::None },
             Part3D { cx: 0.22, cy: 0.30, cz: 0.34, hx: 0.13, hy: 0.30, hz: 0.13, pivot_y: 0.60, swing: -s, col: [230, 234, 240], col_alt: [198, 206, 216], face: FaceArt::None },
             Part3D { cx: -0.22, cy: 0.30, cz: -0.36, hx: 0.13, hy: 0.30, hz: 0.13, pivot_y: 0.60, swing: -s, col: [230, 234, 240], col_alt: [198, 206, 216], face: FaceArt::None },
@@ -358,8 +394,12 @@ pub fn mob_parts(kind: MobKind, walk: f32) -> Vec<Part3D> {
         }
         MobKind::Pig => vec![
             Part3D { cx: 0.0, cy: 0.68, cz: 0.42, hx: 0.22, hy: 0.20, hz: 0.20, pivot_y: 0.68, swing: 0.0, col: [242, 166, 174], col_alt: [215, 135, 146], face: FaceArt::Pig },
-            Part3D { cx: 0.0, cy: 0.60, cz: 0.64, hx: 0.11, hy: 0.08, hz: 0.06, pivot_y: 0.60, swing: 0.0, col: [246, 142, 156], col_alt: [185, 95, 110], face: FaceArt::None },
+            // Floppy ears + protruding snout + curly tail + hooves
+            Part3D { cx: -0.22, cy: 0.77, cz: 0.40, hx: 0.04, hy: 0.07, hz: 0.07, pivot_y: 0.77, swing: 0.0, col: [232, 148, 158], col_alt: [200, 120, 132], face: FaceArt::None },
+            Part3D { cx: 0.22, cy: 0.77, cz: 0.40, hx: 0.04, hy: 0.07, hz: 0.07, pivot_y: 0.77, swing: 0.0, col: [232, 148, 158], col_alt: [200, 120, 132], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.60, cz: 0.65, hx: 0.11, hy: 0.08, hz: 0.06, pivot_y: 0.60, swing: 0.0, col: [246, 142, 156], col_alt: [175, 85, 102], face: FaceArt::None },
             Part3D { cx: 0.0, cy: 0.58, cz: -0.02, hx: 0.26, hy: 0.22, hz: 0.38, pivot_y: 0.58, swing: 0.0, col: [236, 156, 166], col_alt: [210, 130, 142], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.68, cz: -0.43, hx: 0.04, hy: 0.06, hz: 0.05, pivot_y: 0.68, swing: 0.0, col: [242, 148, 162], col_alt: [205, 118, 134], face: FaceArt::None },
             Part3D { cx: -0.15, cy: 0.18, cz: 0.22, hx: 0.09, hy: 0.18, hz: 0.09, pivot_y: 0.36, swing: s, col: [228, 148, 158], col_alt: [195, 115, 128], face: FaceArt::None },
             Part3D { cx: 0.15, cy: 0.18, cz: 0.22, hx: 0.09, hy: 0.18, hz: 0.09, pivot_y: 0.36, swing: -s, col: [228, 148, 158], col_alt: [195, 115, 128], face: FaceArt::None },
             Part3D { cx: -0.15, cy: 0.18, cz: -0.24, hx: 0.09, hy: 0.18, hz: 0.09, pivot_y: 0.36, swing: -s, col: [228, 148, 158], col_alt: [195, 115, 128], face: FaceArt::None },
@@ -367,7 +407,14 @@ pub fn mob_parts(kind: MobKind, walk: f32) -> Vec<Part3D> {
         ],
         MobKind::Cow => vec![
             Part3D { cx: 0.0, cy: 1.06, cz: 0.48, hx: 0.22, hy: 0.22, hz: 0.18, pivot_y: 1.06, swing: 0.0, col: [82, 58, 42], col_alt: [232, 232, 228], face: FaceArt::Cow },
+            // Horns + ears + snout + udder + tail
+            Part3D { cx: -0.22, cy: 1.29, cz: 0.48, hx: 0.04, hy: 0.08, hz: 0.04, pivot_y: 1.29, swing: 0.0, col: [216, 206, 186], col_alt: [176, 166, 148], face: FaceArt::None },
+            Part3D { cx: 0.22, cy: 1.29, cz: 0.48, hx: 0.04, hy: 0.08, hz: 0.04, pivot_y: 1.29, swing: 0.0, col: [216, 206, 186], col_alt: [176, 166, 148], face: FaceArt::None },
+            Part3D { cx: -0.25, cy: 1.14, cz: 0.44, hx: 0.05, hy: 0.04, hz: 0.06, pivot_y: 1.14, swing: 0.0, col: [72, 50, 36], col_alt: [215, 185, 185], face: FaceArt::None },
+            Part3D { cx: 0.25, cy: 1.14, cz: 0.44, hx: 0.05, hy: 0.04, hz: 0.06, pivot_y: 1.14, swing: 0.0, col: [72, 50, 36], col_alt: [215, 185, 185], face: FaceArt::None },
             Part3D { cx: 0.0, cy: 0.90, cz: -0.04, hx: 0.30, hy: 0.28, hz: 0.44, pivot_y: 0.90, swing: 0.0, col: [76, 54, 38], col_alt: [228, 228, 224], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.58, cz: -0.22, hx: 0.13, hy: 0.06, hz: 0.14, pivot_y: 0.58, swing: 0.0, col: [236, 174, 186], col_alt: [208, 144, 158], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.86, cz: -0.50, hx: 0.04, hy: 0.22, hz: 0.04, pivot_y: 1.06, swing: s * 0.25, col: [64, 44, 32], col_alt: [42, 30, 22], face: FaceArt::None },
             Part3D { cx: -0.18, cy: 0.31, cz: 0.28, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: s, col: [68, 48, 34], col_alt: [215, 215, 210], face: FaceArt::None },
             Part3D { cx: 0.18, cy: 0.31, cz: 0.28, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: -s, col: [68, 48, 34], col_alt: [215, 215, 210], face: FaceArt::None },
             Part3D { cx: -0.18, cy: 0.31, cz: -0.32, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: -s, col: [68, 48, 34], col_alt: [215, 215, 210], face: FaceArt::None },
@@ -375,16 +422,27 @@ pub fn mob_parts(kind: MobKind, walk: f32) -> Vec<Part3D> {
         ],
         MobKind::Sheep => vec![
             Part3D { cx: 0.0, cy: 0.98, cz: 0.44, hx: 0.20, hy: 0.19, hz: 0.20, pivot_y: 0.98, swing: 0.0, col: [228, 198, 174], col_alt: [238, 238, 232], face: FaceArt::Sheep },
-            Part3D { cx: 0.0, cy: 0.86, cz: -0.02, hx: 0.32, hy: 0.28, hz: 0.42, pivot_y: 0.86, swing: 0.0, col: [240, 240, 234], col_alt: [215, 215, 210], face: FaceArt::None },
-            Part3D { cx: -0.16, cy: 0.29, cz: 0.24, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: s, col: [218, 190, 168], col_alt: [190, 164, 145], face: FaceArt::None },
-            Part3D { cx: 0.16, cy: 0.29, cz: 0.24, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: -s, col: [218, 190, 168], col_alt: [190, 164, 145], face: FaceArt::None },
-            Part3D { cx: -0.16, cy: 0.29, cz: -0.26, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: -s, col: [218, 190, 168], col_alt: [190, 164, 145], face: FaceArt::None },
-            Part3D { cx: 0.16, cy: 0.29, cz: -0.26, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: s, col: [218, 190, 168], col_alt: [190, 164, 145], face: FaceArt::None },
+            // Fluffy wool hood + ears + thick wool coat + tail
+            Part3D { cx: 0.0, cy: 1.15, cz: 0.38, hx: 0.22, hy: 0.06, hz: 0.18, pivot_y: 1.15, swing: 0.0, col: [242, 242, 236], col_alt: [220, 220, 214], face: FaceArt::None },
+            Part3D { cx: -0.23, cy: 1.02, cz: 0.42, hx: 0.04, hy: 0.06, hz: 0.06, pivot_y: 1.02, swing: 0.0, col: [218, 188, 164], col_alt: [190, 160, 140], face: FaceArt::None },
+            Part3D { cx: 0.23, cy: 1.02, cz: 0.42, hx: 0.04, hy: 0.06, hz: 0.06, pivot_y: 1.02, swing: 0.0, col: [218, 188, 164], col_alt: [190, 160, 140], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.86, cz: -0.02, hx: 0.33, hy: 0.29, hz: 0.43, pivot_y: 0.86, swing: 0.0, col: [242, 242, 236], col_alt: [218, 218, 212], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.92, cz: -0.46, hx: 0.08, hy: 0.08, hz: 0.06, pivot_y: 0.92, swing: 0.0, col: [242, 242, 236], col_alt: [218, 218, 212], face: FaceArt::None },
+            Part3D { cx: -0.16, cy: 0.29, cz: 0.24, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: s, col: [218, 190, 168], col_alt: [240, 240, 234], face: FaceArt::None },
+            Part3D { cx: 0.16, cy: 0.29, cz: 0.24, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: -s, col: [218, 190, 168], col_alt: [240, 240, 234], face: FaceArt::None },
+            Part3D { cx: -0.16, cy: 0.29, cz: -0.26, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: -s, col: [218, 190, 168], col_alt: [240, 240, 234], face: FaceArt::None },
+            Part3D { cx: 0.16, cy: 0.29, cz: -0.26, hx: 0.10, hy: 0.29, hz: 0.10, pivot_y: 0.58, swing: s, col: [218, 190, 168], col_alt: [240, 240, 234], face: FaceArt::None },
         ],
         MobKind::Chicken => vec![
             Part3D { cx: 0.0, cy: 0.58, cz: 0.18, hx: 0.12, hy: 0.14, hz: 0.10, pivot_y: 0.58, swing: 0.0, col: [244, 244, 240], col_alt: [235, 185, 50], face: FaceArt::Chicken },
-            Part3D { cx: 0.0, cy: 0.52, cz: 0.30, hx: 0.08, hy: 0.05, hz: 0.06, pivot_y: 0.52, swing: 0.0, col: [235, 185, 50], col_alt: [210, 45, 45], face: FaceArt::None },
+            // Red comb + orange beak + red wattle + wings + tail + feet
+            Part3D { cx: 0.0, cy: 0.74, cz: 0.19, hx: 0.03, hy: 0.04, hz: 0.07, pivot_y: 0.74, swing: 0.0, col: [214, 38, 38], col_alt: [174, 28, 28], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.54, cz: 0.30, hx: 0.08, hy: 0.04, hz: 0.06, pivot_y: 0.54, swing: 0.0, col: [238, 186, 48], col_alt: [210, 148, 30], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.46, cz: 0.28, hx: 0.04, hy: 0.05, hz: 0.03, pivot_y: 0.46, swing: 0.0, col: [212, 42, 42], col_alt: [176, 30, 30], face: FaceArt::None },
             Part3D { cx: 0.0, cy: 0.40, cz: -0.02, hx: 0.17, hy: 0.16, hz: 0.22, pivot_y: 0.40, swing: 0.0, col: [236, 236, 232], col_alt: [212, 212, 208], face: FaceArt::None },
+            Part3D { cx: -0.19, cy: 0.42, cz: -0.02, hx: 0.03, hy: 0.11, hz: 0.15, pivot_y: 0.50, swing: s * 0.3, col: [246, 246, 242], col_alt: [216, 216, 212], face: FaceArt::None },
+            Part3D { cx: 0.19, cy: 0.42, cz: -0.02, hx: 0.03, hy: 0.11, hz: 0.15, pivot_y: 0.50, swing: -s * 0.3, col: [246, 246, 242], col_alt: [216, 216, 212], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.50, cz: -0.25, hx: 0.07, hy: 0.09, hz: 0.06, pivot_y: 0.50, swing: 0.0, col: [228, 228, 224], col_alt: [198, 198, 194], face: FaceArt::None },
             Part3D { cx: -0.09, cy: 0.12, cz: 0.0, hx: 0.04, hy: 0.12, hz: 0.04, pivot_y: 0.24, swing: s, col: [235, 185, 50], col_alt: [200, 150, 35], face: FaceArt::None },
             Part3D { cx: 0.09, cy: 0.12, cz: 0.0, hx: 0.04, hy: 0.12, hz: 0.04, pivot_y: 0.24, swing: -s, col: [235, 185, 50], col_alt: [200, 150, 35], face: FaceArt::None },
         ],
@@ -560,17 +618,17 @@ impl Mob {
             }
             if self.panic > 0.0 && !self.kind.hostile() {
                 if self.timer <= 0.0 {
-                    self.timer = 0.55;
+                    self.timer = 0.75;
                     let away = (-dx).atan2(-dz);
                     let jitter = ((tick as f32 * 1.9 + self.x * 0.7) % 1.4) - 0.7;
                     let ang = away + jitter;
-                    let sp = if matches!(self.kind, MobKind::Chicken | MobKind::Wolf) { 4.5 } else { 3.9 };
+                    let sp = if matches!(self.kind, MobKind::Chicken | MobKind::Wolf) { 2.4 } else { 2.1 };
                     self.vx = ang.sin() * sp;
                     self.vz = ang.cos() * sp;
                     self.yaw = ang;
                 }
             } else if hostile_active && dist < 18.0 && dist > 1.0 {
-                let sp = if matches!(self.kind, MobKind::Spider | MobKind::WitherSkeleton) { 3.1 } else { 2.4 };
+                let sp = if matches!(self.kind, MobKind::Spider | MobKind::WitherSkeleton) { 2.9 } else { 2.2 };
                 self.vx = dx / dist * sp;
                 self.vz = dz / dist * sp;
                 self.yaw = dx.atan2(dz);
@@ -581,8 +639,8 @@ impl Mob {
                     self.vx = 0.0;
                     self.vz = 0.0;
                 } else {
-                    self.vx = ang.sin() * 1.4;
-                    self.vz = ang.cos() * 1.4;
+                    self.vx = ang.sin() * 1.3;
+                    self.vz = ang.cos() * 1.3;
                     self.yaw = ang;
                 }
             }
@@ -624,16 +682,17 @@ impl Mob {
         let blocked_x = mob_collides(world, nx, self.y, self.z, r, h);
         let blocked_z = mob_collides(world, self.x, self.y, nz, r, h);
 
+        let kb_mag = self.kb_vx.abs() + self.kb_vz.abs();
         if (blocked_x || blocked_z) && self.on_ground {
             let can_step_x = !blocked_x || !mob_collides(world, nx, self.y + 1.05, self.z, r, h);
             let can_step_z = !blocked_z || !mob_collides(world, self.x, self.y + 1.05, nz, r, h);
-            if can_step_x && can_step_z {
-                self.vy = 6.8;
+            if can_step_x && can_step_z && self.hurt <= 0.12 && kb_mag < 1.2 {
+                self.vy = 5.2;
                 self.on_ground = false;
             } else {
-                // Bounce/turn away from obstacle instead of pushing against wall
-                if blocked_x { self.kb_vx = 0.0; }
-                if blocked_z { self.kb_vz = 0.0; }
+                // Bounce/turn away from obstacle instead of pushing or bunny-hopping against wall
+                if blocked_x { self.kb_vx = 0.0; self.vx = -self.vx * 0.5; }
+                if blocked_z { self.kb_vz = 0.0; self.vz = -self.vz * 0.5; }
                 if self.panic > 0.0 { self.timer = 0.0; }
             }
         }
@@ -642,9 +701,12 @@ impl Mob {
 
         self.vy -= 22.0 * dt;
         let ny = self.y + self.vy * dt;
-        if self.vy < 0.0 && mob_collides(world, self.x, ny, self.z, r, h) {
-            self.y = (ny + 0.05).floor() + 1.0;
-            if mob_collides(world, self.x, self.y, self.z, r, h) {
+        if self.vy <= 0.0 && mob_collides(world, self.x, ny, self.z, r, h) {
+            let snap_y = ground_top_at(world, self.x, ny + 0.08, self.z, r)
+                .unwrap_or_else(|| (ny + 0.08).floor() + 1.0);
+            if !mob_collides(world, self.x, snap_y, self.z, r, h) {
+                self.y = snap_y;
+            } else {
                 self.y = ny.ceil();
             }
             self.vy = 0.0;

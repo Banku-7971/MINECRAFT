@@ -27,6 +27,7 @@ pub const VK_Q: u32 = 0x51;
 pub const VK_S: u32 = 0x53;
 pub const VK_T: u32 = 0x54;
 pub const VK_W: u32 = 0x57;
+pub const VK_F3: u32 = 0x72;
 pub const VK_F4: u32 = 0x73;
 pub const VK_F5: u32 = 0x74;
 

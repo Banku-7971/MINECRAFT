@@ -163,6 +163,8 @@ pub struct Game<P: Platform> {
     redstone_sources: HashSet<(i32, i32, i32)>,
     fall_y: f32,
     spawn_timer: f32,
+    mob_sound_timer: f32,
+    swing_timer: f32,
     w_tap_t: f64,
     sprinting: bool,
     chat_input: String,
@@ -171,6 +173,7 @@ pub struct Game<P: Platform> {
     net_addr: String,
     menu_hover: usize,
     camera: u8,
+    show_debug: bool,
     time: f32,
     tick: u32,
     message: String,
@@ -365,6 +368,8 @@ impl<P: Platform> Game<P> {
             redstone_sources: HashSet::new(),
             fall_y: spawn_y,
             spawn_timer: 0.0,
+            mob_sound_timer: 2.0,
+            swing_timer: 0.0,
             w_tap_t: -10.0,
             sprinting: false,
             chat_input: String::new(),
@@ -373,6 +378,7 @@ impl<P: Platform> Game<P> {
             net_addr: String::from("127.0.0.1"),
             menu_hover: 0,
             camera: 0,
+            show_debug: false,
             time: 0.30,
             tick: 0,
             message: String::from("Punch trees for wood! WASD move, Shift sneak, E inventory"),
@@ -717,6 +723,9 @@ impl<P: Platform> Game<P> {
                         self.plat.set_capture(false);
                         self.plat.set_cursor(true);
                     }
+                    VK_F3 => {
+                        self.show_debug = !self.show_debug;
+                    }
                     VK_F4 => {
                         let next = self.mode.next();
                         self.set_mode(next);
@@ -979,7 +988,7 @@ impl<P: Platform> Game<P> {
         match self.screen {
             Screen::Title => {
                 let bx = (render::W as i32 - 200) / 2;
-                (0..5).map(|i| (bx, 116 + i as i32 * 26, 200, 21)).collect()
+                (0..5).map(|i| (bx, 108 + i as i32 * 25, 200, 21)).collect()
             }
             Screen::Multiplayer => {
                 let (px, py) = (50, 20);
@@ -1706,9 +1715,47 @@ impl<P: Platform> Game<P> {
 
     fn eye(&self) -> (f32, f32, f32) { let dy = if self.keys.contains(&plat::VK_SHIFT) { 1.48 } else { 1.62 }; (self.player.x, self.player.y + dy, self.player.z) }
 
+fn step_sfx_for(b: u16) -> Sfx {
+    match b {
+        world::WATER => Sfx::StepWater,
+        world::LOG | world::BIRCH_LOG | world::SPRUCE_LOG | world::JUNGLE_LOG | world::DARK_LOG
+        | world::CRIMSON_STEM | world::WARPED_STEM | world::PLANKS | world::CRAFTING
+        | world::CHEST | world::FENCE | world::BOOKSHELF | world::DOOR | world::DOOR_OPEN
+        | world::SIGN | world::LADDER => Sfx::StepWood,
+        world::SAND | world::RED_SAND | world::GRAVEL | world::CLAY | world::DIRT
+        | world::SOUL_SAND | world::FARMLAND | world::SNOW | world::SNOW_LAYER => Sfx::StepSand,
+        world::STONE | world::COBBLE | world::COAL_ORE | world::IRON_ORE | world::GOLD_ORE
+        | world::DIAMOND_ORE | world::LAPIS_ORE | world::REDSTONE_ORE | world::EMERALD_ORE
+        | world::STONE_BRICKS | world::BRICK | world::OBSIDIAN | world::CRYING_OBSIDIAN
+        | world::BEDROCK | world::NETHERRACK | world::BASALT | world::BLACKSTONE
+        | world::END_STONE | world::QUARTZ | world::FURNACE | world::ANVIL
+        | world::IRON_BLOCK | world::GOLD_BLOCK | world::DIAMOND_BLOCK | world::EMERALD_BLOCK
+        | world::GLASS | world::ICE | world::TERRACOTTA | world::SANDSTONE | world::MOSSY
+        | world::CONCRETE_WHITE | world::CONCRETE_BLUE | world::CONCRETE_RED
+        | world::CONCRETE_GREEN | world::CONCRETE_YELLOW | world::CONCRETE_BLACK => Sfx::StepStone,
+        _ => Sfx::StepGrass,
+    }
+}
+
+fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
+    match kind {
+        MobKind::Cow => Some(Sfx::Cow),
+        MobKind::Sheep => Some(Sfx::Sheep),
+        MobKind::Pig => Some(Sfx::Pig),
+        MobKind::Chicken => Some(Sfx::Chicken),
+        MobKind::Zombie | MobKind::ZombifiedPiglin | MobKind::Piglin => Some(Sfx::Zombie),
+        MobKind::Skeleton | MobKind::WitherSkeleton => Some(Sfx::Skeleton),
+        MobKind::Spider => Some(Sfx::Spider),
+        MobKind::Creeper => Some(Sfx::Creeper),
+        MobKind::Enderman | MobKind::EnderDragon => Some(Sfx::Enderman),
+        _ => None,
+    }
+}
+
     fn try_attack(&mut self) {
         if self.attack_cd > 0.0 { return; }
         self.attack_cd = 0.25;
+        self.swing_timer = 0.22;
         let (dx, dy, dz) = self.look_dir();
         let (ex, ey, ez) = self.eye();
         // mobs first
@@ -1738,17 +1785,22 @@ impl<P: Platform> Game<P> {
             let kdx = self.mobs[i].x - self.player.x;
             let kdz = self.mobs[i].z - self.player.z;
             let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
-            let kb = if self.sprinting { 10.5 } else { 7.5 } + ench * 1.5;
+            let kb = if self.sprinting { 5.2 } else { 3.4 } + ench * 0.8;
             self.mobs[i].kb_vx = (kdx / kd) * kb;
             self.mobs[i].kb_vz = (kdz / kd) * kb;
-            self.mobs[i].vy = self.mobs[i].vy.max(4.6);
+            self.mobs[i].vy = self.mobs[i].vy.max(2.6);
             self.mobs[i].on_ground = false;
             if !self.mobs[i].kind.hostile() {
-                self.mobs[i].panic = 4.5;
-                self.mobs[i].timer = 0.0;
+                self.mobs[i].panic = 2.4;
+                self.mobs[i].timer = 0.25;
             }
             self.damage_held_tool();
-            self.plat.play(Sfx::Hurt);
+            self.plat.play(Sfx::MobHurt);
+            if let Some(msfx) = Self::mob_ambient_sfx(self.mobs[i].kind) {
+                if !self.mobs[i].kind.hostile() {
+                    self.plat.play(msfx);
+                }
+            }
             if self.mobs[i].hp <= 0.0 {
                 let m = self.mobs.remove(i);
                 let id = m.kind.drop();
@@ -1762,7 +1814,7 @@ impl<P: Platform> Game<P> {
                 self.player.add_xp(xp_gain);
                 self.message = format!("Defeated {}", m.kind.name());
                 self.msg_timer = 1.5;
-                self.plat.play(Sfx::LevelUp);
+                self.plat.play(Sfx::MobDie);
             }
             return;
         }
@@ -1862,7 +1914,9 @@ impl<P: Platform> Game<P> {
                 | world::GLASS | world::WOOL_WHITE | world::WOOL_RED | world::WOOL_BLUE
                 | world::WOOL_GREEN | world::WOOL_YELLOW => 0.30,
             world::TALL_GRASS | world::FLOWER_RED | world::FLOWER_YELLOW | world::SAPLING
-                | world::BROWN_MUSHROOM | world::RED_MUSHROOM | world::TORCH | world::WHEAT | world::NETHER_WART => 0.08,
+                | world::BROWN_MUSHROOM | world::RED_MUSHROOM | world::TORCH | world::WHEAT
+                | world::NETHER_WART | world::REDSTONE_TORCH | world::REDSTONE_DUST
+                | world::LEVER | world::BUTTON | world::RAIL | world::SNOW_LAYER => 0.04,
             _ => 0.9,
         };
         let mut prog = match self.mining { Some((p, v)) if p == pos => v, _ => 0.0 };
@@ -2416,11 +2470,14 @@ impl<P: Platform> Game<P> {
         }
         // place block
         if held.id <= world::MAX_BLOCK {
-            let px = h.x + h.nx;
-            let py = h.y + h.ny;
-            let pz = h.z + h.nz;
+            let (px, py, pz) = if matches!(h.block, world::TALL_GRASS | world::SNOW_LAYER) {
+                (h.x, h.y, h.z)
+            } else {
+                (h.x + h.nx, h.y + h.ny, h.z + h.nz)
+            };
             let existing = self.world.get(px, py, pz);
-            if existing != world::AIR && existing != world::WATER && existing != world::TALL_GRASS { return; }
+            if !world::is_replaceable(existing) { return; }
+            self.swing_timer = 0.20;
             let (fx, fy, fz) = (px as f32 + 0.5, py as f32, pz as f32 + 0.5);
             if (fx - self.player.x).abs() < 0.9 && (fz - self.player.z).abs() < 0.9
                 && fy + 1.0 > self.player.y && fy < self.player.y + 1.8 {
@@ -2774,13 +2831,13 @@ impl<P: Platform> Game<P> {
                 let kdx = m.x - cx;
                 let kdz = m.z - cz;
                 let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
-                let kb = (1.0 - md / blast_reach) * 11.0;
+                let kb = (1.0 - md / blast_reach) * 6.0;
                 m.kb_vx += (kdx / kd) * kb;
                 m.kb_vz += (kdz / kd) * kb;
-                m.vy = m.vy.max(5.0);
+                m.vy = m.vy.max(3.2);
                 if !m.kind.hostile() {
-                    m.panic = 4.5;
-                    m.timer = 0.0;
+                    m.panic = 2.4;
+                    m.timer = 0.25;
                 }
             }
         }
@@ -2793,6 +2850,8 @@ impl<P: Platform> Game<P> {
         self.attack_cd = (self.attack_cd - dt).max(0.0);
         self.place_cd = (self.place_cd - dt).max(0.0);
         self.creative_break_cd = (self.creative_break_cd - dt).max(0.0);
+        self.swing_timer = (self.swing_timer - dt).max(0.0);
+        self.mob_sound_timer = (self.mob_sound_timer - dt).max(0.0);
         self.msg_timer = (self.msg_timer - dt).max(0.0);
         self.hurt_flash = (self.hurt_flash - dt * 2.5).max(0.0);
         self.grace = (self.grace - dt).max(0.0);
@@ -2956,21 +3015,27 @@ impl<P: Platform> Game<P> {
                     if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
                         self.player.vy = 8.4;
                         self.player.on_ground = false;
-                        self.plat.play(Sfx::Step);
+                        self.plat.play(Sfx::Jump);
                     }
                     self.player.vy -= (if in_cobweb { 4.0 } else { 22.0 }) * dt;
                 }
                 let ny = self.player.y + self.player.vy * dt;
                 if collides(&mut self.world, self.player.x, ny, self.player.z) {
                     if self.player.vy < 0.0 {
+                        let pre_vy = self.player.vy;
                         self.elytra_gliding = false;
                         if self.flying {
                             self.flying = false;
-                        } else if !self.player.on_ground && !in_water && !on_climbable && self.mode == GameMode::Survival {
-                            let fall_dist = self.fall_y - self.player.y;
-                            if fall_dist > 3.5 && self.grace <= 0.0 {
-                                let dmg = (fall_dist - 3.0).floor();
-                                self.damage_player(dmg, false);
+                        } else if !self.player.on_ground && !in_water && !on_climbable {
+                            if pre_vy < -5.8 {
+                                self.plat.play(Sfx::Land);
+                            }
+                            if self.mode == GameMode::Survival {
+                                let fall_dist = self.fall_y - self.player.y;
+                                if fall_dist > 3.5 && self.grace <= 0.0 {
+                                    let dmg = (fall_dist - 3.0).floor();
+                                    self.damage_player(dmg, false);
+                                }
                             }
                         }
                         self.player.on_ground = true;
@@ -2986,17 +3051,21 @@ impl<P: Platform> Game<P> {
                 if move_mag > 0.1 {
                     self.player_walk += move_mag * dt * 2.2;
                 }
-                if move_mag > 0.1 && self.player.on_ground && !sneaking && !self.flying {
+                if move_mag > 0.1 && (self.player.on_ground || in_water) && !sneaking && !self.flying {
                     self.audio_timer += dt as f64;
-                    if self.audio_timer > if sprinting { 0.28 } else { 0.42 } {
+                    if self.audio_timer > if sprinting { 0.27 } else { 0.40 } {
                         self.audio_timer = 0.0;
-                        self.plat.play(Sfx::Step);
+                        let step_sfx = if in_water { Sfx::StepWater } else { Self::step_sfx_for(under_b) };
+                        self.plat.play(step_sfx);
                     }
                 }
                 if sprinting && self.mode == GameMode::Survival {
                     self.player.hunger = (self.player.hunger - dt * 0.12).max(0.0);
                 }
-                if self.mouse_left { self.mine_step(dt); }
+                if self.mouse_left {
+                    self.mine_step(dt);
+                    if self.swing_timer <= 0.02 { self.swing_timer = 0.22; }
+                }
             }
         }
 
@@ -3022,16 +3091,16 @@ impl<P: Platform> Game<P> {
                     m.hp -= 6.0;
                     m.hurt = 0.45;
                     let hd = (vx * vx + vz * vz).sqrt().max(0.1);
-                    m.kb_vx = (vx / hd) * 6.5;
-                    m.kb_vz = (vz / hd) * 6.5;
-                    m.vy = m.vy.max(3.8);
+                    m.kb_vx = (vx / hd) * 3.8;
+                    m.kb_vz = (vz / hd) * 3.8;
+                    m.vy = m.vy.max(2.4);
                     m.on_ground = false;
                     if !m.kind.hostile() {
-                        m.panic = 4.5;
-                        m.timer = 0.0;
+                        m.panic = 2.4;
+                        m.timer = 0.25;
                     }
                     hit_mob = true;
-                    self.plat.play(Sfx::Hurt);
+                    self.plat.play(Sfx::MobHurt);
                     break;
                 }
             }
@@ -3166,6 +3235,26 @@ impl<P: Platform> Game<P> {
             self.explode(bx, by, bz, 4.0);
         }
 
+        // periodic ambient mob sounds for nearby creatures
+        if self.mob_sound_timer <= 0.0 && !self.mobs.is_empty() {
+            self.mob_sound_timer = 3.2 + (self.tick % 4) as f32 * 0.7;
+            let mut near_sfx: Option<Sfx> = None;
+            let mut best_d2 = 15.0 * 15.0;
+            for (idx, m) in self.mobs.iter().enumerate() {
+                if ((idx as u32 + self.tick) % 3) != 0 && self.mobs.len() > 3 { continue; }
+                let d2 = (m.x - self.player.x).powi(2) + (m.y - self.player.y).powi(2) + (m.z - self.player.z).powi(2);
+                if d2 < best_d2 {
+                    if let Some(sfx) = Self::mob_ambient_sfx(m.kind) {
+                        best_d2 = d2;
+                        near_sfx = Some(sfx);
+                    }
+                }
+            }
+            if let Some(sfx) = near_sfx {
+                self.plat.play(sfx);
+            }
+        }
+
         // spawn mobs
         self.spawn_timer += dt;
         if self.spawn_timer > 1.8 {
@@ -3183,8 +3272,9 @@ impl<P: Platform> Game<P> {
                     let bm = self.world.biome(x as i32, z as i32);
                     entities::biome_mob(bm, self.world.dim, self.tick.wrapping_mul(7919), day)
                 };
-                if !entities::mob_collides(&mut self.world, x, sy_m, z, k.radius(), k.height()) {
-                    self.mobs.push(Mob::spawn(k, x, sy_m, z));
+                let settled_y = entities::ground_top_at(&mut self.world, x, sy_m - 1.0, z, k.radius()).unwrap_or(sy_m);
+                if !entities::mob_collides(&mut self.world, x, settled_y, z, k.radius(), k.height()) {
+                    self.mobs.push(Mob::spawn(k, x, settled_y, z));
                 }
             }
         }
@@ -3504,7 +3594,16 @@ impl<P: Platform> Game<P> {
         if self.ui != Ui::None { self.ui = Ui::None; }
         let hover = self.hover_index();
         let gm_label = format!("Game Mode: {}", self.mode.name());
-        render::draw_title(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
+        // Render live rotating 3D Minecraft world panorama behind the title menu
+        let pan_yaw = self.title_t * 0.14;
+        let pan_y = (self.spawn.1 + 12.0).clamp(44.0, 80.0);
+        let cam = Cam::from(pan_yaw, -0.14, self.spawn.0, pan_y, self.spawn.2);
+        let atlas = Textures::atlas();
+        let shader = packs::active_shader();
+        self.scene.clear();
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader);
+        render::upscale(&self.scene, &mut self.fb);
+        render::draw_title_overlay(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
     }
@@ -3542,7 +3641,7 @@ impl<P: Platform> Game<P> {
             Cam::from(self.player.yaw, self.player.pitch, self.player.x, eye_y, self.player.z)
         } else if self.camera == 1 {
             let back = 3.8;
-            let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, -fx, -fy, -fz, back + 0.5, false) {
+            let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast_solid(&mut self.world, self.player.x, eye_y, self.player.z, -fx, -fy, -fz, back + 0.5) {
                 let d = (h.dist - 0.35).clamp(1.2, back);
                 (self.player.x - fx * d, eye_y - fy * d - 0.25 * (d / back), self.player.z - fz * d)
             } else {
@@ -3551,7 +3650,7 @@ impl<P: Platform> Game<P> {
             Cam::from(self.player.yaw, self.player.pitch, cam_x, cam_y, cam_z)
         } else {
             let front = 3.8;
-            let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, front + 0.5, false) {
+            let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast_solid(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, front + 0.5) {
                 let d = (h.dist - 0.35).clamp(1.2, front);
                 (self.player.x + fx * d, eye_y + fy * d + 0.15 * (d / front), self.player.z + fz * d)
             } else {
@@ -3605,7 +3704,8 @@ impl<P: Platform> Game<P> {
 
         if self.ui == Ui::None || self.ui == Ui::Chat {
             if self.camera == 0 && self.mode != GameMode::Spectator {
-                render::draw_held_item(&mut self.fb, self.player.hot[self.player.selected].id, self.tick);
+                let swing_ph = if self.swing_timer > 0.0 { (1.0 - self.swing_timer / 0.22) * std::f32::consts::PI } else { 0.0 };
+                render::draw_held_item(&mut self.fb, self.player.hot[self.player.selected].id, self.tick, self.player_walk, swing_ph);
             }
             let dragon_hp = if self.world.dim == Dimension::End {
                 self.mobs.iter().find(|m| m.kind == MobKind::EnderDragon).map(|m| m.hp)
@@ -3640,6 +3740,7 @@ impl<P: Platform> Game<P> {
                 self.camera,
                 self.time,
                 self.mode,
+                self.show_debug,
             );
             // crosshair progress
             if let Some((_, prog)) = self.mining {

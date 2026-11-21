@@ -223,3 +223,15 @@ pub extern "C" fn game_wheel(delta: i32) {
 pub extern "C" fn game_blur() {
     web::push_event(Event::FocusLost);
 }
+
+#[no_mangle]
+pub extern "C" fn game_audio_pop() -> i32 {
+    crate::sound::pop_web_sfx()
+}
+
+#[no_mangle]
+pub extern "C" fn game_audio_flags() -> u32 {
+    let m = if web::music_enabled() { 1 } else { 0 };
+    let s = if web::sound_enabled() { 2 } else { 0 };
+    m | s
+}
