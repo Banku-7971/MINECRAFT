@@ -18,6 +18,7 @@ mod net;
 #[path = "net_stub.rs"]
 mod net;
 
+mod packs;
 mod platform;
 mod render;
 mod sound;
