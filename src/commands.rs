@@ -134,6 +134,8 @@ pub fn resolve_mob(raw: &str) -> Option<MobKind> {
         "polar_bear" => Some(MobKind::PolarBear),
         "parrot" => Some(MobKind::Parrot),
         "ender_dragon" | "dragon" => Some(MobKind::EnderDragon),
+        "iron_golem" | "golem" => Some(MobKind::IronGolem),
+        "snow_golem" | "snowman" => Some(MobKind::SnowGolem),
         _ => None,
     }
 }
@@ -212,7 +214,7 @@ pub fn autocomplete(input: &str) -> Option<String> {
             "cow", "sheep", "pig", "chicken", "wolf", "villager",
             "zombie", "skeleton", "creeper", "spider", "enderman",
             "slime", "blaze", "ghast", "wither_skeleton", "piglin",
-            "zombified_piglin", "polar_bear", "parrot", "ender_dragon", "tnt",
+            "zombified_piglin", "polar_bear", "parrot", "ender_dragon", "iron_golem", "snow_golem", "tnt",
         ]
         .into_iter()
         .find(|s| s.starts_with(&ql)),
@@ -919,7 +921,13 @@ pub fn execute<P: Platform>(game: &mut Game<P>, cmd: &str) -> bool {
             let what = parts.get(2).or_else(|| parts.get(1)).map(|s| normalize_key(s)).unwrap_or_default();
             let (lx, ly, lz, label) = match what.as_str() {
                 "stronghold" => (100.0f32, 19.0f32, -140.0f32, "Stronghold"),
-                "village" => (48.0, 34.0, 48.0, "Village"),
+                "village" => {
+                    if let Some((vx, vy, vz)) = world::nearest_village(game.player.x.floor() as i32, game.player.z.floor() as i32) {
+                        (vx as f32, vy as f32, vz as f32, "Village")
+                    } else {
+                        (48.0, 34.0, 48.0, "Village")
+                    }
+                }
                 "ruined_portal" => (-48.0, 34.0, 32.0, "Ruined Portal"),
                 "fortress" | "nether_fortress" => (32.0, 36.0, 32.0, "Nether Fortress"),
                 "end_city" => (0.0, 62.0, -18.0, "End Island"),

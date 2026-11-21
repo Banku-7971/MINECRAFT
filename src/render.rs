@@ -132,10 +132,15 @@ pub struct Cam {
     pub fx: f32, pub fy: f32, pub fz: f32,
     pub rx: f32, pub ry: f32, pub rz: f32,
     pub ux: f32, pub uy: f32, pub uz: f32,
+    pub fov_scale: f32,
 }
 
 impl Cam {
     pub fn from(yaw: f32, pitch: f32, x: f32, y: f32, z: f32) -> Self {
+        Self::with_fov(yaw, pitch, x, y, z, 1.0)
+    }
+
+    pub fn with_fov(yaw: f32, pitch: f32, x: f32, y: f32, z: f32, fov_mul: f32) -> Self {
         let cp = pitch.cos();
         let fx = yaw.sin() * cp;
         let fy = pitch.sin();
@@ -145,7 +150,7 @@ impl Cam {
         let ux = -rz * fy;
         let uy = rz * fx - rx * fz;
         let uz = rx * fy;
-        Self { x, y, z, fx, fy, fz, rx, ry: 0.0, rz, ux, uy, uz }
+        Self { x, y, z, fx, fy, fz, rx, ry: 0.0, rz, ux, uy, uz, fov_scale: FOV_SCALE * fov_mul }
     }
 }
 
@@ -906,6 +911,7 @@ fn trace_ray(
     tick: u32,
     time: f32,
     underwater: bool,
+    spectator: bool,
     dim: Dimension,
     mining: Option<(i32, i32, i32, u8)>,
     shader: &ShaderConfig,
@@ -914,6 +920,9 @@ fn trace_ray(
     let mut x = ox.floor() as i32;
     let mut y = oy.floor() as i32;
     let mut z = oz.floor() as i32;
+    let start_b = if y >= 0 && y < world::WORLD_H as i32 { cache.get(x, y, z) } else { world::AIR };
+    let mut prev_b = start_b;
+    let mut spec_exited = !(spectator && world::is_solid(start_b));
     let step_x = if dx > 0.0 { 1 } else if dx < 0.0 { -1 } else { 0 };
     let step_y = if dy > 0.0 { 1 } else if dy < 0.0 { -1 } else { 0 };
     let step_z = if dz > 0.0 { 1 } else if dz < 0.0 { -1 } else { 0 };
@@ -957,8 +966,23 @@ fn trace_ray(
 
     for _ in 0..220 {
         let t_next = tmx.min(tmy).min(tmz);
+        let mut step_b = world::AIR;
         if y >= 0 && y < world::WORLD_H as i32 {
             let b = cache.get(x, y, z);
+            step_b = b;
+            // In Spectator mode inside solid blocks, skip contiguous solid terrain until exiting into open air/cave
+            if !spec_exited {
+                if !world::is_solid(b) {
+                    spec_exited = true;
+                } else {
+                    prev_b = b;
+                    if tmx < tmy && tmx < tmz { t = tmx; tmx += dtx; x += step_x; nx = -step_x; ny = 0; nz = 0; }
+                    else if tmy < tmz { t = tmy; tmy += dty; y += step_y; ny = -step_y; nx = 0; nz = 0; }
+                    else { t = tmz; tmz += dtz; z += step_z; nz = -step_z; nx = 0; ny = 0; }
+                    if t > max_dist { break; }
+                    continue;
+                }
+            }
             if b != world::AIR {
                 if is_crossed_plant(b) {
                     let mut cands = [(f32::INFINITY, 0.0f32, 0.0f32); 2];
@@ -1054,7 +1078,7 @@ fn trace_ray(
                             v = (v - wave * 0.8).rem_euclid(1.0);
                         }
                         let tpx = tex.sample_face(b, nx, ny, nz, u, v, tick);
-                        if b == world::WATER && !has_trans {
+                        if b == world::WATER && !has_trans && prev_b != world::WATER {
                             let fres_base = if shader.water_reflect { 0.58 } else { 0.35 };
                             let fresnel = ((1.0 - dy.abs()).powf(2.2) * fres_base).clamp(0.08, 0.65);
                             let ripple = if shader.water_reflect {
@@ -1075,7 +1099,7 @@ fn trace_ray(
                                 tpx[1] as f32 * light * ripple * (1.0 - fresnel) + sky[1] * fresnel + sun_glint * 0.94,
                                 tpx[2] as f32 * light * ripple * (1.0 - fresnel) + sky[2] * fresnel + sun_glint * 0.78,
                             ];
-                            trans_alpha = if shader.water_reflect { 0.54 } else { 0.62 };
+                            trans_alpha = if shader.water_reflect { 0.46 } else { 0.52 };
                             trans_dist = t;
                             has_trans = true;
                         } else if b == world::NETHER_PORTAL && !has_trans {
@@ -1155,13 +1179,18 @@ fn trace_ray(
                 }
             }
         }
+        prev_b = step_b;
         if tmx < tmy && tmx < tmz { t = tmx; tmx += dtx; x += step_x; nx = -step_x; ny = 0; nz = 0; }
         else if tmy < tmz { t = tmy; tmy += dty; y += step_y; ny = -step_y; nx = 0; nz = 0; }
         else { t = tmz; tmz += dtz; z += step_z; nz = -step_z; nx = 0; ny = 0; }
         if t > max_dist { break; }
     }
 
-    if hit_dist.is_infinite() && dim == Dimension::Overworld {
+    if hit_dist.is_infinite() && !spec_exited {
+        hit_rgb = [14.0, 14.0, 18.0];
+    }
+
+    if hit_dist.is_infinite() && dim == Dimension::Overworld && spec_exited {
         if sun_y > -0.1 && (dx - sun_x).abs() < 0.062 && (dy - sun_y).abs() < 0.062 && (dz - sun_z).abs() < 0.062 {
             hit_rgb = [255.0, 246.0, 185.0];
         }
@@ -1191,10 +1220,10 @@ fn trace_ray(
     }
 
     if underwater {
-        let uf = (1.0 - (-hit_dist.min(32.0) * 0.055).exp()).clamp(0.28, 0.85);
-        hit_rgb[0] = hit_rgb[0] * (1.0 - uf) + 22.0 * uf;
-        hit_rgb[1] = hit_rgb[1] * (1.0 - uf) + 68.0 * uf;
-        hit_rgb[2] = hit_rgb[2] * (1.0 - uf) + 148.0 * uf;
+        let uf = (1.0 - (-hit_dist.min(28.0) * 0.042).exp()).clamp(0.16, 0.72);
+        hit_rgb[0] = hit_rgb[0] * (1.0 - uf) + 26.0 * uf;
+        hit_rgb[1] = hit_rgb[1] * (1.0 - uf) + 92.0 * uf;
+        hit_rgb[2] = hit_rgb[2] * (1.0 - uf) + 178.0 * uf;
     }
 
     // Shader post-processing (brightness, sky warmth, saturation, contrast, ACES tone map)
@@ -1238,8 +1267,8 @@ fn trace_ray(
 const FOV_SCALE: f32 = 0.70;
 
 #[inline]
-fn focal_len(fb: &Framebuffer) -> f32 {
-    fb.h as f32 / (2.0 * FOV_SCALE)
+fn focal_len(fb: &Framebuffer, cam: &Cam) -> f32 {
+    fb.h as f32 / (2.0 * cam.fov_scale)
 }
 
 pub fn render_world(
@@ -1251,6 +1280,7 @@ pub fn render_world(
     tick: u32,
     mining: Option<(i32, i32, i32, u8)>,
     shader: &ShaderConfig,
+    spectator: bool,
 ) {
     fb.clear();
     let dim = world.dim;
@@ -1262,7 +1292,7 @@ pub fn render_world(
     let w = fb.w;
     let h = fb.h;
     let aspect = w as f32 / h as f32;
-    let scale = FOV_SCALE;
+    let scale = cam.fov_scale;
     let cache = world.sync_cache(cam.x, cam.z);
     let underwater = cache.get(cam.x.floor() as i32, cam.y.floor() as i32, cam.z.floor() as i32) == world::WATER;
 
@@ -1278,7 +1308,7 @@ pub fn render_world(
                 let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
                 dx *= inv_len; dy *= inv_len; dz *= inv_len;
                 let sky = sky_color(dim, dy, time, px as i32, py as i32);
-                let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining, shader);
+                let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader);
                 let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                 let pi = py * w + px;
                 fb.depth[pi] = dist * forward_cos;
@@ -1314,7 +1344,7 @@ pub fn render_world(
                             let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
                             dx *= inv_len; dy *= inv_len; dz *= inv_len;
                             let sky = sky_color(dim, dy, time, px as i32, py as i32);
-                            let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining, shader);
+                            let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader);
                             let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                             let pi = local_y * w + px;
                             depth_band[pi] = dist * forward_cos;
@@ -1337,7 +1367,7 @@ fn project(cam: &Cam, x: f32, y: f32, z: f32, fb: &Framebuffer) -> Option<(f32, 
     if d < 0.15 { return None; }
     let s = rx * cam.rx + ry * cam.ry + rz * cam.rz;
     let u = rx * cam.ux + ry * cam.uy + rz * cam.uz;
-    let focal = focal_len(fb);
+    let focal = focal_len(fb, cam);
     Some((fb.w as f32 / 2.0 + s / d * focal, fb.h as f32 / 2.0 - u / d * focal, d))
 }
 
@@ -1505,6 +1535,18 @@ fn face_pixel(face: FaceArt, u: f32, v: f32, base: [u8; 3], alt: [u8; 3]) -> [u8
             if y == 4 && (x == 1 || x == 2 || x == 5 || x == 6) { return alt; }
             base
         }
+        FaceArt::IronGolem => {
+            if y == 2 && x >= 1 && x <= 6 { return [94, 108, 86]; } // unibrow
+            if y == 3 && (x == 1 || x == 6) { return [220, 42, 42]; } // red eyes
+            if y >= 5 && x >= 3 && x <= 4 { return [168, 166, 160]; }
+            base
+        }
+        FaceArt::SnowGolem => {
+            if y == 3 && (x == 1 || x == 2 || x == 5 || x == 6) { return [32, 22, 16]; }
+            if y == 5 && (x == 1 || x == 6) { return [32, 22, 16]; }
+            if y == 6 && x >= 2 && x <= 5 { return [32, 22, 16]; }
+            base
+        }
         FaceArt::None => base,
     }
 }
@@ -1613,6 +1655,7 @@ pub fn draw_entity_3d(
     kind: EntityKind,
     flash: u8,
     front_always: bool,
+    airborne: bool,
 ) {
     let (_, _, dist) = match project(cam, wx, wy + 0.8, wz, fb) {
         Some(v) => v,
@@ -1622,7 +1665,7 @@ pub fn draw_entity_3d(
     if matches!(kind, EntityKind::Steve) && dist < 1.8 { return; }
 
     // ground shadow (aligned to focal length & flush on terrain)
-    let focal = focal_len(fb);
+    let focal = focal_len(fb, cam);
     if let Some((gx, gy, gd)) = project(cam, wx, wy + 0.01, wz, fb) {
         let rw = (0.42 / gd * focal).clamp(1.0, 22.0);
         let ry_lim = (rw * 0.42).max(1.0) as i32;
@@ -1643,7 +1686,7 @@ pub fn draw_entity_3d(
 
     let parts = match kind {
         EntityKind::Steve => entities::steve_parts(walk),
-        EntityKind::Mob(m) => entities::mob_parts(m, walk),
+        EntityKind::Mob(m) => entities::mob_parts(m, walk, airborne),
         EntityKind::Boat => entities::vehicle_parts(true),
         EntityKind::Minecart => entities::vehicle_parts(false),
     };
@@ -1711,7 +1754,7 @@ pub fn draw_entity_3d(
 pub fn draw_drop_sprite(fb: &mut Framebuffer, cam: &Cam, x: f32, y: f32, z: f32, item: u16, tick: u32, day: f32) {
     let (sx, sy, dist) = match project(cam, x, y, z, fb) { Some(v) => v, None => return };
     if dist > 48.0 { return; }
-    let size = (0.34 / dist * focal_len(fb)).clamp(4.0, 26.0) as i32;
+    let size = (0.34 / dist * focal_len(fb, cam)).clamp(4.0, 26.0) as i32;
     let left = sx as i32 - size / 2;
     let top = sy as i32 - size;
     let light = 0.48 + day * 0.52;
@@ -1739,6 +1782,18 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     }
     if item >= 332 && item <= 345 {
         return atlas.sample_item((90 + (item - 332)) as usize, x, y);
+    }
+    if item == crate::items::SPAWN_IRON_GOLEM || item == crate::items::SPAWN_SNOW_GOLEM {
+        let mut c = atlas.sample_item(66, x, y);
+        if c[3] > 20 {
+            let spot = ((x + y * 3) % 5) == 0;
+            if item == crate::items::SPAWN_IRON_GOLEM {
+                c = if spot { [86, 138, 64, c[3]] } else { [214, 214, 218, c[3]] };
+            } else {
+                c = if spot { [224, 118, 28, c[3]] } else { [240, 248, 255, c[3]] };
+            }
+        }
+        return c;
     }
     if item >= 346 && item <= 366 {
         let idx = match item {

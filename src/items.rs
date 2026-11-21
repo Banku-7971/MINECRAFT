@@ -113,6 +113,8 @@ pub const NETHERITE_CHESTPLATE: u16 = 363;
 pub const NETHERITE_LEGGINGS: u16 = 364;
 pub const NETHERITE_BOOTS: u16 = 365;
 pub const ENCHANTED_BOOK: u16 = 366;
+pub const SPAWN_IRON_GOLEM: u16 = 367;
+pub const SPAWN_SNOW_GOLEM: u16 = 368;
 
 pub fn name(id: u16) -> &'static str {
     match id {
@@ -167,6 +169,8 @@ pub fn name(id: u16) -> &'static str {
         NETHERITE_HELMET => "Netherite Helmet", NETHERITE_CHESTPLATE => "Netherite Chestplate",
         NETHERITE_LEGGINGS => "Netherite Leggings", NETHERITE_BOOTS => "Netherite Boots",
         ENCHANTED_BOOK => "Enchanted Book",
+        SPAWN_IRON_GOLEM => "Iron Golem Spawn Egg",
+        SPAWN_SNOW_GOLEM => "Snow Golem Spawn Egg",
         _ => world::block_name(id),
     }
 }
@@ -297,6 +301,7 @@ pub fn creative_tab_items(tab: usize) -> &'static [u16] {
             SPAWN_SHEEP, SPAWN_COW, SPAWN_PIG, SPAWN_CHICKEN, SPAWN_WOLF, SPAWN_POLAR_BEAR, SPAWN_PARROT, SPAWN_SLIME,
             SPAWN_ZOMBIE, SPAWN_SKELETON, SPAWN_CREEPER, SPAWN_SPIDER, SPAWN_ENDERMAN, SPAWN_VILLAGER,
             SPAWN_ZOMBIFIED_PIGLIN, SPAWN_PIGLIN, SPAWN_GHAST, SPAWN_BLAZE, SPAWN_WITHER_SKELETON, SPAWN_ENDER_DRAGON,
+            SPAWN_IRON_GOLEM, SPAWN_SNOW_GOLEM,
         ],
         _ => &[],
     }
