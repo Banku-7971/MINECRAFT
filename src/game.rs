@@ -27,6 +27,9 @@ pub struct Player {
     pub selected: usize,
     pub hot: [Stack; HOT],
     pub store: [Stack; STORE],
+    pub armor: [Stack; 4],
+    pub offhand: Stack,
+    pub enchants: HashMap<u16, u8>,
 }
 
 impl Player {
@@ -37,7 +40,18 @@ impl Player {
             selected: 0,
             hot: [Stack::EMPTY; HOT],
             store: [Stack::EMPTY; STORE],
+            armor: [Stack::EMPTY; 4],
+            offhand: Stack::EMPTY,
+            enchants: HashMap::new(),
         }
+    }
+
+    fn armor_points(&self) -> u32 {
+        self.armor.iter().map(|s| items::armor_points(s.id)).sum::<u32>().min(20)
+    }
+
+    fn has_totem(&self) -> bool {
+        self.held().id == items::TOTEM || self.offhand.id == items::TOTEM
     }
 
     fn add_xp(&mut self, amt: u32) {
@@ -91,11 +105,34 @@ impl Furnace {
     }
 }
 
+#[derive(Clone)]
+pub struct BrewingStand {
+    pub ing: Stack,
+    pub bottle: Stack,
+    pub output: Stack,
+    pub prog: f32,
+}
+
+impl BrewingStand {
+    fn new() -> Self {
+        Self { ing: Stack::EMPTY, bottle: Stack::EMPTY, output: Stack::EMPTY, prog: 0.0 }
+    }
+}
+
+#[derive(Clone)]
+pub struct Vehicle {
+    pub is_boat: bool,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub yaw: f32,
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum Screen { Title, Multiplayer, Options, Playing }
 
 #[derive(PartialEq, Clone, Copy)]
-pub enum Ui { None, Inventory, Creative, Furnace, Chest, Chat, Pause }
+pub enum Ui { None, Inventory, Creative, Furnace, Chest, Enchant, Anvil, Brewing, Trade, Death, Chat, Pause }
 
 pub struct Game<P: Platform> {
     plat: P,
@@ -181,8 +218,23 @@ pub struct Game<P: Platform> {
     fluid_timer: f32,
     chests: HashMap<(u8, i32, i32, i32), [Stack; STORE]>,
     arrows: Vec<(f32, f32, f32, f32, f32, f32)>,
+    mob_projectiles: Vec<(f32, f32, f32, f32, f32, f32, bool)>,
     burn_cd: f32,
     drown_cd: f32,
+    mouse_right: bool,
+    potion_fire: f32,
+    potion_speed: f32,
+    elytra_gliding: bool,
+    enchant_slots: [Stack; 2],
+    anvil_slots: [Stack; 2],
+    brewing_stands: HashMap<(i32, i32, i32), BrewingStand>,
+    buttons: HashMap<(i32, i32, i32), f32>,
+    piston_ext: HashSet<(i32, i32, i32)>,
+    vehicles: Vec<Vehicle>,
+    riding: Option<usize>,
+    crop_timer: f32,
+    spawner_timer: f32,
+    tool_dur: [u16; HOT],
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -207,6 +259,7 @@ fn block_drop(b: u16, tick: u32) -> Stack {
         COAL_ORE => Stack::new(items::COAL, 1),
         DIAMOND_ORE => Stack::new(items::DIAMOND, 1),
         EMERALD_ORE => Stack::new(items::EMERALD, 1),
+        LAPIS_ORE => Stack::new(items::LAPIS_LAZULI, 5),
         REDSTONE_ORE => Stack::new(REDSTONE_DUST, 4),
         NETHER_QUARTZ_ORE => Stack::new(items::NETHER_QUARTZ, 1),
         CRIMSON_NYLIUM | WARPED_NYLIUM => Stack::new(NETHERRACK, 1),
@@ -216,12 +269,16 @@ fn block_drop(b: u16, tick: u32) -> Stack {
         GRAVEL => if tick % 10 == 0 { Stack::new(items::FLINT, 1) } else { Stack::new(GRAVEL, 1) },
         LEAVES | SPRUCE_LEAVES | JUNGLE_LEAVES | BIRCH_LEAVES | DARK_LEAVES => {
             if tick % 20 == 0 { Stack::new(items::APPLE, 1) }
+            else if tick % 15 == 0 { Stack::new(SAPLING, 1) }
             else if tick % 12 == 0 { Stack::new(items::STICK, 1) }
             else { Stack::EMPTY }
         }
         WHEAT => Stack::new(WHEAT, 2),
+        NETHER_WART => Stack::new(NETHER_WART, 2),
         TALL_GRASS => if tick % 8 == 0 { Stack::new(WHEAT, 1) } else { Stack::EMPTY },
         ICE | GLASS => Stack::EMPTY,
+        DOOR_OPEN => Stack::new(DOOR, 1),
+        IRON_DOOR_OPEN => Stack::new(IRON_DOOR, 1),
         _ => Stack::new(b, 1),
     }
 }
@@ -231,10 +288,11 @@ fn requires_pickaxe(b: u16) -> u8 {
     match b {
         STONE | COBBLE | STONE_BRICKS | BRICK | FURNACE | SANDSTONE | COAL_ORE | QUARTZ | BLACKSTONE
         | SLAB | STAIRS | ANVIL | ENCHANTING | MOSSY | IRON_BLOCK | NETHERRACK | NETHER_BRICKS
-        | CRIMSON_NYLIUM | WARPED_NYLIUM | BASALT | END_STONE | PURPUR_BLOCK | NETHER_QUARTZ_ORE => 1,
-        IRON_ORE | LAMP => 2,
+        | CRIMSON_NYLIUM | WARPED_NYLIUM | BASALT | END_STONE | PURPUR_BLOCK | NETHER_QUARTZ_ORE
+        | HOPPER | PISTON | STICKY_PISTON | IRON_DOOR | IRON_DOOR_OPEN | SPAWNER => 1,
+        IRON_ORE | LAPIS_ORE | LAPIS_BLOCK | LAMP => 2,
         GOLD_ORE | DIAMOND_ORE | REDSTONE_ORE | EMERALD_ORE | GOLD_BLOCK | DIAMOND_BLOCK | EMERALD_BLOCK => 3,
-        OBSIDIAN | CRYING_OBSIDIAN | ANCIENT_DEBRIS => 4,
+        OBSIDIAN | CRYING_OBSIDIAN | ANCIENT_DEBRIS | BEACON => 4,
         _ => 0,
     }
 }
@@ -350,8 +408,23 @@ impl<P: Platform> Game<P> {
             fluid_timer: 0.0,
             chests: HashMap::new(),
             arrows: Vec::new(),
+            mob_projectiles: Vec::new(),
             burn_cd: 0.0,
             drown_cd: 0.0,
+            mouse_right: false,
+            potion_fire: 0.0,
+            potion_speed: 0.0,
+            elytra_gliding: false,
+            enchant_slots: [Stack::EMPTY; 2],
+            anvil_slots: [Stack::EMPTY; 2],
+            brewing_stands: HashMap::new(),
+            buttons: HashMap::new(),
+            piston_ext: HashSet::new(),
+            vehicles: Vec::new(),
+            riding: None,
+            crop_timer: 0.0,
+            spawner_timer: 0.0,
+            tool_dur: [0; HOT],
         };
         game.load_world();
         game
@@ -463,13 +536,18 @@ impl<P: Platform> Game<P> {
                                 Ui::Inventory | Ui::Furnace => self.click_inventory(b == 1),
                                 Ui::Chest => self.click_chest(b == 1),
                                 Ui::Creative => self.click_creative(b == 1),
+                                Ui::Enchant => self.click_enchant(b == 1),
+                                Ui::Anvil => self.click_anvil(b == 1),
+                                Ui::Brewing => self.click_brewing(b == 1),
+                                Ui::Trade => self.click_trade(),
+                                Ui::Death => self.click_death(),
                                 Ui::Pause => self.click_pause(),
                                 Ui::Chat => {}
                                 Ui::None => {
                                     self.plat.set_capture(true);
                                     if self.mode != GameMode::Spectator {
                                         if b == 0 { self.mouse_left = true; self.try_attack(); }
-                                        else if b == 1 { self.try_use(); }
+                                        else if b == 1 { self.mouse_right = true; self.try_use(); }
                                     }
                                 }
                             }
@@ -478,6 +556,7 @@ impl<P: Platform> Game<P> {
                 }
                 Event::MouseUp(b) => {
                     if b == 0 { self.mouse_left = false; self.mining = None; }
+                    if b == 1 { self.mouse_right = false; }
                 }
                 Event::Wheel(d) => {
                     if self.screen == Screen::Playing {
@@ -550,8 +629,12 @@ impl<P: Platform> Game<P> {
                     }
                     return;
                 }
-                if self.ui == Ui::Inventory || self.ui == Ui::Furnace || self.ui == Ui::Chest {
+                if matches!(self.ui, Ui::Inventory | Ui::Furnace | Ui::Chest | Ui::Enchant | Ui::Anvil | Ui::Brewing | Ui::Trade) {
                     if code == VK_E || code == VK_ESCAPE { self.close_ui(); }
+                    return;
+                }
+                if self.ui == Ui::Death {
+                    if code == VK_RETURN { self.respawn_player(); }
                     return;
                 }
                 match code {
@@ -559,6 +642,28 @@ impl<P: Platform> Game<P> {
                     VK_E => {
                         if self.mode == GameMode::Creative { self.open_creative(); }
                         else if self.mode == GameMode::Survival { self.open_inventory(false); }
+                    }
+                    VK_Q => {
+                        if !self.player.hot[self.player.selected].is_empty() {
+                            let all = self.keys.contains(&VK_CONTROL) || self.keys.contains(&VK_SHIFT);
+                            let (dx, dy, dz) = self.look_dir();
+                            let st = self.player.hot[self.player.selected];
+                            let drop_n = if all { st.count } else { 1 };
+                            for _ in 0..drop_n.min(16) {
+                                let d = Drop::new(self.player.x + dx * 2.2, self.player.y + 1.2 + dy * 0.4, self.player.z + dz * 2.2, st.id);
+                                self.drops.push(d);
+                            }
+                            let s = &mut self.player.hot[self.player.selected];
+                            s.count -= drop_n;
+                            if s.count == 0 { *s = Stack::EMPTY; }
+                            self.plat.play(Sfx::Click);
+                        }
+                    }
+                    VK_F => {
+                        let tmp = self.player.hot[self.player.selected];
+                        self.player.hot[self.player.selected] = self.player.offhand;
+                        self.player.offhand = tmp;
+                        self.plat.play(Sfx::Click);
                     }
                     VK_T => {
                         self.ui = Ui::Chat;
@@ -576,7 +681,12 @@ impl<P: Platform> Game<P> {
                         self.msg_timer = 2.0;
                     }
                     VK_SPACE => {
-                        if self.mode == GameMode::Creative {
+                        if self.riding.is_some() {
+                            self.riding = None;
+                            self.player.vy = 4.5;
+                            self.message = String::from("Dismounted");
+                            self.msg_timer = 1.2;
+                        } else if self.mode == GameMode::Creative {
                             let now = self.plat.now();
                             if now - self.space_tap_t < 0.30 {
                                 self.flying = !self.flying;
@@ -585,6 +695,8 @@ impl<P: Platform> Game<P> {
                             } else {
                                 self.space_tap_t = now;
                             }
+                        } else if !self.player.on_ground && self.player.armor[1].id == items::ELYTRA {
+                            self.elytra_gliding = !self.elytra_gliding;
                         }
                     }
                     VK_W => {
@@ -738,13 +850,20 @@ impl<P: Platform> Game<P> {
     }
 
     fn close_ui(&mut self) {
-        // return crafting grid contents
+        // return crafting grid / enchant / anvil contents
         for i in 0..GRID {
             let st = self.craft_grid[i];
             if !st.is_empty() {
                 let left = self.player.add(st.id, st.count);
                 if left > 0 { self.drops.push(Drop::new(self.player.x, self.player.y + 1.0, self.player.z, st.id)); }
                 self.craft_grid[i] = Stack::EMPTY;
+            }
+        }
+        for s in self.enchant_slots.iter_mut().chain(self.anvil_slots.iter_mut()) {
+            if !s.is_empty() {
+                let left = self.player.add(s.id, s.count);
+                if left > 0 { self.drops.push(Drop::new(self.player.x, self.player.y + 1.0, self.player.z, s.id)); }
+                *s = Stack::EMPTY;
             }
         }
         if !self.cursor.is_empty() {
@@ -853,6 +972,7 @@ impl<P: Platform> Game<P> {
             0 => &mut self.craft_grid[idx],
             1 => &mut self.player.store[idx],
             2 => &mut self.player.hot[idx],
+            4 => if idx < 4 { &mut self.player.armor[idx] } else { &mut self.player.offhand },
             _ => &mut self.cursor,
         }
     }
@@ -1075,6 +1195,21 @@ impl<P: Platform> Game<P> {
             self.fill_recipe(self.recipe_sel);
             return;
         }
+        // armor & offhand
+        for i in 0..4 {
+            let (x, y, w, h) = render::armor_slot_rect(i);
+            if mx >= x && mx < x + w && my >= y && my < y + h {
+                if self.cursor.is_empty() || items::armor_slot(self.cursor.id) == Some(i) {
+                    self.slot_click(right, 4, i);
+                }
+                return;
+            }
+        }
+        let (ox, oy, ow, oh) = render::offhand_slot_rect();
+        if mx >= ox && mx < ox + ow && my >= oy && my < oy + oh {
+            self.slot_click(right, 4, 4);
+            return;
+        }
         // storage
         for i in 0..STORE {
             let (x, y, w, h) = render::inv_slot_rect(i);
@@ -1090,6 +1225,225 @@ impl<P: Platform> Game<P> {
                 self.slot_click(right, 2, i);
                 return;
             }
+        }
+    }
+
+    fn swap_slot_with_cursor(slot: &mut Stack, cursor: &mut Stack, right: bool) {
+        if right {
+            if cursor.is_empty() && !slot.is_empty() {
+                let half = (slot.count + 1) / 2;
+                *cursor = Stack::new(slot.id, half);
+                slot.count -= half;
+                if slot.count == 0 { *slot = Stack::EMPTY; }
+            } else if !cursor.is_empty() && (slot.is_empty() || (slot.id == cursor.id && slot.count < 64)) {
+                if slot.is_empty() { *slot = Stack::new(cursor.id, 1); } else { slot.count += 1; }
+                cursor.count -= 1;
+                if cursor.count == 0 { *cursor = Stack::EMPTY; }
+            }
+        } else if cursor.is_empty() {
+            if !slot.is_empty() { *cursor = *slot; *slot = Stack::EMPTY; }
+        } else if slot.is_empty() {
+            *slot = *cursor; *cursor = Stack::EMPTY;
+        } else if slot.id == cursor.id {
+            let put = (64 - slot.count).min(cursor.count);
+            slot.count += put; cursor.count -= put;
+            if cursor.count == 0 { *cursor = Stack::EMPTY; }
+        } else {
+            std::mem::swap(slot, cursor);
+        }
+    }
+
+    fn click_enchant(&mut self, right: bool) {
+        let (mx, my) = (self.mouse_x, self.mouse_y);
+        if mx >= 94 && mx < 94 + render::SLOT_PX && my >= 48 && my < 48 + render::SLOT_PX {
+            Self::swap_slot_with_cursor(&mut self.enchant_slots[0], &mut self.cursor, right);
+            self.plat.play(Sfx::Click);
+            return;
+        }
+        if mx >= 126 && mx < 126 + render::SLOT_PX && my >= 48 && my < 48 + render::SLOT_PX {
+            if self.cursor.is_empty() || self.cursor.id == items::LAPIS_LAZULI {
+                Self::swap_slot_with_cursor(&mut self.enchant_slots[1], &mut self.cursor, right);
+                self.plat.play(Sfx::Click);
+            }
+            return;
+        }
+        let reqs = [(1u32, 1u8), (3u32, 2u8), (5u32, 3u8)];
+        for (i, &(req, tier)) in reqs.iter().enumerate() {
+            let (bx, by, bw, bh) = (170, 36 + i as i32 * 26, 224, 22);
+            if mx >= bx && mx < bx + bw && my >= by && my < by + bh {
+                if !self.enchant_slots[0].is_empty() && !self.enchant_slots[1].is_empty() && self.player.level >= req {
+                    let id = self.enchant_slots[0].id;
+                    self.player.level -= req;
+                    self.enchant_slots[1].count -= 1;
+                    if self.enchant_slots[1].count == 0 { self.enchant_slots[1] = Stack::EMPTY; }
+                    let cur = self.player.enchants.get(&id).copied().unwrap_or(0);
+                    self.player.enchants.insert(id, cur.max(tier));
+                    self.message = format!("Enchanted {} (Tier {})!", items::name(id), tier);
+                    self.msg_timer = 3.0;
+                    self.plat.play(Sfx::LevelUp);
+                }
+                return;
+            }
+        }
+        for i in 0..HOT {
+            let (x, y, w, h) = render::hot_slot_rect(i);
+            if mx >= x && mx < x + w && my >= y && my < y + h {
+                self.slot_click(right, 2, i);
+                return;
+            }
+        }
+    }
+
+    fn anvil_output(&self) -> Stack {
+        let l = self.anvil_slots[0];
+        let r = self.anvil_slots[1];
+        if l.is_empty() || r.is_empty() { return Stack::EMPTY; }
+        if l.id == r.id { return Stack::new(l.id, 1); }
+        if r.id == items::ENCHANTED_BOOK || r.id == items::DIAMOND || r.id == items::NETHERITE_INGOT {
+            if r.id == items::NETHERITE_INGOT && l.id == items::DIAMOND_SWORD { return Stack::new(items::DIAMOND_SWORD, 1); }
+            if r.id == items::NETHERITE_INGOT && l.id == items::DIAMOND_HELMET { return Stack::new(items::NETHERITE_HELMET, 1); }
+            if r.id == items::NETHERITE_INGOT && l.id == items::DIAMOND_CHESTPLATE { return Stack::new(items::NETHERITE_CHESTPLATE, 1); }
+            if r.id == items::NETHERITE_INGOT && l.id == items::DIAMOND_LEGGINGS { return Stack::new(items::NETHERITE_LEGGINGS, 1); }
+            if r.id == items::NETHERITE_INGOT && l.id == items::DIAMOND_BOOTS { return Stack::new(items::NETHERITE_BOOTS, 1); }
+            return Stack::new(l.id, 1);
+        }
+        Stack::EMPTY
+    }
+
+    fn click_anvil(&mut self, right: bool) {
+        let (mx, my) = (self.mouse_x, self.mouse_y);
+        if mx >= 104 && mx < 104 + render::SLOT_PX && my >= 62 && my < 62 + render::SLOT_PX {
+            Self::swap_slot_with_cursor(&mut self.anvil_slots[0], &mut self.cursor, right);
+            self.plat.play(Sfx::Click);
+            return;
+        }
+        if mx >= 160 && mx < 160 + render::SLOT_PX && my >= 62 && my < 62 + render::SLOT_PX {
+            Self::swap_slot_with_cursor(&mut self.anvil_slots[1], &mut self.cursor, right);
+            self.plat.play(Sfx::Click);
+            return;
+        }
+        if mx >= 224 && mx < 224 + render::SLOT_PX + 4 && my >= 60 && my < 60 + render::SLOT_PX + 4 {
+            let out = self.anvil_output();
+            if !out.is_empty() && self.cursor.is_empty() && self.player.level >= 2 {
+                self.player.level -= 2;
+                let cur = self.player.enchants.get(&out.id).copied().unwrap_or(0);
+                self.player.enchants.insert(out.id, (cur + 1).min(3));
+                self.anvil_slots[0] = Stack::EMPTY;
+                self.anvil_slots[1].count -= 1;
+                if self.anvil_slots[1].count == 0 { self.anvil_slots[1] = Stack::EMPTY; }
+                self.cursor = out;
+                self.plat.play(Sfx::LevelUp);
+            }
+            return;
+        }
+        for i in 0..HOT {
+            let (x, y, w, h) = render::hot_slot_rect(i);
+            if mx >= x && mx < x + w && my >= y && my < y + h {
+                self.slot_click(right, 2, i);
+                return;
+            }
+        }
+    }
+
+    fn click_brewing(&mut self, right: bool) {
+        let (mx, my) = (self.mouse_x, self.mouse_y);
+        let pos = self.ui_block;
+        self.brewing_stands.entry(pos).or_insert_with(BrewingStand::new);
+        if mx >= 180 && mx < 180 + render::SLOT_PX && my >= 36 && my < 36 + render::SLOT_PX {
+            let bs = self.brewing_stands.get_mut(&pos).unwrap();
+            Self::swap_slot_with_cursor(&mut bs.ing, &mut self.cursor, right);
+            self.plat.play(Sfx::Click);
+            return;
+        }
+        if mx >= 140 && mx < 140 + render::SLOT_PX && my >= 86 && my < 86 + render::SLOT_PX {
+            let bs = self.brewing_stands.get_mut(&pos).unwrap();
+            Self::swap_slot_with_cursor(&mut bs.bottle, &mut self.cursor, right);
+            self.plat.play(Sfx::Click);
+            return;
+        }
+        if mx >= 220 && mx < 220 + render::SLOT_PX && my >= 86 && my < 86 + render::SLOT_PX {
+            let bs = self.brewing_stands.get_mut(&pos).unwrap();
+            if !bs.output.is_empty() && self.cursor.is_empty() {
+                self.cursor = bs.output;
+                bs.output = Stack::EMPTY;
+                self.plat.play(Sfx::Click);
+            }
+            return;
+        }
+        for i in 0..HOT {
+            let (x, y, w, h) = render::hot_slot_rect(i);
+            if mx >= x && mx < x + w && my >= y && my < y + h {
+                self.slot_click(right, 2, i);
+                return;
+            }
+        }
+    }
+
+    fn villager_trades() -> [(u16, u32, u16, u32); 5] {
+        [
+            (items::EMERALD, 1, items::BREAD, 6),
+            (items::EMERALD, 1, items::ARROW, 16),
+            (items::EMERALD, 3, items::GOLDEN_APPLE, 1),
+            (items::EMERALD, 4, items::ENCHANTED_BOOK, 1),
+            (items::EMERALD, 5, items::EYE_OF_ENDER, 1),
+        ]
+    }
+
+    fn click_trade(&mut self) {
+        let (mx, my) = (self.mouse_x, self.mouse_y);
+        let trades = Self::villager_trades();
+        for (i, &(cost_id, cost_n, out_id, out_n)) in trades.iter().enumerate() {
+            let by = 30 + i as i32 * 30;
+            if mx >= 82 && mx < 398 && my >= by && my < by + 26 {
+                let have: u32 = self.player.hot.iter().chain(self.player.store.iter())
+                    .filter(|s| s.id == cost_id).map(|s| s.count).sum();
+                if have >= cost_n {
+                    for _ in 0..cost_n { self.consume_item(cost_id); }
+                    let left = self.player.add(out_id, out_n);
+                    if left > 0 { self.drops.push(Drop::new(self.player.x, self.player.y + 1.0, self.player.z, out_id)); }
+                    self.player.add_xp(3);
+                    self.plat.play(Sfx::LevelUp);
+                } else {
+                    self.message = format!("Need {} {} to trade!", cost_n, items::name(cost_id));
+                    self.msg_timer = 2.0;
+                    self.plat.play(Sfx::Click);
+                }
+                return;
+            }
+        }
+    }
+
+    fn respawn_player(&mut self) {
+        self.player.hp = 20.0;
+        self.player.hunger = 20.0;
+        self.player.air = 10.0;
+        self.player.burn = 0.0;
+        self.potion_fire = 0.0;
+        self.potion_speed = 0.0;
+        self.world.set_dim(Dimension::Overworld);
+        self.player.x = self.spawn.0;
+        self.player.y = self.spawn.1;
+        self.player.z = self.spawn.2;
+        self.fall_y = self.spawn.1;
+        self.player.vy = 0.0;
+        self.grace = 6.0;
+        self.ui = Ui::None;
+        self.plat.set_capture(true);
+        self.plat.set_cursor(false);
+        self.plat.play(Sfx::LevelUp);
+    }
+
+    fn click_death(&mut self) {
+        let (mx, my) = (self.mouse_x, self.mouse_y);
+        let bx = (render::W as i32 - 200) / 2;
+        if mx >= bx && mx < bx + 200 && my >= 128 && my < 150 {
+            self.respawn_player();
+        } else if mx >= bx && mx < bx + 200 && my >= 158 && my < 180 {
+            self.respawn_player();
+            self.save_world();
+            self.screen = Screen::Title;
+            self.plat.set_capture(false);
+            self.plat.set_cursor(true);
         }
     }
 
@@ -1265,6 +1619,7 @@ impl<P: Platform> Game<P> {
         }
         if let Some((i, _)) = best {
             let held_id = self.player.held().id;
+            let ench = self.player.enchants.get(&held_id).copied().unwrap_or(0) as f32;
             let dmg = match held_id {
                 items::DIAMOND_SWORD => 7.0,
                 items::IRON_SWORD => 6.0,
@@ -1273,9 +1628,10 @@ impl<P: Platform> Game<P> {
                 items::IRON_AXE => 5.0,
                 items::WOOD_AXE => 3.5,
                 _ => 1.0 + items::tool_tier(held_id) as f32 * 0.6,
-            };
+            } + ench * 1.5;
             self.mobs[i].hp -= dmg;
             self.mobs[i].hurt = 0.4;
+            self.damage_held_tool();
             self.plat.play(Sfx::Hurt);
             if self.mobs[i].hp <= 0.0 {
                 let m = self.mobs.remove(i);
@@ -1286,6 +1642,8 @@ impl<P: Platform> Game<P> {
                         self.drops.push(Drop::new(m.x + 0.2, m.y + 0.4, m.z, items::LEATHER));
                     }
                 }
+                let xp_gain = if m.kind == MobKind::EnderDragon { 500 } else if m.kind.hostile() { 5 } else { 2 };
+                self.player.add_xp(xp_gain);
                 self.message = format!("Defeated {}", m.kind.name());
                 self.msg_timer = 1.5;
                 self.plat.play(Sfx::LevelUp);
@@ -1293,6 +1651,38 @@ impl<P: Platform> Game<P> {
             return;
         }
         self.mine_step(0.05);
+    }
+
+    fn damage_held_tool(&mut self) {
+        if self.mode != GameMode::Survival { return; }
+        let s = self.player.hot[self.player.selected];
+        if items::tool_tier(s.id) == 0 && !items::is_hoe(s.id) && s.id != items::SHEARS && s.id != items::BOW { return; }
+        let ench = self.player.enchants.get(&s.id).copied().unwrap_or(0);
+        if ench >= 3 && self.tick % 2 == 0 { return; }
+        let max_dur = match items::tool_tier(s.id) { 4 => 600, 3 => 180, 2 => 90, _ => 45 };
+        self.tool_dur[self.player.selected] += 1;
+        if self.tool_dur[self.player.selected] >= max_dur {
+            self.tool_dur[self.player.selected] = 0;
+            self.player.hot[self.player.selected] = Stack::EMPTY;
+            self.plat.play(Sfx::Break);
+        }
+    }
+
+    fn grow_oak_tree(&mut self, x: i32, y: i32, z: i32) {
+        let h = 4 + (self.tick as i32 % 2);
+        for ly in (y + h - 2)..=(y + h + 1) {
+            let r = if ly >= y + h { 1 } else { 2 };
+            for lx in x - r..=x + r {
+                for lz in z - r..=z + r {
+                    if (lx - x).abs() + (lz - z).abs() <= r + 1 && self.world.get(lx, ly, lz) == world::AIR {
+                        self.world.set(lx, ly, lz, world::LEAVES);
+                    }
+                }
+            }
+        }
+        for ty in y..(y + h) {
+            self.world.set(x, ty, z, world::LOG);
+        }
     }
 
     fn mine_step(&mut self, speed_mul: f32) {
@@ -1331,7 +1721,8 @@ impl<P: Platform> Game<P> {
         let is_axe = matches!(held_id, items::WOOD_AXE | items::IRON_AXE | items::DIAMOND_AXE);
         let is_shovel = matches!(held_id, items::WOOD_SHOVEL | items::IRON_SHOVEL);
 
-        let tool_bonus = if need > 0 {
+        let ench = self.player.enchants.get(&held_id).copied().unwrap_or(0) as f32;
+        let tool_bonus = (if need > 0 {
             if has_pick { 1.5 + items::pickaxe_tier(held_id) as f32 * 1.1 } else { 0.22 }
         } else if is_wood && is_axe {
             1.6 + items::tool_tier(held_id) as f32 * 0.9
@@ -1339,11 +1730,11 @@ impl<P: Platform> Game<P> {
             1.8 + items::tool_tier(held_id) as f32 * 1.0
         } else {
             1.0
-        };
+        }) * (1.0 + ench * 0.35);
         let hardness = match h.block {
-            world::OBSIDIAN | world::CRYING_OBSIDIAN | world::ANCIENT_DEBRIS => 28.0,
-            world::IRON_BLOCK | world::GOLD_BLOCK | world::DIAMOND_BLOCK | world::EMERALD_BLOCK => 5.0,
-            world::COAL_ORE | world::IRON_ORE | world::GOLD_ORE | world::DIAMOND_ORE
+            world::OBSIDIAN | world::CRYING_OBSIDIAN | world::ANCIENT_DEBRIS | world::BEACON => 28.0,
+            world::IRON_BLOCK | world::GOLD_BLOCK | world::DIAMOND_BLOCK | world::EMERALD_BLOCK | world::LAPIS_BLOCK | world::SPAWNER => 5.0,
+            world::COAL_ORE | world::IRON_ORE | world::GOLD_ORE | world::DIAMOND_ORE | world::LAPIS_ORE
                 | world::REDSTONE_ORE | world::EMERALD_ORE | world::NETHER_QUARTZ_ORE => 3.0,
             world::END_STONE => 3.0,
             world::NETHERRACK | world::CRIMSON_NYLIUM | world::WARPED_NYLIUM => 0.45,
@@ -1354,14 +1745,15 @@ impl<P: Platform> Game<P> {
                 | world::DARK_LEAVES | world::CRIMSON_WART | world::WARPED_WART
                 | world::GLASS | world::WOOL_WHITE | world::WOOL_RED | world::WOOL_BLUE
                 | world::WOOL_GREEN | world::WOOL_YELLOW => 0.30,
-            world::TALL_GRASS | world::FLOWER_RED | world::FLOWER_YELLOW
-                | world::BROWN_MUSHROOM | world::RED_MUSHROOM | world::TORCH | world::WHEAT => 0.08,
+            world::TALL_GRASS | world::FLOWER_RED | world::FLOWER_YELLOW | world::SAPLING
+                | world::BROWN_MUSHROOM | world::RED_MUSHROOM | world::TORCH | world::WHEAT | world::NETHER_WART => 0.08,
             _ => 0.9,
         };
         let mut prog = match self.mining { Some((p, v)) if p == pos => v, _ => 0.0 };
         prog += speed_mul * tool_bonus / hardness;
         if prog >= 1.0 {
             self.mining = None;
+            self.damage_held_tool();
             self.break_block(h.x, h.y, h.z, has_pick);
         } else {
             self.mining = Some((pos, prog));
@@ -1375,15 +1767,20 @@ impl<P: Platform> Game<P> {
         self.net.send(format!("BLOCK|{}|{}|{}|0", x, y, z));
         self.plat.play(Sfx::Break);
         if harvest_ok {
-            let drop = block_drop(b, self.tick);
+            let mut drop = block_drop(b, self.tick);
+            let held_id = self.player.held().id;
+            let fortune = self.player.enchants.get(&held_id).copied().unwrap_or(0);
+            if fortune >= 2 && matches!(b, world::COAL_ORE | world::DIAMOND_ORE | world::EMERALD_ORE | world::LAPIS_ORE | world::REDSTONE_ORE | world::NETHER_QUARTZ_ORE) {
+                drop.count += 1;
+            }
             if !drop.is_empty() {
                 let left = self.player.add(drop.id, drop.count);
                 if left > 0 { self.drops.push(Drop::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5, drop.id)); }
             }
             let xp_gain = match b {
                 world::COAL_ORE => 1,
-                world::REDSTONE_ORE | world::NETHER_QUARTZ_ORE => 2,
-                world::DIAMOND_ORE | world::EMERALD_ORE => 4,
+                world::REDSTONE_ORE | world::NETHER_QUARTZ_ORE | world::LAPIS_ORE => 2,
+                world::DIAMOND_ORE | world::EMERALD_ORE | world::SPAWNER => 4,
                 _ => 0,
             };
             if xp_gain > 0 { self.player.add_xp(xp_gain); }
@@ -1392,10 +1789,12 @@ impl<P: Platform> Game<P> {
             self.msg_timer = 1.8;
         }
         let above = self.world.get(x, y + 1, z);
-        if matches!(above, world::TORCH | world::REDSTONE_TORCH | world::FLOWER_RED | world::FLOWER_YELLOW | world::TALL_GRASS) {
+        if matches!(above, world::TORCH | world::REDSTONE_TORCH | world::FLOWER_RED | world::FLOWER_YELLOW | world::TALL_GRASS | world::SAPLING | world::NETHER_WART) {
             self.world.set(x, y + 1, z, world::AIR);
         }
         self.furnaces.remove(&(x, y, z));
+        self.brewing_stands.remove(&(x, y, z));
+        self.buttons.remove(&(x, y, z));
         self.levers.remove(&(x, y, z));
         self.redstone_sources.remove(&(x, y, z));
         self.chests.remove(&(self.world.dim.idx() as u8, x, y, z));
@@ -1433,6 +1832,145 @@ impl<P: Platform> Game<P> {
                         self.plat.play(Sfx::Pickup);
                         return;
                     }
+                }
+            }
+        }
+
+        // Vehicle mounting / dismounting
+        if self.riding.is_some() && !self.keys.contains(&plat::VK_SHIFT) {
+            self.riding = None;
+            self.player.vy = 4.0;
+            self.plat.play(Sfx::Click);
+            return;
+        }
+        for (vi, v) in self.vehicles.iter().enumerate() {
+            let ox = v.x - ex; let oy = (v.y + 0.4) - ey; let oz = v.z - ez;
+            let proj = ox * dx + oy * dy + oz * dz;
+            if proj > 0.0 && proj < 4.5 {
+                let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
+                if cx * cx + cy * cy + cz * cz < 0.9 * 0.9 {
+                    self.riding = Some(vi);
+                    self.message = String::from("Mounted! Press Space to dismount");
+                    self.msg_timer = 2.0;
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
+            }
+        }
+
+        // Mob interactions: Villager Trade, Wolf Tame/Sit, Passive Breeding
+        let mut spawn_baby: Option<(MobKind, f32, f32, f32)> = None;
+        for m in self.mobs.iter_mut() {
+            let ox = m.x - ex; let oy = (m.y + 0.7) - ey; let oz = m.z - ez;
+            let proj = ox * dx + oy * dy + oz * dz;
+            if proj <= 0.0 || proj > 4.5 { continue; }
+            let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
+            if cx * cx + cy * cy + cz * cz >= 0.85 * 0.85 { continue; }
+            if m.kind == MobKind::Villager {
+                self.ui = Ui::Trade;
+                self.plat.set_capture(false);
+                self.plat.set_cursor(true);
+                self.plat.play(Sfx::Click);
+                return;
+            }
+            if m.kind == MobKind::Wolf {
+                if !m.tamed && held.id == items::BONE {
+                    m.tamed = true;
+                    m.hp = 20.0;
+                    if self.mode == GameMode::Survival {
+                        let s = &mut self.player.hot[self.player.selected];
+                        s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+                    }
+                    self.message = String::from("Tamed Wolf!");
+                    self.msg_timer = 2.5;
+                    self.plat.play(Sfx::LevelUp);
+                    return;
+                } else if m.tamed {
+                    m.sitting = !m.sitting;
+                    self.message = String::from(if m.sitting { "Wolf sitting" } else { "Wolf following" });
+                    self.msg_timer = 1.5;
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
+            }
+            if matches!(m.kind, MobKind::Cow | MobKind::Sheep | MobKind::Pig | MobKind::Chicken)
+                && matches!(held.id, world::WHEAT | items::CARROT) && m.breed_cd <= 0.0
+            {
+                m.breed_cd = 20.0;
+                if self.mode == GameMode::Survival {
+                    let s = &mut self.player.hot[self.player.selected];
+                    s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+                }
+                spawn_baby = Some((m.kind, m.x + 0.5, m.y, m.z + 0.5));
+                break;
+            }
+        }
+        if let Some((kind, bx, by, bz)) = spawn_baby {
+            self.mobs.push(Mob::spawn(kind, bx, by, bz));
+            self.player.add_xp(3);
+            self.plat.play(Sfx::LevelUp);
+            return;
+        }
+
+        // Firework boost while Elytra gliding, Potions, XP Bottle, Egg
+        if held.id == items::FIREWORK && self.elytra_gliding {
+            self.player.vy = (self.player.vy + dy * 12.0 + 4.0).clamp(-10.0, 14.0);
+            self.player.x += dx * 2.5;
+            self.player.z += dz * 2.5;
+            if self.mode == GameMode::Survival {
+                let s = &mut self.player.hot[self.player.selected];
+                s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+            }
+            self.plat.play(Sfx::Explode);
+            return;
+        }
+        if matches!(held.id, items::POTION_HEAL | items::POTION_FIRE | items::POTION_SPEED) {
+            match held.id {
+                items::POTION_HEAL => { self.player.hp = (self.player.hp + 8.0).min(20.0); self.message = String::from("Potion of Healing (+4 hearts)"); }
+                items::POTION_FIRE => { self.potion_fire = 90.0; self.player.burn = 0.0; self.message = String::from("Fire Resistance (90s)"); }
+                _ => { self.potion_speed = 90.0; self.message = String::from("Swiftness (90s)"); }
+            }
+            self.msg_timer = 2.5;
+            if self.mode == GameMode::Survival {
+                let s = &mut self.player.hot[self.player.selected];
+                if s.count <= 1 { *s = Stack::new(items::GLASS_BOTTLE, 1); }
+                else { s.count -= 1; self.player.add(items::GLASS_BOTTLE, 1); }
+            }
+            self.plat.play(Sfx::LevelUp);
+            return;
+        }
+        if held.id == items::XP_BOTTLE {
+            self.player.add_xp(10);
+            if self.mode == GameMode::Survival {
+                let s = &mut self.player.hot[self.player.selected];
+                s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+            }
+            self.plat.play(Sfx::LevelUp);
+            return;
+        }
+        if held.id == items::EGG {
+            if self.tick % 4 == 0 {
+                self.mobs.push(Mob::spawn(MobKind::Chicken, ex + dx * 2.0, ey, ez + dz * 2.0));
+            }
+            if self.mode == GameMode::Survival {
+                let s = &mut self.player.hot[self.player.selected];
+                s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+            }
+            self.plat.play(Sfx::Click);
+            return;
+        }
+
+        // Boat placement on Water
+        if held.id == items::BOAT {
+            if let Some(lh) = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, REACH, true) {
+                if lh.block == world::WATER {
+                    self.vehicles.push(Vehicle { is_boat: true, x: lh.x as f32 + 0.5, y: lh.y as f32 + 0.65, z: lh.z as f32 + 0.5, yaw: self.player.yaw });
+                    if self.mode == GameMode::Survival {
+                        let s = &mut self.player.hot[self.player.selected];
+                        s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+                    }
+                    self.plat.play(Sfx::Place);
+                    return;
                 }
             }
         }
@@ -1501,6 +2039,31 @@ impl<P: Platform> Game<P> {
                     self.open_chest(target);
                     return;
                 }
+                world::ENCHANTING => {
+                    self.ui = Ui::Enchant;
+                    self.ui_block = target;
+                    self.plat.set_capture(false);
+                    self.plat.set_cursor(true);
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
+                world::ANVIL => {
+                    self.ui = Ui::Anvil;
+                    self.ui_block = target;
+                    self.plat.set_capture(false);
+                    self.plat.set_cursor(true);
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
+                world::BREWING_STAND => {
+                    self.ui = Ui::Brewing;
+                    self.ui_block = target;
+                    self.brewing_stands.entry(target).or_insert_with(BrewingStand::new);
+                    self.plat.set_capture(false);
+                    self.plat.set_cursor(true);
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
                 world::DOOR => {
                     self.world.set(h.x, h.y, h.z, world::DOOR_OPEN);
                     self.plat.play(Sfx::Click);
@@ -1508,6 +2071,19 @@ impl<P: Platform> Game<P> {
                 }
                 world::DOOR_OPEN => {
                     self.world.set(h.x, h.y, h.z, world::DOOR);
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
+                world::IRON_DOOR | world::IRON_DOOR_OPEN => {
+                    self.message = String::from("Iron Doors open with Redstone power!");
+                    self.msg_timer = 1.8;
+                    self.plat.play(Sfx::Click);
+                    return;
+                }
+                world::BUTTON => {
+                    self.buttons.insert(target, 1.2);
+                    self.redstone_sources.insert(target);
+                    self.redstone_dirty = true;
                     self.plat.play(Sfx::Click);
                     return;
                 }
@@ -1551,6 +2127,42 @@ impl<P: Platform> Game<P> {
         }
 
         if held.is_empty() { return; }
+        // Hoe -> till Dirt/Grass into Farmland
+        if items::is_hoe(held.id) && matches!(h.block, world::DIRT | world::GRASS | world::PODZOL) {
+            self.world.set(h.x, h.y, h.z, world::FARMLAND);
+            self.damage_held_tool();
+            self.plat.play(Sfx::Place);
+            return;
+        }
+        // Bone Meal -> grow Sapling into Oak Tree, or sprout grass/flowers
+        if held.id == items::BONE_MEAL {
+            let used = if h.block == world::SAPLING {
+                self.grow_oak_tree(h.x, h.y, h.z);
+                true
+            } else if h.block == world::GRASS && self.world.get(h.x, h.y + 1, h.z) == world::AIR {
+                let plant = if self.tick % 3 == 0 { world::FLOWER_RED } else if self.tick % 3 == 1 { world::FLOWER_YELLOW } else { world::TALL_GRASS };
+                self.world.set(h.x, h.y + 1, h.z, plant);
+                true
+            } else { false };
+            if used {
+                if self.mode == GameMode::Survival {
+                    let s = &mut self.player.hot[self.player.selected];
+                    s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+                }
+                self.plat.play(Sfx::LevelUp);
+                return;
+            }
+        }
+        // Minecart placement on Rail
+        if held.id == items::MINECART && h.block == world::RAIL {
+            self.vehicles.push(Vehicle { is_boat: false, x: h.x as f32 + 0.5, y: h.y as f32 + 0.15, z: h.z as f32 + 0.5, yaw: self.player.yaw });
+            if self.mode == GameMode::Survival {
+                let s = &mut self.player.hot[self.player.selected];
+                s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+            }
+            self.plat.play(Sfx::Place);
+            return;
+        }
         // Water Bucket / Lava Bucket placement
         if held.id == items::WATER_BUCKET || held.id == items::LAVA_BUCKET {
             let px = h.x + h.nx;
@@ -1707,7 +2319,8 @@ impl<P: Platform> Game<P> {
             }
             self.plat.play(Sfx::Place);
             if held.id == world::FURNACE { self.furnaces.insert((px, py, pz), Furnace::new()); }
-            if matches!(held.id, world::REDSTONE_TORCH | world::LEVER | world::PRESSURE_PLATE) {
+            if held.id == world::BREWING_STAND { self.brewing_stands.insert((px, py, pz), BrewingStand::new()); }
+            if matches!(held.id, world::REDSTONE_TORCH | world::LEVER | world::PRESSURE_PLATE | world::BUTTON | world::REPEATER | world::COMPARATOR) {
                 self.redstone_sources.insert((px, py, pz));
             }
             self.redstone_dirty = true;
@@ -1902,6 +2515,9 @@ impl<P: Platform> Game<P> {
                 world::LEVER => {
                     if self.levers.contains(&(x, y, z)) { queue.push(((x, y, z), 15)); }
                 }
+                world::BUTTON => {
+                    if self.buttons.contains_key(&(x, y, z)) { queue.push(((x, y, z), 15)); }
+                }
                 world::PRESSURE_PLATE => {
                     let on = (self.player.x - (x as f32 + 0.5)).abs() < 0.85
                         && (self.player.z - (z as f32 + 0.5)).abs() < 0.85
@@ -1909,10 +2525,13 @@ impl<P: Platform> Game<P> {
                     if on { self.plates.insert((x, y, z)); queue.push(((x, y, z), 15)); }
                     else { self.plates.remove(&(x, y, z)); }
                 }
+                world::REPEATER | world::COMPARATOR => {}
                 _ => { self.redstone_sources.remove(&(x, y, z)); }
             }
         }
         let mut qi = 0;
+        let mut door_checks: HashSet<(i32, i32, i32)> = HashSet::new();
+        let mut piston_checks: HashSet<(i32, i32, i32)> = HashSet::new();
         while qi < queue.len() {
             let ((x, y, z), p) = queue[qi];
             qi += 1;
@@ -1922,18 +2541,78 @@ impl<P: Platform> Game<P> {
                 let n = (x + dx, y + dy, z + dz);
                 let nb = self.world.get(n.0, n.1, n.2);
                 if nb == world::LAMP { self.lamps.insert(n); }
+                if matches!(nb, world::DOOR | world::DOOR_OPEN | world::IRON_DOOR | world::IRON_DOOR_OPEN) {
+                    door_checks.insert(n);
+                }
+                if matches!(nb, world::PISTON | world::STICKY_PISTON) {
+                    piston_checks.insert(n);
+                }
                 if nb == world::TNT {
                     self.world.set(n.0, n.1, n.2, world::AIR);
                     self.tnt_primed.push((n.0 as f32 + 0.5, n.1 as f32, n.2 as f32 + 0.5, 3.5));
                     self.plat.play(Sfx::Furnace);
                 }
-                if nb == world::REDSTONE_DUST && p > 1 {
+                if matches!(nb, world::REPEATER | world::COMPARATOR) && p > 0 {
+                    if self.power.get(&n).map_or(true, |v| *v < 15) { queue.push((n, 15)); }
+                } else if nb == world::REDSTONE_DUST && p > 1 {
                     let np = p - 1;
                     if self.power.get(&n).map_or(true, |v| *v < np) { queue.push((n, np)); }
                 }
             }
         }
+        // Automatically open/close powered Doors & Iron Doors
+        for &(x, y, z) in &door_checks {
+            let b = self.world.get(x, y, z);
+            if b == world::DOOR { self.world.set(x, y, z, world::DOOR_OPEN); }
+            else if b == world::IRON_DOOR { self.world.set(x, y, z, world::IRON_DOOR_OPEN); }
+        }
+        // Pistons extend upward (+Y) when powered, and Sticky Pistons retract on unpower
+        for &(x, y, z) in &piston_checks {
+            if !self.piston_ext.contains(&(x, y, z)) {
+                let above = self.world.get(x, y + 1, z);
+                let above2 = self.world.get(x, y + 2, z);
+                if above != world::AIR && above != world::BEDROCK && above2 == world::AIR {
+                    self.world.set(x, y + 2, z, above);
+                    self.world.set(x, y + 1, z, world::AIR);
+                    self.piston_ext.insert((x, y, z));
+                    self.plat.play(Sfx::Place);
+                }
+            }
+        }
+        let prev_ext: Vec<(i32, i32, i32)> = self.piston_ext.iter().copied().collect();
+        for pos in prev_ext {
+            if !piston_checks.contains(&pos) {
+                self.piston_ext.remove(&pos);
+                if self.world.get(pos.0, pos.1, pos.2) == world::STICKY_PISTON {
+                    let above = self.world.get(pos.0, pos.1 + 1, pos.2);
+                    let above2 = self.world.get(pos.0, pos.1 + 2, pos.2);
+                    if above == world::AIR && above2 != world::AIR && above2 != world::BEDROCK {
+                        self.world.set(pos.0, pos.1 + 1, pos.2, above2);
+                        self.world.set(pos.0, pos.1 + 2, pos.2, world::AIR);
+                        self.plat.play(Sfx::Place);
+                    }
+                }
+            }
+        }
         self.world.lit = self.lamps.clone();
+    }
+
+    fn is_shield_blocking(&self) -> bool {
+        self.mouse_right && (self.player.held().id == items::SHIELD || self.player.offhand.id == items::SHIELD)
+    }
+
+    fn damage_player(&mut self, raw: f32, is_fire: bool) {
+        if self.mode != GameMode::Survival || self.grace > 0.0 { return; }
+        if is_fire && self.potion_fire > 0.0 { return; }
+        let mut dmg = raw;
+        if !is_fire {
+            let ap = self.player.armor_points() as f32;
+            dmg *= 1.0 - (ap * 0.04).min(0.8);
+            if self.is_shield_blocking() { dmg *= 0.25; }
+        }
+        self.player.hp -= dmg.max(0.5);
+        self.hurt_flash = 0.45;
+        self.plat.play(Sfx::Hurt);
     }
 
     fn explode(&mut self, cx: f32, cy: f32, cz: f32, radius: f32) {
@@ -1968,9 +2647,7 @@ impl<P: Platform> Game<P> {
         let blast_reach = radius * 1.8;
         if self.mode == GameMode::Survival && pd < blast_reach {
             let dmg = ((1.0 - pd / blast_reach) * 14.0).max(1.0);
-            self.player.hp -= dmg;
-            self.hurt_flash = 0.6;
-            self.plat.play(Sfx::Hurt);
+            self.damage_player(dmg, false);
         }
         // damage mobs
         for m in self.mobs.iter_mut() {
@@ -1993,6 +2670,17 @@ impl<P: Platform> Game<P> {
         self.hurt_flash = (self.hurt_flash - dt * 2.5).max(0.0);
         self.grace = (self.grace - dt).max(0.0);
         self.hurt_cd = (self.hurt_cd - dt).max(0.0);
+        self.potion_fire = (self.potion_fire - dt).max(0.0);
+        self.potion_speed = (self.potion_speed - dt).max(0.0);
+        let mut expired_btns = Vec::new();
+        for (pos, t) in self.buttons.iter_mut() {
+            *t -= dt;
+            if *t <= 0.0 { expired_btns.push(*pos); }
+        }
+        if !expired_btns.is_empty() {
+            for pos in expired_btns { self.buttons.remove(&pos); }
+            self.redstone_dirty = true;
+        }
         for l in self.chat_lines.iter_mut() { l.1 += dt; }
         self.time = (self.time + dt * 0.0016) % 1.0;
         let day = (self.time * std::f32::consts::TAU).sin() * 0.5 + 0.5;
@@ -2018,7 +2706,10 @@ impl<P: Platform> Game<P> {
             p.4 = (p.4 + dt * 0.6) % 6.283;
         }
 
-        let ui_open = self.ui == Ui::Inventory || self.ui == Ui::Creative || self.ui == Ui::Furnace || self.ui == Ui::Chest;
+        let ui_open = matches!(
+            self.ui,
+            Ui::Inventory | Ui::Creative | Ui::Furnace | Ui::Chest | Ui::Enchant | Ui::Anvil | Ui::Brewing | Ui::Trade | Ui::Death
+        );
         if !ui_open {
             let mut fwd: f32 = 0.0;
             let mut strafe: f32 = 0.0;
@@ -2033,7 +2724,32 @@ impl<P: Platform> Game<P> {
             let sprinting = (self.keys.contains(&plat::VK_CONTROL) || self.sprinting)
                 && !sneaking && fwd > 0.0 && (self.mode != GameMode::Survival || self.player.hunger > 6.0);
             let (sy, cy) = (self.player.yaw.sin(), self.player.yaw.cos());
-            if self.mode == GameMode::Spectator {
+            if let Some(vi) = self.riding {
+                if vi < self.vehicles.len() {
+                    let is_boat = self.vehicles[vi].is_boat;
+                    let vsp = if is_boat { 8.5 } else { 9.5 };
+                    let vx = (sy * fwd + cy * strafe) * vsp;
+                    let vz = (-cy * fwd + sy * strafe) * vsp;
+                    let nx = self.vehicles[vi].x + vx * dt;
+                    let nz = self.vehicles[vi].z + vz * dt;
+                    let vy_b = self.world.get(nx.floor() as i32, self.vehicles[vi].y.floor() as i32, nz.floor() as i32);
+                    let vy_below = self.world.get(nx.floor() as i32, (self.vehicles[vi].y - 0.5).floor() as i32, nz.floor() as i32);
+                    let can_move = if is_boat { vy_b == world::WATER || vy_below == world::WATER || !world::is_solid(vy_b) }
+                                   else { vy_b == world::RAIL || vy_below == world::RAIL || !world::is_solid(vy_b) };
+                    if can_move {
+                        self.vehicles[vi].x = nx;
+                        self.vehicles[vi].z = nz;
+                        if fwd.abs() + strafe.abs() > 0.05 { self.vehicles[vi].yaw = self.player.yaw; }
+                    }
+                    self.player.x = self.vehicles[vi].x;
+                    self.player.y = self.vehicles[vi].y + 0.35;
+                    self.player.z = self.vehicles[vi].z;
+                    self.player.vy = 0.0;
+                    self.fall_y = self.player.y;
+                } else {
+                    self.riding = None;
+                }
+            } else if self.mode == GameMode::Spectator {
                 let fly_sp = 9.0 * self.spec_speed * if sprinting { 1.6 } else { 1.0 };
                 let (fx, fy, fz) = self.look_dir();
                 self.player.x += (fx * fwd + cy * strafe) * fly_sp * dt;
@@ -2045,8 +2761,16 @@ impl<P: Platform> Game<P> {
                 self.player.vy = 0.0;
                 self.fall_y = self.player.y;
             } else {
-                let speed = if self.flying {
+                let feet_b = self.world.get(self.player.x.floor() as i32, (self.player.y + 0.2).floor() as i32, self.player.z.floor() as i32);
+                let head_b = self.world.get(self.player.x.floor() as i32, (self.player.y + 1.2).floor() as i32, self.player.z.floor() as i32);
+                let under_b = self.world.get(self.player.x.floor() as i32, (self.player.y - 0.15).floor() as i32, self.player.z.floor() as i32);
+                let on_climbable = matches!(feet_b, world::LADDER | world::VINE) || matches!(head_b, world::LADDER | world::VINE);
+                let in_cobweb = feet_b == world::COBWEB || head_b == world::COBWEB;
+
+                let mut speed = if self.flying {
                     if sprinting { 11.0 } else { 7.8 }
+                } else if self.elytra_gliding {
+                    14.0
                 } else if sneaking {
                     2.0
                 } else if sprinting {
@@ -2054,14 +2778,15 @@ impl<P: Platform> Game<P> {
                 } else {
                     4.3
                 };
+                if self.potion_speed > 0.0 { speed *= 1.35; }
+                if under_b == world::SOUL_SAND { speed *= 0.55; }
+                if under_b == world::ICE { speed *= 1.28; }
+                if in_cobweb { speed *= 0.25; }
+
                 let vx = (sy * fwd + cy * strafe) * speed;
                 let vz = (-cy * fwd + sy * strafe) * speed;
 
-                let in_water = self.world.get(
-                    self.player.x.floor() as i32,
-                    (self.player.y + 0.4).floor() as i32,
-                    self.player.z.floor() as i32,
-                ) == world::WATER;
+                let in_water = feet_b == world::WATER;
 
                 let nx = self.player.x + vx * dt;
                 if !collides(&mut self.world, nx, self.player.y, self.player.z) {
@@ -2081,6 +2806,12 @@ impl<P: Platform> Game<P> {
                     if self.keys.contains(&plat::VK_SPACE) { vy += 6.8; }
                     if sneaking { vy -= 6.8; }
                     self.player.vy = vy;
+                } else if on_climbable {
+                    self.fall_y = self.player.y;
+                    self.player.vy = if self.keys.contains(&plat::VK_SPACE) || fwd > 0.0 { 4.2 } else if sneaking { 0.0 } else { -2.2 };
+                } else if self.elytra_gliding && self.player.armor[1].id == items::ELYTRA {
+                    self.player.vy = (self.player.vy - 4.0 * dt).max(-2.2);
+                    self.fall_y = self.player.y;
                 } else if in_water {
                     self.fall_y = self.player.y;
                     if self.keys.contains(&plat::VK_SPACE) {
@@ -2094,20 +2825,19 @@ impl<P: Platform> Game<P> {
                         self.player.on_ground = false;
                         self.plat.play(Sfx::Step);
                     }
-                    self.player.vy -= 22.0 * dt;
+                    self.player.vy -= (if in_cobweb { 4.0 } else { 22.0 }) * dt;
                 }
                 let ny = self.player.y + self.player.vy * dt;
                 if collides(&mut self.world, self.player.x, ny, self.player.z) {
                     if self.player.vy < 0.0 {
+                        self.elytra_gliding = false;
                         if self.flying {
                             self.flying = false;
-                        } else if !self.player.on_ground && !in_water && self.mode == GameMode::Survival {
+                        } else if !self.player.on_ground && !in_water && !on_climbable && self.mode == GameMode::Survival {
                             let fall_dist = self.fall_y - self.player.y;
                             if fall_dist > 3.5 && self.grace <= 0.0 {
                                 let dmg = (fall_dist - 3.0).floor();
-                                self.player.hp -= dmg;
-                                self.hurt_flash = 0.45;
-                                self.plat.play(Sfx::Hurt);
+                                self.damage_player(dmg, false);
                             }
                         }
                         self.player.on_ground = true;
@@ -2170,12 +2900,48 @@ impl<P: Platform> Game<P> {
         }
         self.arrows = arrows_keep;
 
-        // mobs + creeper blasts + Ender Dragon victory + mob lava/XP
+        // mob ranged projectiles (Skeleton arrows, Ghast/Blaze/Dragon fireballs)
+        let prev_mp = std::mem::take(&mut self.mob_projectiles);
+        let mut mp_keep = Vec::with_capacity(prev_mp.len());
+        let mut fireball_blasts: Vec<(f32, f32, f32)> = Vec::new();
+        for (mut mx, mut my, mut mz, vx, mut vy, vz, is_fb) in prev_mp {
+            if !is_fb { vy -= 9.0 * dt; }
+            mx += vx * dt; my += vy * dt; mz += vz * dt;
+            let hit_b = self.world.get(mx.floor() as i32, my.floor() as i32, mz.floor() as i32);
+            let pd = ((mx - self.player.x).powi(2) + (my - (self.player.y + 1.0)).powi(2) + (mz - self.player.z).powi(2)).sqrt();
+            if pd < 0.9 && self.mode == GameMode::Survival {
+                self.damage_player(if is_fb { 5.0 } else { 3.0 }, is_fb);
+                if is_fb { fireball_blasts.push((mx, my, mz)); }
+            } else if world::is_solid(hit_b) {
+                if is_fb { fireball_blasts.push((mx, my, mz)); }
+            } else if my > 0.0 && my < 126.0 && (mx - self.player.x).abs() < 80.0 {
+                mp_keep.push((mx, my, mz, vx, vy, vz, is_fb));
+            }
+        }
+        self.mob_projectiles = mp_keep;
+        for (bx, by, bz) in fireball_blasts { self.explode(bx, by, bz, 1.8); }
+
+        // mobs + creeper blasts + ranged attacks + tamed Wolves + Ender Dragon victory + mob lava/XP
         let mut creeper_blasts: Vec<(f32, f32, f32)> = Vec::new();
         let mut dragon_killed = false;
         let mut xp_from_mobs = 0u32;
         for m in self.mobs.iter_mut() {
             m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace, self.mode != GameMode::Survival);
+            if matches!(m.kind, MobKind::Skeleton | MobKind::Ghast | MobKind::Blaze | MobKind::EnderDragon)
+                && self.mode == GameMode::Survival && self.grace <= 0.0 && m.ranged_cd <= 0.0
+            {
+                let dx_p = self.player.x - m.x;
+                let dy_p = (self.player.y + 1.0) - (m.y + 1.2);
+                let dz_p = self.player.z - m.z;
+                let d = (dx_p * dx_p + dy_p * dy_p + dz_p * dz_p).sqrt();
+                let max_r = if m.kind == MobKind::Ghast || m.kind == MobKind::EnderDragon { 36.0 } else { 18.0 };
+                if d > 3.5 && d < max_r {
+                    m.ranged_cd = if m.kind == MobKind::EnderDragon { 2.8 } else { 3.2 };
+                    let sp = if m.kind == MobKind::Skeleton { 16.0 } else { 12.0 };
+                    let is_fb = m.kind != MobKind::Skeleton;
+                    self.mob_projectiles.push((m.x, m.y + 1.2, m.z, dx_p / d * sp, dy_p / d * sp + if is_fb { 0.0 } else { 1.5 }, dz_p / d * sp, is_fb));
+                }
+            }
             let mb = self.world.get(m.x.floor() as i32, (m.y + 0.2).floor() as i32, m.z.floor() as i32);
             if mb == world::LAVA && !matches!(m.kind, MobKind::Blaze | MobKind::Ghast | MobKind::ZombifiedPiglin) {
                 m.hp -= 6.0 * dt;
@@ -2188,6 +2954,24 @@ impl<P: Platform> Game<P> {
             if m.hp <= 0.0 {
                 xp_from_mobs += if m.kind == MobKind::EnderDragon { 500 } else if m.kind.hostile() { 5 } else { 2 };
                 if m.kind == MobKind::EnderDragon { dragon_killed = true; }
+            }
+        }
+        // Tamed Wolves protect the player from nearby hostiles
+        let wolf_positions: Vec<(f32, f32, f32)> = self.mobs.iter()
+            .filter(|m| m.kind == MobKind::Wolf && m.tamed && !m.sitting && m.hp > 0.0)
+            .map(|m| (m.x, m.y, m.z))
+            .collect();
+        for (wx, wy, wz) in wolf_positions {
+            for target in self.mobs.iter_mut() {
+                if target.kind.hostile() && target.hp > 0.0 && target.attack_cd <= 0.0 {
+                    let d = ((target.x - wx).powi(2) + (target.y - wy).powi(2) + (target.z - wz).powi(2)).sqrt();
+                    if d < 2.5 {
+                        target.hp -= 3.5;
+                        target.hurt = 0.35;
+                        target.attack_cd = 0.8;
+                        break;
+                    }
+                }
             }
         }
         if xp_from_mobs > 0 { self.player.add_xp(xp_from_mobs); }
@@ -2210,15 +2994,13 @@ impl<P: Platform> Game<P> {
             self.explode(bx, by, bz, 3.2);
         }
         self.mobs.retain(|m| m.hp > 0.0 && (m.x - self.player.x).abs() < 75.0 && (m.z - self.player.z).abs() < 75.0);
-        for m in self.mobs.iter_mut() {
-            if m.kind.hostile() && m.kind != MobKind::Creeper {
-                let d = ((m.x - self.player.x).powi(2) + (m.y - self.player.y).powi(2) + (m.z - self.player.z).powi(2)).sqrt();
-                if self.mode == GameMode::Survival && d < 1.8 && m.attack_cd <= 0.0 && self.hurt_cd <= 0.0 && self.grace <= 0.0 {
-                    self.player.hp -= 2.0;
-                    self.hurt_flash = 0.4;
+        for i in 0..self.mobs.len() {
+            if self.mobs[i].kind.hostile() && self.mobs[i].kind != MobKind::Creeper {
+                let d = ((self.mobs[i].x - self.player.x).powi(2) + (self.mobs[i].y - self.player.y).powi(2) + (self.mobs[i].z - self.player.z).powi(2)).sqrt();
+                if self.mode == GameMode::Survival && d < 1.8 && self.mobs[i].attack_cd <= 0.0 && self.hurt_cd <= 0.0 && self.grace <= 0.0 {
+                    self.mobs[i].attack_cd = 1.2;
                     self.hurt_cd = 0.7;
-                    m.attack_cd = 1.2;
-                    self.plat.play(Sfx::Hurt);
+                    self.damage_player(2.0, false);
                 }
             }
         }
@@ -2308,6 +3090,87 @@ impl<P: Platform> Game<P> {
             if done { self.plat.play(Sfx::Furnace); }
         }
 
+        // Brewing stands
+        for bs in self.brewing_stands.values_mut() {
+            let out_id = match bs.ing.id {
+                items::APPLE | items::GOLDEN_APPLE => Some(items::POTION_HEAL),
+                items::BLAZE_ROD | world::MAGMA => Some(items::POTION_FIRE),
+                world::NETHER_WART | world::REDSTONE_DUST => Some(items::POTION_SPEED),
+                _ => None,
+            };
+            if let Some(pid) = out_id {
+                if bs.bottle.id == items::GLASS_BOTTLE && bs.bottle.count > 0 && bs.output.is_empty() {
+                    bs.prog += dt / 5.0;
+                    if bs.prog >= 1.0 {
+                        bs.prog = 0.0;
+                        bs.output = Stack::new(pid, 1);
+                        bs.ing.count -= 1; if bs.ing.count == 0 { bs.ing = Stack::EMPTY; }
+                        bs.bottle.count -= 1; if bs.bottle.count == 0 { bs.bottle = Stack::EMPTY; }
+                    }
+                } else { bs.prog = 0.0; }
+            } else { bs.prog = 0.0; }
+        }
+
+        // Hoppers pull nearby drops into an adjacent Chest
+        let mut hopper_picked = Vec::new();
+        let dim_i = self.world.dim.idx() as u8;
+        for (i, d) in self.drops.iter().enumerate() {
+            let hx = d.x.floor() as i32; let hy = d.y.floor() as i32; let hz = d.z.floor() as i32;
+            if self.world.get(hx, hy - 1, hz) == world::HOPPER || self.world.get(hx, hy, hz) == world::HOPPER {
+                let hp_y = if self.world.get(hx, hy, hz) == world::HOPPER { hy } else { hy - 1 };
+                for (dx, dy, dz) in [(0, -1, 0), (1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1)] {
+                    let cx = hx + dx; let cy = hp_y + dy; let cz = hz + dz;
+                    if self.world.get(cx, cy, cz) == world::CHEST {
+                        let inv = self.chests.entry((dim_i, cx, cy, cz)).or_insert([Stack::EMPTY; STORE]);
+                        for s in inv.iter_mut() {
+                            if s.is_empty() { *s = Stack::new(d.item, 1); hopper_picked.push(i); break; }
+                            if s.id == d.item && s.count < 64 { s.count += 1; hopper_picked.push(i); break; }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        for i in hopper_picked.into_iter().rev() { self.drops.remove(i); }
+
+        // Sapling growth & Spawner mob spawning
+        self.crop_timer += dt;
+        if self.crop_timer >= 6.0 {
+            self.crop_timer = 0.0;
+            let px0 = self.player.x.floor() as i32;
+            let py0 = self.player.y.floor() as i32;
+            let pz0 = self.player.z.floor() as i32;
+            let sx = px0 + ((self.tick as i32 * 7) % 17) - 8;
+            let sz = pz0 + ((self.tick as i32 * 13) % 17) - 8;
+            for sy in (py0 - 4).max(2)..=(py0 + 4).min(120) {
+                if self.world.get(sx, sy, sz) == world::SAPLING {
+                    self.grow_oak_tree(sx, sy, sz);
+                    break;
+                }
+            }
+        }
+        self.spawner_timer += dt;
+        if self.spawner_timer >= 8.0 {
+            self.spawner_timer = 0.0;
+            let px0 = self.player.x.floor() as i32;
+            let py0 = self.player.y.floor() as i32;
+            let pz0 = self.player.z.floor() as i32;
+            if self.mobs.len() < 30 {
+                'sp: for ox in -10..=10 {
+                    for oy in -5..=5 {
+                        for oz in -10..=10 {
+                            if self.world.get(px0 + ox, py0 + oy, pz0 + oz) == world::SPAWNER {
+                                let k = if self.world.dim == Dimension::Nether { MobKind::Blaze }
+                                        else if (self.tick % 2) == 0 { MobKind::Zombie } else { MobKind::Skeleton };
+                                self.mobs.push(Mob::spawn(k, (px0 + ox) as f32 + 1.5, (py0 + oy) as f32, (pz0 + oz) as f32 + 0.5));
+                                break 'sp;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Only update redstone when dirty or when stepping on/off a pressure plate.
         let (px, py, pz) = (self.player.x.floor() as i32, self.player.y.floor() as i32, self.player.z.floor() as i32);
         if self.world.get(px, py, pz) == world::PRESSURE_PLATE
@@ -2345,37 +3208,31 @@ impl<P: Platform> Game<P> {
         }
         if feet_b == world::WATER || head_b == world::WATER {
             self.player.burn = 0.0;
-        } else if feet_b == world::LAVA || head_b == world::LAVA {
+        } else if (feet_b == world::LAVA || head_b == world::LAVA) && self.potion_fire <= 0.0 {
             self.player.burn = 6.0;
             if self.hurt_cd <= 0.0 {
                 self.hurt_cd = 0.5;
-                self.player.hp -= 4.0;
-                self.hurt_flash = 0.5;
-                self.plat.play(Sfx::Hurt);
+                self.damage_player(4.0, true);
             }
-        } else if under_b == world::MAGMA && !self.keys.contains(&plat::VK_SHIFT) {
+        } else if under_b == world::MAGMA && !self.keys.contains(&plat::VK_SHIFT) && self.potion_fire <= 0.0 {
             if self.hurt_cd <= 0.0 {
                 self.hurt_cd = 0.7;
-                self.player.hp -= 1.0;
-                self.hurt_flash = 0.3;
-                self.plat.play(Sfx::Hurt);
+                self.damage_player(1.0, true);
             }
         } else if feet_b == world::CACTUS || under_b == world::CACTUS {
             if self.hurt_cd <= 0.0 {
                 self.hurt_cd = 0.6;
-                self.player.hp -= 1.0;
-                self.hurt_flash = 0.3;
-                self.plat.play(Sfx::Hurt);
+                self.damage_player(1.0, false);
             }
         }
         if self.player.burn > 0.0 {
             self.player.burn = (self.player.burn - dt).max(0.0);
-            self.burn_cd -= dt;
-            if self.burn_cd <= 0.0 {
-                self.burn_cd = 1.0;
-                self.player.hp -= 1.0;
-                self.hurt_flash = 0.25;
-                self.plat.play(Sfx::Hurt);
+            if self.potion_fire <= 0.0 {
+                self.burn_cd -= dt;
+                if self.burn_cd <= 0.0 {
+                    self.burn_cd = 1.0;
+                    self.damage_player(1.0, true);
+                }
             }
         }
         self.player.hunger = (self.player.hunger - dt * 0.035).max(0.0);
@@ -2397,20 +3254,32 @@ impl<P: Platform> Game<P> {
         }
         }
 
-        // death
+        // death / Totem of Undying
         if self.player.hp <= 0.0 {
-            self.player.hp = 20.0;
-            self.player.hunger = 20.0;
-            self.world.set_dim(Dimension::Overworld);
-            self.player.x = self.spawn.0;
-            self.player.y = self.spawn.1;
-            self.player.z = self.spawn.2;
-            self.fall_y = self.spawn.1;
-            self.player.vy = 0.0;
-            self.message = String::from("You died! Respawning...");
-            self.msg_timer = 4.0;
-            self.grace = 6.0;
-            self.plat.play(Sfx::Hurt);
+            if self.player.has_totem() {
+                if self.player.offhand.id == items::TOTEM {
+                    self.player.offhand.count -= 1;
+                    if self.player.offhand.count == 0 { self.player.offhand = Stack::EMPTY; }
+                } else {
+                    let s = &mut self.player.hot[self.player.selected];
+                    s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+                }
+                self.player.hp = 10.0;
+                self.player.burn = 0.0;
+                self.potion_fire = 30.0;
+                self.grace = 2.5;
+                self.message = String::from("Totem of Undying saved you!");
+                self.msg_timer = 4.0;
+                self.plat.play(Sfx::LevelUp);
+            } else {
+                self.ui = Ui::Death;
+                self.mouse_left = false;
+                self.mouse_right = false;
+                self.riding = None;
+                self.plat.set_capture(false);
+                self.plat.set_cursor(true);
+                self.plat.play(Sfx::Hurt);
+            }
         }
         // Dimension portal travel
         self.portal_cd = (self.portal_cd - dt).max(0.0);
@@ -2553,6 +3422,10 @@ impl<P: Platform> Game<P> {
             let flash = m.hurt > 0.15 || (m.kind == MobKind::Creeper && m.fuse > 0.0 && (self.tick / 3) % 2 == 0);
             render::draw_entity_3d(&mut self.scene, &cam, m.x, m.y, m.z, m.yaw, m.walk, day, EntityKind::Mob(m.kind), flash, false);
         }
+        for v in self.vehicles.iter() {
+            let kind = if v.is_boat { EntityKind::Boat } else { EntityKind::Minecart };
+            render::draw_entity_3d(&mut self.scene, &cam, v.x, v.y, v.z, v.yaw, 0.0, day, kind, false, false);
+        }
         for t in self.tnt_primed.iter() {
             let id = if (self.tick / 4) % 2 == 0 { world::SNOW } else { world::TNT };
             render::draw_drop_sprite(&mut self.scene, &cam, t.0, t.1, t.2, id, self.tick, day);
@@ -2563,6 +3436,10 @@ impl<P: Platform> Game<P> {
         for &(ax, ay, az, _, _, _) in self.arrows.iter() {
             render::draw_drop_sprite(&mut self.scene, &cam, ax, ay, az, items::ARROW, self.tick, day);
         }
+        for &(mx, my, mz, _, _, _, is_fb) in self.mob_projectiles.iter() {
+            let id = if is_fb { items::BLAZE_ROD } else { items::ARROW };
+            render::draw_drop_sprite(&mut self.scene, &cam, mx, my, mz, id, self.tick, day);
+        }
         render::upscale(&self.scene, &mut self.fb);
 
         if self.ui == Ui::None || self.ui == Ui::Chat {
@@ -2572,6 +3449,9 @@ impl<P: Platform> Game<P> {
             let dragon_hp = if self.world.dim == Dimension::End {
                 self.mobs.iter().find(|m| m.kind == MobKind::EnderDragon).map(|m| m.hp)
             } else { None };
+            let shield_blk = self.is_shield_blocking();
+            let armor_pts = self.player.armor_points();
+            let cur_biome = self.world.biome(self.player.x.floor() as i32, self.player.z.floor() as i32);
             render::draw_hud(
                 &mut self.fb,
                 &self.player.hot.map(|s| s.id),
@@ -2580,13 +3460,18 @@ impl<P: Platform> Game<P> {
                 self.player.hp,
                 self.player.hunger,
                 self.player.air,
+                armor_pts,
+                self.player.offhand.id,
+                shield_blk,
+                self.potion_fire,
+                self.potion_speed,
                 self.player.xp,
                 self.player.level,
                 self.player.burn,
                 self.tick,
                 &self.message,
                 self.msg_timer,
-                self.world.biome(self.player.x.floor() as i32, self.player.z.floor() as i32),
+                cur_biome,
                 self.world.dim,
                 dragon_hp,
                 (self.player.x, self.player.y, self.player.z),
@@ -2620,7 +3505,7 @@ impl<P: Platform> Game<P> {
             let result = self.craft_result();
             let hover = self.inv_hover(grid_size);
             render::draw_inventory_screen(
-                &mut self.fb, &self.player.hot, &self.player.store, &self.craft_grid,
+                &mut self.fb, &self.player.hot, &self.player.store, &self.player.armor, self.player.offhand, &self.craft_grid,
                 grid_size, result, self.cursor, self.tick, hover, self.recipe_page, self.recipe_sel,
             );
         }
@@ -2640,6 +3525,64 @@ impl<P: Platform> Game<P> {
             render::draw_chest_screen(
                 &mut self.fb, &chest, &self.player.store, &self.player.hot, self.cursor, self.tick, hover,
             );
+        }
+        if self.ui == Ui::Enchant {
+            let (mx, my) = (self.mouse_x, self.mouse_y);
+            let mut hover = None;
+            if mx >= 94 && mx < 94 + render::SLOT_PX && my >= 48 && my < 48 + render::SLOT_PX { hover = Some((0, 0)); }
+            if mx >= 126 && mx < 126 + render::SLOT_PX && my >= 48 && my < 48 + render::SLOT_PX { hover = Some((0, 1)); }
+            for i in 0..3 {
+                let (bx, by, bw, bh) = (170, 36 + i as i32 * 26, 224, 22);
+                if mx >= bx && mx < bx + bw && my >= by && my < by + bh { hover = Some((0, 10 + i)); }
+            }
+            for i in 0..HOT {
+                let (x, y, w, h) = render::hot_slot_rect(i);
+                if mx >= x && mx < x + w && my >= y && my < y + h { hover = Some((2, i)); }
+            }
+            render::draw_enchant_screen(&mut self.fb, self.enchant_slots[0], self.enchant_slots[1], self.player.level, &self.player.hot, self.cursor, self.tick, hover);
+        }
+        if self.ui == Ui::Anvil {
+            let (mx, my) = (self.mouse_x, self.mouse_y);
+            let mut hover = None;
+            if mx >= 104 && mx < 104 + render::SLOT_PX && my >= 62 && my < 62 + render::SLOT_PX { hover = Some((0, 0)); }
+            if mx >= 160 && mx < 160 + render::SLOT_PX && my >= 62 && my < 62 + render::SLOT_PX { hover = Some((0, 1)); }
+            if mx >= 224 && mx < 224 + render::SLOT_PX + 4 && my >= 60 && my < 60 + render::SLOT_PX + 4 { hover = Some((0, 2)); }
+            for i in 0..HOT {
+                let (x, y, w, h) = render::hot_slot_rect(i);
+                if mx >= x && mx < x + w && my >= y && my < y + h { hover = Some((2, i)); }
+            }
+            let anvil_out = self.anvil_output();
+            render::draw_anvil_screen(&mut self.fb, self.anvil_slots[0], self.anvil_slots[1], anvil_out, self.player.level, &self.player.hot, self.cursor, self.tick, hover);
+        }
+        if self.ui == Ui::Brewing {
+            let bs = self.brewing_stands.get(&self.ui_block).cloned().unwrap_or_else(BrewingStand::new);
+            let (mx, my) = (self.mouse_x, self.mouse_y);
+            let mut hover = None;
+            if mx >= 180 && mx < 180 + render::SLOT_PX && my >= 36 && my < 36 + render::SLOT_PX { hover = Some((0, 0)); }
+            if mx >= 140 && mx < 140 + render::SLOT_PX && my >= 86 && my < 86 + render::SLOT_PX { hover = Some((0, 1)); }
+            if mx >= 220 && mx < 220 + render::SLOT_PX && my >= 86 && my < 86 + render::SLOT_PX { hover = Some((0, 2)); }
+            for i in 0..HOT {
+                let (x, y, w, h) = render::hot_slot_rect(i);
+                if mx >= x && mx < x + w && my >= y && my < y + h { hover = Some((2, i)); }
+            }
+            render::draw_brewing_screen(&mut self.fb, bs.ing, bs.bottle, bs.output, bs.prog, &self.player.hot, self.cursor, self.tick, hover);
+        }
+        if self.ui == Ui::Trade {
+            let (mx, my) = (self.mouse_x, self.mouse_y);
+            let mut hover = None;
+            for i in 0..5 {
+                let by = 30 + i as i32 * 30;
+                if mx >= 82 && mx < 398 && my >= by && my < by + 26 { hover = Some((0, i)); }
+            }
+            render::draw_trade_screen(&mut self.fb, &Self::villager_trades(), &self.player.hot, self.tick, hover);
+        }
+        if self.ui == Ui::Death {
+            let (mx, my) = (self.mouse_x, self.mouse_y);
+            let bx = (render::W as i32 - 200) / 2;
+            let mut hover = usize::MAX;
+            if mx >= bx && mx < bx + 200 && my >= 128 && my < 150 { hover = 0; }
+            else if mx >= bx && mx < bx + 200 && my >= 158 && my < 180 { hover = 1; }
+            render::draw_death_screen(&mut self.fb, self.player.level, hover);
         }
         if self.ui == Ui::Pause {
             let (mx, my) = (self.mouse_x, self.mouse_y);
@@ -2678,6 +3621,12 @@ impl<P: Platform> Game<P> {
             let (x, y, w, h) = render::recipe_slot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h { return Some((3, i)); }
         }
+        for i in 0..4 {
+            let (x, y, w, h) = render::armor_slot_rect(i);
+            if mx >= x && mx < x + w && my >= y && my < y + h { return Some((4, i)); }
+        }
+        let (ox, oy, ow, oh) = render::offhand_slot_rect();
+        if mx >= ox && mx < ox + ow && my >= oy && my < oy + oh { return Some((4, 4)); }
         for i in 0..STORE {
             let (x, y, w, h) = render::inv_slot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h { return Some((1, i)); }
@@ -2874,7 +3823,7 @@ impl<P: Platform> Game<P> {
 
     fn save_world(&self) {
         let mut out = Vec::with_capacity(4096);
-        out.extend_from_slice(b"MCS1");
+        out.extend_from_slice(b"MCS2");
         out.push(match self.mode {
             GameMode::Survival => 0,
             GameMode::Creative => 1,
@@ -2889,7 +3838,9 @@ impl<P: Platform> Game<P> {
         ] {
             out.extend_from_slice(&f.to_le_bytes());
         }
-        for s in self.player.hot.iter().chain(self.player.store.iter()) {
+        out.extend_from_slice(&self.player.xp.to_le_bytes());
+        out.extend_from_slice(&self.player.level.to_le_bytes());
+        for s in self.player.hot.iter().chain(self.player.store.iter()).chain(self.player.armor.iter()).chain(std::iter::once(&self.player.offhand)) {
             out.extend_from_slice(&s.id.to_le_bytes());
             out.extend_from_slice(&s.count.to_le_bytes());
         }
@@ -2910,12 +3861,55 @@ impl<P: Platform> Game<P> {
             out.extend_from_slice(&m.z.to_le_bytes());
             out.extend_from_slice(&m.hp.to_le_bytes());
         }
+        // MCS2 extras: enchants, chests, furnaces, levers, vehicles
+        out.extend_from_slice(&(self.player.enchants.len() as u32).to_le_bytes());
+        for (&id, &lvl) in &self.player.enchants {
+            out.extend_from_slice(&id.to_le_bytes());
+            out.push(lvl);
+        }
+        out.extend_from_slice(&(self.chests.len() as u32).to_le_bytes());
+        for (&(d, x, y, z), inv) in &self.chests {
+            out.push(d);
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+            out.extend_from_slice(&z.to_le_bytes());
+            for s in inv {
+                out.extend_from_slice(&s.id.to_le_bytes());
+                out.extend_from_slice(&s.count.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(&(self.furnaces.len() as u32).to_le_bytes());
+        for (&(x, y, z), f) in &self.furnaces {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+            out.extend_from_slice(&z.to_le_bytes());
+            for s in [f.input, f.fuel, f.output] {
+                out.extend_from_slice(&s.id.to_le_bytes());
+                out.extend_from_slice(&s.count.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(&(self.levers.len() as u32).to_le_bytes());
+        for &(x, y, z) in &self.levers {
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+            out.extend_from_slice(&z.to_le_bytes());
+        }
+        out.extend_from_slice(&(self.vehicles.len() as u32).to_le_bytes());
+        for v in &self.vehicles {
+            out.push(if v.is_boat { 1 } else { 0 });
+            out.extend_from_slice(&v.x.to_le_bytes());
+            out.extend_from_slice(&v.y.to_le_bytes());
+            out.extend_from_slice(&v.z.to_le_bytes());
+            out.extend_from_slice(&v.yaw.to_le_bytes());
+        }
         let _ = std::fs::write(Self::save_path(), out);
     }
 
     fn load_world(&mut self) {
         let Ok(data) = std::fs::read(Self::save_path()) else { return; };
-        if data.len() < 8 + 44 + 36 * 6 + 4 || &data[0..4] != b"MCS1" { return; }
+        if data.len() < 8 + 44 + 36 * 6 + 4 { return; }
+        let is_v2 = &data[0..4] == b"MCS2";
+        if !is_v2 && &data[0..4] != b"MCS1" { return; }
         self.loaded_save = true;
         let mut p = 4usize;
         let read_u8 = |b: &[u8], pos: &mut usize| -> u8 { let v = b[*pos]; *pos += 1; v };
@@ -2953,11 +3947,22 @@ impl<P: Platform> Game<P> {
         self.spawn.2 = read_f32(&data, &mut p);
         self.time = read_f32(&data, &mut p);
         self.fall_y = self.player.y;
+        if is_v2 {
+            self.player.xp = read_u32(&data, &mut p);
+            self.player.level = read_u32(&data, &mut p);
+        }
 
         for s in self.player.hot.iter_mut().chain(self.player.store.iter_mut()) {
             let id = read_u16(&data, &mut p);
             let cnt = read_u32(&data, &mut p);
             *s = if id == 0 || cnt == 0 { Stack::EMPTY } else { Stack::new(id, cnt) };
+        }
+        if is_v2 {
+            for s in self.player.armor.iter_mut().chain(std::iter::once(&mut self.player.offhand)) {
+                let id = read_u16(&data, &mut p);
+                let cnt = read_u32(&data, &mut p);
+                *s = if id == 0 || cnt == 0 { Stack::EMPTY } else { Stack::new(id, cnt) };
+            }
         }
         let n_edits = read_u32(&data, &mut p) as usize;
         for _ in 0..n_edits {
@@ -2983,6 +3988,72 @@ impl<P: Platform> Game<P> {
                     let mut m = Mob::spawn(kind, mx, my, mz);
                     m.hp = hp;
                     self.mobs.push(m);
+                }
+            }
+        }
+        if is_v2 && p + 4 <= data.len() {
+            let n_ench = read_u32(&data, &mut p) as usize;
+            for _ in 0..n_ench {
+                if p + 3 > data.len() { break; }
+                let id = read_u16(&data, &mut p);
+                let lvl = read_u8(&data, &mut p);
+                self.player.enchants.insert(id, lvl);
+            }
+            if p + 4 <= data.len() {
+                let n_ch = read_u32(&data, &mut p) as usize;
+                for _ in 0..n_ch {
+                    if p + 13 + STORE * 6 > data.len() { break; }
+                    let d = read_u8(&data, &mut p);
+                    let x = read_i32(&data, &mut p);
+                    let y = read_i32(&data, &mut p);
+                    let z = read_i32(&data, &mut p);
+                    let mut inv = [Stack::EMPTY; STORE];
+                    for s in inv.iter_mut() {
+                        let id = read_u16(&data, &mut p);
+                        let cnt = read_u32(&data, &mut p);
+                        *s = if id == 0 || cnt == 0 { Stack::EMPTY } else { Stack::new(id, cnt) };
+                    }
+                    self.chests.insert((d, x, y, z), inv);
+                }
+            }
+            if p + 4 <= data.len() {
+                let n_fur = read_u32(&data, &mut p) as usize;
+                for _ in 0..n_fur {
+                    if p + 12 + 18 > data.len() { break; }
+                    let x = read_i32(&data, &mut p);
+                    let y = read_i32(&data, &mut p);
+                    let z = read_i32(&data, &mut p);
+                    let mut f = Furnace::new();
+                    for s in [&mut f.input, &mut f.fuel, &mut f.output] {
+                        let id = read_u16(&data, &mut p);
+                        let cnt = read_u32(&data, &mut p);
+                        *s = if id == 0 || cnt == 0 { Stack::EMPTY } else { Stack::new(id, cnt) };
+                    }
+                    self.furnaces.insert((x, y, z), f);
+                }
+            }
+            if p + 4 <= data.len() {
+                let n_lev = read_u32(&data, &mut p) as usize;
+                for _ in 0..n_lev {
+                    if p + 12 > data.len() { break; }
+                    let x = read_i32(&data, &mut p);
+                    let y = read_i32(&data, &mut p);
+                    let z = read_i32(&data, &mut p);
+                    self.levers.insert((x, y, z));
+                    self.redstone_sources.insert((x, y, z));
+                    self.redstone_dirty = true;
+                }
+            }
+            if p + 4 <= data.len() {
+                let n_veh = read_u32(&data, &mut p) as usize;
+                for _ in 0..n_veh {
+                    if p + 17 > data.len() { break; }
+                    let is_boat = read_u8(&data, &mut p) != 0;
+                    let vx = read_f32(&data, &mut p);
+                    let vy = read_f32(&data, &mut p);
+                    let vz = read_f32(&data, &mut p);
+                    let vyaw = read_f32(&data, &mut p);
+                    self.vehicles.push(Vehicle { is_boat, x: vx, y: vy, z: vz, yaw: vyaw });
                 }
             }
         }

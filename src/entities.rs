@@ -369,6 +369,26 @@ pub fn mob_parts(kind: MobKind, walk: f32) -> Vec<Part3D> {
     }
 }
 
+pub fn vehicle_parts(is_boat: bool) -> Vec<Part3D> {
+    if is_boat {
+        vec![
+            Part3D { cx: 0.0, cy: 0.10, cz: 0.0, hx: 0.45, hy: 0.08, hz: 0.68, pivot_y: 0.1, swing: 0.0, col: [158, 114, 68], col_alt: [122, 84, 48], face: FaceArt::None },
+            Part3D { cx: -0.40, cy: 0.28, cz: 0.0, hx: 0.07, hy: 0.14, hz: 0.66, pivot_y: 0.28, swing: 0.0, col: [142, 100, 58], col_alt: [110, 74, 42], face: FaceArt::None },
+            Part3D { cx: 0.40, cy: 0.28, cz: 0.0, hx: 0.07, hy: 0.14, hz: 0.66, pivot_y: 0.28, swing: 0.0, col: [142, 100, 58], col_alt: [110, 74, 42], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.28, cz: -0.60, hx: 0.42, hy: 0.14, hz: 0.07, pivot_y: 0.28, swing: 0.0, col: [142, 100, 58], col_alt: [110, 74, 42], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.28, cz: 0.60, hx: 0.42, hy: 0.14, hz: 0.07, pivot_y: 0.28, swing: 0.0, col: [142, 100, 58], col_alt: [110, 74, 42], face: FaceArt::None },
+        ]
+    } else {
+        vec![
+            Part3D { cx: 0.0, cy: 0.14, cz: 0.0, hx: 0.42, hy: 0.08, hz: 0.48, pivot_y: 0.14, swing: 0.0, col: [98, 102, 108], col_alt: [68, 72, 78], face: FaceArt::None },
+            Part3D { cx: -0.38, cy: 0.34, cz: 0.0, hx: 0.06, hy: 0.18, hz: 0.48, pivot_y: 0.34, swing: 0.0, col: [122, 128, 134], col_alt: [86, 90, 96], face: FaceArt::None },
+            Part3D { cx: 0.38, cy: 0.34, cz: 0.0, hx: 0.06, hy: 0.18, hz: 0.48, pivot_y: 0.34, swing: 0.0, col: [122, 128, 134], col_alt: [86, 90, 96], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.34, cz: -0.44, hx: 0.42, hy: 0.18, hz: 0.06, pivot_y: 0.34, swing: 0.0, col: [122, 128, 134], col_alt: [86, 90, 96], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.34, cz: 0.44, hx: 0.42, hy: 0.18, hz: 0.06, pivot_y: 0.34, swing: 0.0, col: [122, 128, 134], col_alt: [86, 90, 96], face: FaceArt::None },
+        ]
+    }
+}
+
 #[derive(Clone)]
 pub struct Mob {
     pub kind: MobKind,
@@ -382,17 +402,22 @@ pub struct Mob {
     pub hp: f32,
     pub timer: f32,
     pub attack_cd: f32,
+    pub ranged_cd: f32,
+    pub breed_cd: f32,
     pub hurt: f32,
     pub fuse: f32,
     pub walk: f32,
     pub on_ground: bool,
+    pub tamed: bool,
+    pub sitting: bool,
 }
 
 impl Mob {
     pub fn spawn(kind: MobKind, x: f32, y: f32, z: f32) -> Self {
         Self {
             kind, x, y, z, vx: 0.0, vy: 0.0, vz: 0.0, yaw: 0.0,
-            hp: kind.health(), timer: 0.0, attack_cd: 0.0, hurt: 0.0, fuse: 0.0, walk: 0.0, on_ground: true,
+            hp: kind.health(), timer: 0.0, attack_cd: 0.0, ranged_cd: 2.0, breed_cd: 0.0,
+            hurt: 0.0, fuse: 0.0, walk: 0.0, on_ground: true, tamed: false, sitting: false,
         }
     }
 
@@ -410,11 +435,24 @@ impl Mob {
     ) {
         self.timer -= dt;
         self.attack_cd = (self.attack_cd - dt).max(0.0);
+        self.ranged_cd = (self.ranged_cd - dt).max(0.0);
+        self.breed_cd = (self.breed_cd - dt).max(0.0);
         self.hurt = (self.hurt - dt).max(0.0);
         let dx = px - self.x;
         let dz = pz - self.z;
         let dist = (dx * dx + dz * dz).sqrt();
         let hostile_active = self.kind.hostile() && grace <= 0.0 && !ignore_player;
+
+        if self.tamed && self.sitting {
+            self.vx = 0.0;
+            self.vz = 0.0;
+            return;
+        }
+        if self.tamed && self.kind == MobKind::Wolf && dist > 3.5 && dist < 32.0 {
+            self.vx = dx / dist * 3.4;
+            self.vz = dz / dist * 3.4;
+            self.yaw = dx.atan2(dz);
+        }
 
         if world.dim == Dimension::Overworld && matches!(self.kind, MobKind::Zombie | MobKind::Skeleton) && day > 0.65 && tick % 25 == 0 {
             let ix = self.x.floor() as i32;

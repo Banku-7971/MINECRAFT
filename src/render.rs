@@ -10,8 +10,8 @@ pub const H: usize = 270;
 pub const RW: usize = 480;
 pub const RH: usize = 270;
 const TEX: usize = 16;
-const NUM_BLOCK_TEX: usize = 128;
-const NUM_ITEM_TEX: usize = 104;
+const NUM_BLOCK_TEX: usize = 144;
+const NUM_ITEM_TEX: usize = 128;
 
 static ATLAS_BYTES: &[u8] = include_bytes!("../assets/textures.bin");
 static ATLAS_CACHE: OnceLock<Textures> = OnceLock::new();
@@ -149,6 +149,21 @@ impl Textures {
             world::WARPED_NYLIUM => {
                 if ny > 0 { 102 } else { 60 }
             }
+            world::ANVIL => {
+                if ny > 0 { 143 } else { 57 }
+            }
+            world::ENCHANTING => {
+                if ny > 0 { 142 } else if ny < 0 { 35 } else { 58 }
+            }
+            world::HOPPER => {
+                if ny > 0 { 133 } else { 132 }
+            }
+            world::PISTON => {
+                if ny > 0 { 135 } else { 134 }
+            }
+            world::STICKY_PISTON => {
+                if ny > 0 { 136 } else { 134 }
+            }
             _ => Self::kind(block),
         }
     }
@@ -261,6 +276,20 @@ impl Textures {
             world::CHORUS_FLOWER => 112,
             world::PURPUR_BLOCK => 113,
             world::NETHER_BRICKS => 114,
+            world::LAPIS_ORE => 128,
+            world::LAPIS_BLOCK => 129,
+            world::BREWING_STAND => 130,
+            world::BEACON => 131,
+            world::HOPPER => 132,
+            world::PISTON => 134,
+            world::STICKY_PISTON => 134,
+            world::REPEATER => 137,
+            world::COMPARATOR => 139,
+            world::SPAWNER => 140,
+            world::SAPLING => 141,
+            world::NETHER_WART => 104,
+            world::BUTTON => 0,
+            world::IRON_DOOR | world::IRON_DOOR_OPEN => 83,
             _ => 0,
         }
     }
@@ -285,7 +314,11 @@ impl Textures {
             Self::face_kind(block, nx, ny, nz)
         };
         let animated = block == world::WATER || block == world::LAVA || block == world::NETHER_PORTAL;
-        self.sample_kind(k, u, v, tick, animated)
+        let c = self.sample_kind(k, u, v, tick, animated);
+        if block == world::ANVIL && c[3] < 128 {
+            return [64, 64, 68, 255];
+        }
+        c
     }
 
     #[inline(always)]
@@ -478,23 +511,182 @@ fn is_crossed_plant(b: u16) -> bool {
             | world::WHEAT
             | world::BROWN_MUSHROOM
             | world::RED_MUSHROOM
-            | world::TORCH
-            | world::REDSTONE_TORCH
+            | world::SAPLING
+            | world::NETHER_WART
     )
 }
 
 #[inline]
 fn is_floor_block(b: u16) -> bool {
-    matches!(b, world::RAIL | world::REDSTONE_DUST | world::PRESSURE_PLATE)
+    matches!(b, world::RAIL | world::REDSTONE_DUST | world::REPEATER | world::COMPARATOR)
 }
 
 #[inline]
 fn is_cutout_cube(b: u16) -> bool {
     matches!(
         b,
-        world::GLASS | world::ICE | world::COBWEB | world::DOOR | world::DOOR_OPEN | world::LADDER | world::VINE
-            | world::LEVER | world::LANTERN | world::CAMPFIRE
+        world::GLASS | world::ICE | world::COBWEB | world::LADDER | world::VINE
+            | world::LEVER | world::CAMPFIRE | world::SPAWNER | world::BEACON
     )
+}
+
+#[inline]
+fn is_model_block(b: u16) -> bool {
+    matches!(
+        b,
+        world::ANVIL | world::ENCHANTING | world::STAIRS | world::SLAB | world::FENCE
+            | world::TORCH | world::REDSTONE_TORCH | world::BREWING_STAND | world::LANTERN
+            | world::HOPPER | world::PRESSURE_PLATE | world::CAKE | world::FARMLAND
+            | world::DOOR | world::DOOR_OPEN | world::IRON_DOOR | world::IRON_DOOR_OPEN
+            | world::BUTTON | world::SNOW_LAYER
+    )
+}
+
+/// Official Minecraft 3D model AABBs ([x0,y0,z0, x1,y1,z1] in 0..1 voxel space) derived from Minecraft 1.20.1 block models.
+#[inline]
+fn hit_model_boxes(
+    cache: &RenderCache,
+    b: u16,
+    gx: i32, gy: i32, gz: i32,
+    ox: f32, oy: f32, oz: f32,
+    dx: f32, dy: f32, dz: f32,
+    t_min: f32, t_max: f32,
+    enx: i32, eny: i32, enz: i32,
+) -> Option<(f32, i32, i32, i32, f32, f32)> {
+    let mut boxes: [[f32; 6]; 8] = [[0.0; 6]; 8];
+    let mut nb = 0usize;
+    let p = 1.0 / 16.0;
+    match b {
+        world::SLAB => {
+            boxes[0] = [0.0, 0.0, 0.0, 1.0, 0.5, 1.0]; nb = 1;
+        }
+        world::STAIRS => {
+            boxes[0] = [0.0, 0.0, 0.0, 1.0, 0.5, 1.0];
+            boxes[1] = [0.5, 0.5, 0.0, 1.0, 1.0, 1.0];
+            nb = 2;
+        }
+        world::ANVIL => {
+            boxes[0] = [2.0*p, 0.0, 2.0*p, 14.0*p, 4.0*p, 14.0*p];
+            boxes[1] = [4.0*p, 4.0*p, 3.0*p, 12.0*p, 5.0*p, 13.0*p];
+            boxes[2] = [6.0*p, 5.0*p, 4.0*p, 10.0*p, 10.0*p, 12.0*p];
+            boxes[3] = [3.0*p, 10.0*p, 0.0, 13.0*p, 1.0, 1.0];
+            nb = 4;
+        }
+        world::ENCHANTING => {
+            boxes[0] = [0.0, 0.0, 0.0, 1.0, 12.0*p, 1.0]; nb = 1;
+        }
+        world::FENCE => {
+            boxes[0] = [6.0*p, 0.0, 6.0*p, 10.0*p, 1.0, 10.0*p]; nb = 1;
+            let conn = |id: u16| id == world::FENCE || world::is_solid(id);
+            if conn(cache.get(gx, gy, gz - 1)) {
+                boxes[nb] = [7.0*p, 12.0*p, 0.0, 9.0*p, 15.0*p, 6.0*p]; nb += 1;
+                boxes[nb] = [7.0*p, 6.0*p, 0.0, 9.0*p, 9.0*p, 6.0*p]; nb += 1;
+            }
+            if conn(cache.get(gx, gy, gz + 1)) {
+                boxes[nb] = [7.0*p, 12.0*p, 10.0*p, 9.0*p, 15.0*p, 1.0]; nb += 1;
+                boxes[nb] = [7.0*p, 6.0*p, 10.0*p, 9.0*p, 9.0*p, 1.0]; nb += 1;
+            }
+            if conn(cache.get(gx - 1, gy, gz)) {
+                boxes[nb] = [0.0, 12.0*p, 7.0*p, 6.0*p, 15.0*p, 9.0*p]; nb += 1;
+                boxes[nb] = [0.0, 6.0*p, 7.0*p, 6.0*p, 9.0*p, 9.0*p]; nb += 1;
+            }
+            if conn(cache.get(gx + 1, gy, gz)) && nb + 2 <= 8 {
+                boxes[nb] = [10.0*p, 12.0*p, 7.0*p, 1.0, 15.0*p, 9.0*p]; nb += 1;
+                boxes[nb] = [10.0*p, 6.0*p, 7.0*p, 1.0, 9.0*p, 9.0*p]; nb += 1;
+            }
+        }
+        world::TORCH | world::REDSTONE_TORCH => {
+            boxes[0] = [7.0*p, 0.0, 7.0*p, 9.0*p, 10.0*p, 9.0*p]; nb = 1;
+        }
+        world::BREWING_STAND => {
+            boxes[0] = [7.0*p, 0.0, 7.0*p, 9.0*p, 14.0*p, 9.0*p];
+            boxes[1] = [9.0*p, 0.0, 5.0*p, 15.0*p, 2.0*p, 11.0*p];
+            boxes[2] = [1.0*p, 0.0, 1.0*p, 7.0*p, 2.0*p, 7.0*p];
+            boxes[3] = [1.0*p, 0.0, 9.0*p, 7.0*p, 2.0*p, 15.0*p];
+            nb = 4;
+        }
+        world::LANTERN => {
+            boxes[0] = [5.0*p, 0.0, 5.0*p, 11.0*p, 7.0*p, 11.0*p];
+            boxes[1] = [6.0*p, 7.0*p, 6.0*p, 10.0*p, 9.0*p, 10.0*p];
+            nb = 2;
+        }
+        world::HOPPER => {
+            boxes[0] = [0.0, 10.0*p, 0.0, 1.0, 1.0, 1.0];
+            boxes[1] = [4.0*p, 4.0*p, 4.0*p, 12.0*p, 10.0*p, 12.0*p];
+            boxes[2] = [6.0*p, 0.0, 6.0*p, 10.0*p, 4.0*p, 10.0*p];
+            nb = 3;
+        }
+        world::PRESSURE_PLATE => {
+            boxes[0] = [1.0*p, 0.0, 1.0*p, 15.0*p, 1.0*p, 15.0*p]; nb = 1;
+        }
+        world::BUTTON => {
+            boxes[0] = [5.0*p, 0.0, 6.0*p, 11.0*p, 2.0*p, 10.0*p]; nb = 1;
+        }
+        world::CAKE => {
+            boxes[0] = [1.0*p, 0.0, 1.0*p, 15.0*p, 8.0*p, 15.0*p]; nb = 1;
+        }
+        world::FARMLAND => {
+            boxes[0] = [0.0, 0.0, 0.0, 1.0, 15.0*p, 1.0]; nb = 1;
+        }
+        world::SNOW_LAYER => {
+            boxes[0] = [0.0, 0.0, 0.0, 1.0, 2.0*p, 1.0]; nb = 1;
+        }
+        world::DOOR | world::IRON_DOOR => {
+            boxes[0] = [0.0, 0.0, 0.0, 1.0, 1.0, 3.0*p]; nb = 1;
+        }
+        world::DOOR_OPEN | world::IRON_DOOR_OPEN => {
+            boxes[0] = [0.0, 0.0, 0.0, 3.0*p, 1.0, 1.0]; nb = 1;
+        }
+        _ => {}
+    }
+
+    let rx = ox - gx as f32;
+    let ry = oy - gy as f32;
+    let rz = oz - gz as f32;
+    let mut best_t = t_max;
+    let mut best_hit: Option<(f32, i32, i32, i32, f32, f32)> = None;
+    let invx = if dx.abs() > 1e-7 { 1.0 / dx } else { 1e9 };
+    let invy = if dy.abs() > 1e-7 { 1.0 / dy } else { 1e9 };
+    let invz = if dz.abs() > 1e-7 { 1.0 / dz } else { 1e9 };
+
+    for bi in 0..nb {
+        let bx = &boxes[bi];
+        let mut t0 = t_min - 1e-4;
+        let mut t1 = best_t + 1e-4;
+        let mut n = (enx, eny, enz);
+
+        let mut ax0 = (bx[0] - rx) * invx;
+        let mut ax1 = (bx[3] - rx) * invx;
+        let mut nax = -1;
+        if ax0 > ax1 { std::mem::swap(&mut ax0, &mut ax1); nax = 1; }
+        if ax0 > t0 { t0 = ax0; n = (nax, 0, 0); }
+        t1 = t1.min(ax1);
+        if t0 >= t1 { continue; }
+
+        let mut ay0 = (bx[1] - ry) * invy;
+        let mut ay1 = (bx[4] - ry) * invy;
+        let mut nay = -1;
+        if ay0 > ay1 { std::mem::swap(&mut ay0, &mut ay1); nay = 1; }
+        if ay0 > t0 { t0 = ay0; n = (0, nay, 0); }
+        t1 = t1.min(ay1);
+        if t0 >= t1 { continue; }
+
+        let mut az0 = (bx[2] - rz) * invz;
+        let mut az1 = (bx[5] - rz) * invz;
+        let mut naz = -1;
+        if az0 > az1 { std::mem::swap(&mut az0, &mut az1); naz = 1; }
+        if az0 > t0 { t0 = az0; n = (0, 0, naz); }
+        t1 = t1.min(az1);
+        if t0 < t1 && t0 > 0.001 && n != (0, 0, 0) {
+            best_t = t0;
+            let hx = rx + dx * t0;
+            let hy = ry + dy * t0;
+            let hz = rz + dz * t0;
+            let (u, v) = if n.0 != 0 { (hz, 1.0 - hy) } else if n.1 != 0 { (hx, hz) } else { (hx, 1.0 - hy) };
+            best_hit = Some((t0, n.0, n.1, n.2, u.clamp(0.0, 0.999), v.clamp(0.0, 0.999)));
+        }
+    }
+    best_hit
 }
 
 #[inline]
@@ -519,6 +711,13 @@ fn shade_voxel(
     let mut lr = fl[0] * ao_v;
     let mut lg = fl[1] * ao_v;
     let mut lb = fl[2] * ao_v;
+    let bl = cache.get_light(bx + nx, by + ny, bz + nz).max(cache.get_light(bx, by, bz)) as f32 / 15.0;
+    if bl > 0.0 {
+        let warm = bl * 0.96;
+        lr = lr.max(warm * 1.05);
+        lg = lg.max(warm * 0.96);
+        lb = lb.max(warm * 0.82);
+    }
     if emit > 0 {
         let e = 0.98 + emit as f32 * 0.025;
         lr = lr.max(e); lg = lg.max(e * 0.97); lb = lb.max(e * 0.90);
@@ -659,6 +858,23 @@ fn trace_ray(
                         }
                     }
                     if hit_plant { break; }
+                } else if is_model_block(b) {
+                    if let Some((tp, mnx, mny, mnz, u, v)) = hit_model_boxes(
+                        cache, b, x, y, z, ox, oy, oz, dx, dy, dz, t.max(0.001), t_next, nx, ny, nz,
+                    ) {
+                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, mnx, mny, mnz, u, v, day, tick, false);
+                        if a > 20 {
+                            let rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
+                            let fog = (1.0 - (-tp * fog_rate).exp()).min(0.86);
+                            hit_rgb = [
+                                rgb[0] * (1.0 - fog) + sky[0] * fog,
+                                rgb[1] * (1.0 - fog) + sky[1] * fog,
+                                rgb[2] * (1.0 - fog) + sky[2] * fog,
+                            ];
+                            hit_dist = tp;
+                            break;
+                        }
+                    }
                 } else if is_floor_block(b) {
                     if dy.abs() > 1e-5 {
                         let tp = (y as f32 + 0.06 - oy) / dy;
@@ -917,6 +1133,8 @@ pub fn draw_block_outline(fb: &mut Framebuffer, cam: &Cam, bx: i32, by: i32, bz:
 pub enum EntityKind {
     Steve,
     Mob(MobKind),
+    Boat,
+    Minecart,
 }
 
 fn face_pixel(face: FaceArt, u: f32, v: f32, base: [u8; 3], alt: [u8; 3]) -> [u8; 3] {
@@ -1157,6 +1375,8 @@ pub fn draw_entity_3d(
     let parts = match kind {
         EntityKind::Steve => entities::steve_parts(walk),
         EntityKind::Mob(m) => entities::mob_parts(m, walk),
+        EntityKind::Boat => entities::vehicle_parts(true),
+        EntityKind::Minecart => entities::vehicle_parts(false),
     };
     let (sy, cy) = (yaw.sin(), yaw.cos());
     let focal = fb.w as f32 / 1.56;
@@ -1252,11 +1472,45 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     if item >= 332 && item <= 345 {
         return atlas.sample_item((90 + (item - 332)) as usize, x, y);
     }
+    if item >= 346 && item <= 366 {
+        let idx = match item {
+            crate::items::LAPIS_LAZULI => 104,
+            crate::items::BONE_MEAL => 105,
+            crate::items::WOOD_HOE => 106,
+            crate::items::STONE_HOE => 107,
+            crate::items::IRON_HOE => 108,
+            crate::items::DIAMOND_HOE => 109,
+            crate::items::BOAT => 110,
+            crate::items::MINECART => 111,
+            crate::items::GLASS_BOTTLE => 112,
+            crate::items::POTION_HEAL => 113,
+            crate::items::POTION_FIRE => 113,
+            crate::items::POTION_SPEED => 113,
+            crate::items::IRON_LEGGINGS => 114,
+            crate::items::IRON_BOOTS => 115,
+            crate::items::DIAMOND_LEGGINGS => 116,
+            crate::items::DIAMOND_BOOTS => 117,
+            crate::items::NETHERITE_HELMET => 118,
+            crate::items::NETHERITE_CHESTPLATE => 119,
+            crate::items::NETHERITE_LEGGINGS => 120,
+            crate::items::NETHERITE_BOOTS => 121,
+            crate::items::ENCHANTED_BOOK => 123,
+            _ => 113,
+        };
+        let mut c = atlas.sample_item(idx, x, y);
+        if c[3] > 20 {
+            if item == crate::items::POTION_HEAL { c = [c[0].max(180), c[1] / 2, c[2] / 2, c[3]]; }
+            else if item == crate::items::POTION_FIRE { c = [c[0].max(200), (c[1] as u16 * 3 / 4).min(255) as u8, c[2] / 3, c[3]]; }
+            else if item == crate::items::POTION_SPEED { c = [c[0] / 2, c[1].max(165), c[2].max(210), c[3]]; }
+        }
+        return c;
+    }
     let flat_idx = match item {
         world::TORCH => Some(76),
         world::REDSTONE_TORCH => Some(77),
         world::REDSTONE_DUST => Some(78),
         world::DOOR => Some(79),
+        world::IRON_DOOR => Some(79),
         world::SIGN => Some(80),
         world::BED => Some(81),
         world::FLOWER_RED => Some(82),
@@ -1267,13 +1521,27 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
         world::LEVER => Some(87),
         world::BROWN_MUSHROOM => Some(88),
         world::RED_MUSHROOM => Some(89),
+        world::NETHER_WART => Some(122),
+        world::BREWING_STAND => Some(124),
+        world::HOPPER => Some(125),
+        world::REPEATER => Some(126),
+        world::COMPARATOR => Some(127),
         _ => None,
     };
     if let Some(idx) = flat_idx {
-        return atlas.sample_item(idx, x, y);
+        let mut c = atlas.sample_item(idx, x, y);
+        if item == world::IRON_DOOR && c[3] > 20 {
+            let v = ((c[0] as u16 + c[1] as u16 + c[2] as u16) / 3).max(160).min(235) as u8;
+            c = [v, v, v + 8, c[3]];
+        }
+        return c;
     }
     if item == world::PRESSURE_PLATE {
         if x >= 2 && x <= 13 && y >= 5 && y <= 11 { return [148, 148, 152, 255]; }
+        return [0, 0, 0, 0];
+    }
+    if item == world::BUTTON {
+        if x >= 4 && x <= 11 && y >= 6 && y <= 10 { return [140, 140, 144, 255]; }
         return [0, 0, 0, 0];
     }
     let k = Textures::face_kind(item, 0, 0, 1);
@@ -1284,9 +1552,10 @@ fn is_flat_block_icon(item: u16) -> bool {
     matches!(
         item,
         world::TORCH | world::REDSTONE_TORCH | world::REDSTONE_DUST | world::LEVER
-            | world::PRESSURE_PLATE | world::FLOWER_RED | world::FLOWER_YELLOW
-            | world::TALL_GRASS | world::WHEAT | world::RAIL | world::SIGN | world::DOOR
-            | world::BED | world::BROWN_MUSHROOM | world::RED_MUSHROOM
+            | world::PRESSURE_PLATE | world::BUTTON | world::FLOWER_RED | world::FLOWER_YELLOW
+            | world::TALL_GRASS | world::WHEAT | world::RAIL | world::SIGN | world::DOOR | world::IRON_DOOR
+            | world::BED | world::BROWN_MUSHROOM | world::RED_MUSHROOM | world::SAPLING
+            | world::NETHER_WART | world::BREWING_STAND | world::HOPPER | world::REPEATER | world::COMPARATOR
     )
 }
 
@@ -1450,6 +1719,11 @@ pub fn draw_hud(
     health: f32,
     hunger: f32,
     air: f32,
+    armor: u32,
+    offhand: u16,
+    shield_blocking: bool,
+    potion_fire: f32,
+    potion_speed: f32,
     xp: u32,
     level: u32,
     burn: f32,
@@ -1467,6 +1741,12 @@ pub fn draw_hud(
 ) {
     let hb_left = hotbar_x(0);
     if mode != GameMode::Spectator {
+        if offhand != 0 {
+            let ox = hb_left - SLOT - 8;
+            fb.rect(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, [28, 28, 30, 210]);
+            fb.frame(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, if shield_blocking { [220, 220, 255, 255] } else { [15, 15, 16, 255] });
+            draw_item_icon(fb, ox + 3, HOT_Y + 3, offhand, SLOT - 6, tick);
+        }
         fb.rect(hb_left - 2, HOT_Y - 2, 9 * (SLOT + 2) + 2, SLOT + 4, [28, 28, 30, 210]);
         fb.frame(hb_left - 2, HOT_Y - 2, 9 * (SLOT + 2) + 2, SLOT + 4, [15, 15, 16, 255]);
         for i in 0..9 {
@@ -1483,6 +1763,20 @@ pub fn draw_hud(
             }
         }
         if mode == GameMode::Survival {
+            if armor > 0 {
+                for i in 0..10 {
+                    let threshold = (i as u32 + 1) * 2;
+                    let ax = hb_left + i as i32 * 9;
+                    let ay = HOT_Y - 26;
+                    if armor >= threshold {
+                        fb.rect(ax, ay, 7, 7, [175, 185, 205, 255]);
+                        fb.frame(ax, ay, 7, 7, [40, 44, 52, 255]);
+                    } else if armor >= threshold - 1 {
+                        fb.rect(ax, ay, 4, 7, [175, 185, 205, 255]);
+                        fb.frame(ax, ay, 7, 7, [40, 44, 52, 255]);
+                    }
+                }
+            }
             for i in 0..10 {
                 let threshold = (i as f32 + 1.0) * 2.0;
                 let st = if health >= threshold { 2 } else if health >= threshold - 1.0 { 1 } else { 0 };
@@ -1511,6 +1805,21 @@ pub fn draw_hud(
             if level > 0 {
                 let ls = level.to_string();
                 text_shadow(fb, W as i32 / 2 - (ls.len() as i32 * 3), HOT_Y - 14, &ls, [136, 246, 82, 255], 1);
+            }
+        }
+        if shield_blocking {
+            fb.rect(10, H as i32 - 58, 34, 48, [130, 96, 60, 220]);
+            fb.frame(10, H as i32 - 58, 34, 48, [190, 196, 205, 255]);
+            text_shadow(fb, 14, H as i32 - 38, "BLK", [255, 255, 255, 255], 1);
+        }
+        if potion_fire > 0.0 || potion_speed > 0.0 {
+            let mut py = 32;
+            if potion_fire > 0.0 {
+                text_shadow(fb, 8, py, &format!("FIRE RES {:02}s", potion_fire as i32), [255, 165, 65, 255], 1);
+                py += 10;
+            }
+            if potion_speed > 0.0 {
+                text_shadow(fb, 8, py, &format!("SPEED {:02}s", potion_speed as i32), [110, 220, 255, 255], 1);
             }
         }
         if burn > 0.0 {
@@ -1761,10 +2070,19 @@ pub fn recipe_fits_2x2(pat: &[u16; 9]) -> bool {
     !any || (max_x - min_x + 1 <= 2 && max_y - min_y + 1 <= 2)
 }
 
+pub fn armor_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (22, 30 + i as i32 * 28, SLOT_PX, SLOT_PX)
+}
+pub fn offhand_slot_rect() -> (i32, i32, i32, i32) {
+    (22, 152, SLOT_PX, SLOT_PX)
+}
+
 pub fn draw_inventory_screen(
     fb: &mut Framebuffer,
     hot: &[crate::craft::Stack; 9],
     store: &[crate::craft::Stack; 27],
+    armor: &[crate::craft::Stack; 4],
+    offhand: crate::craft::Stack,
     grid: &[crate::craft::Stack; 9],
     grid_size: usize,
     result: crate::craft::Stack,
@@ -1775,11 +2093,25 @@ pub fn draw_inventory_screen(
     recipe_sel: usize,
 ) {
     fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 140]);
+    panel(fb, 14, 14, 40, 174);
+    text(fb, 18, 18, "GEAR", [60, 60, 60, 255], 1);
+    let mut tip = String::new();
+    for i in 0..4 {
+        let (x, y, w, _h) = armor_slot_rect(i);
+        let hv = hover == Some((4, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 2, y + 2, armor[i].id, w - 4, tick);
+        if hv && !armor[i].is_empty() { tip = crate::items::name(armor[i].id).to_string(); }
+    }
+    let (ox, oy, ow, _oh) = offhand_slot_rect();
+    let ohv = hover == Some((4, 4));
+    slot(fb, ox, oy, ow, ohv);
+    draw_item_icon(fb, ox + 2, oy + 2, offhand.id, ow - 4, tick);
+    if ohv && !offhand.is_empty() { tip = crate::items::name(offhand.id).to_string(); }
+
     let (px, py, pw, ph) = (60, 14, 360, 242);
     panel(fb, px, py, pw, ph);
     text(fb, 76, 20, if grid_size == 3 { "CRAFTING (3x3)" } else { "CRAFTING (2x2)" }, [60, 60, 60, 255], 1);
-
-    let mut tip = String::new();
     for i in 0..grid_size * grid_size {
         let (x, y, w, h) = craft_slot_rect(i, grid_size);
         let hv = hover == Some((0, i));
@@ -2235,4 +2567,147 @@ pub fn draw_options_screen(fb: &mut Framebuffer, sound: bool, music: bool, scale
         button(fb, px + 60, py + 44 + i as i32 * 30, pw - 120, 22, label, hover == i);
     }
     text(fb, px + 10, py + ph - 16, "Click options to cycle values", [90, 90, 90, 255], 1);
+}
+
+pub fn draw_enchant_screen(
+    fb: &mut Framebuffer,
+    item: crate::craft::Stack,
+    lapis: crate::craft::Stack,
+    level: u32,
+    hot: &[crate::craft::Stack; 9],
+    cursor: crate::craft::Stack,
+    tick: u32,
+    hover: Option<(usize, usize)>,
+) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
+    let (px, py, pw, ph) = (64, 16, 352, 238);
+    panel(fb, px, py, pw, ph);
+    text(fb, px + 10, py + 8, &format!("ENCHANTING TABLE  (LVL {})", level), [60, 60, 60, 255], 1);
+    slot(fb, 94, 48, SLOT_PX, hover == Some((0, 0)));
+    draw_item_icon(fb, 96, 50, item.id, SLOT_PX - 4, tick);
+    slot(fb, 126, 48, SLOT_PX, hover == Some((0, 1)));
+    draw_item_icon(fb, 128, 50, lapis.id, SLOT_PX - 4, tick);
+    if lapis.count > 1 { text_shadow(fb, 141, 64, &format!("{}", lapis.count), [255, 255, 255, 255], 1); }
+
+    let opts = [
+        ("I: SHARPNESS / EFFICIENCY I", 1u32),
+        ("II: PROTECTION / FORTUNE II", 3u32),
+        ("III: UNBREAKING / POWER III", 5u32),
+    ];
+    for (i, (label, req)) in opts.iter().enumerate() {
+        let bx = 170; let by = 36 + i as i32 * 26;
+        let can = !item.is_empty() && !lapis.is_empty() && level >= *req;
+        button(fb, bx, by, 224, 22, &format!("{} ({} LVL)", label, req), can && hover == Some((0, 10 + i)));
+    }
+    text(fb, 76, 178, "HOTBAR", [60, 60, 60, 255], 1);
+    for i in 0..9 {
+        let (x, y, w, h) = hot_slot_rect(i);
+        slot(fb, x, y, w, hover == Some((2, i)));
+        draw_item_icon(fb, x + 2, y + 2, hot[i].id, w - 4, tick);
+        if hot[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+    }
+    draw_cursor_stack(fb, cursor, tick);
+}
+
+pub fn draw_anvil_screen(
+    fb: &mut Framebuffer,
+    left: crate::craft::Stack,
+    right: crate::craft::Stack,
+    output: crate::craft::Stack,
+    level: u32,
+    hot: &[crate::craft::Stack; 9],
+    cursor: crate::craft::Stack,
+    tick: u32,
+    hover: Option<(usize, usize)>,
+) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
+    let (px, py, pw, ph) = (64, 16, 352, 238);
+    panel(fb, px, py, pw, ph);
+    text(fb, px + 10, py + 8, &format!("REPAIR & NAME  (COST: 2 LVL, YOU: {})", level), [60, 60, 60, 255], 1);
+    slot(fb, 104, 62, SLOT_PX, hover == Some((0, 0)));
+    draw_item_icon(fb, 106, 64, left.id, SLOT_PX - 4, tick);
+    text(fb, 138, 70, "+", [60, 60, 60, 255], 2);
+    slot(fb, 160, 62, SLOT_PX, hover == Some((0, 1)));
+    draw_item_icon(fb, 162, 64, right.id, SLOT_PX - 4, tick);
+    text(fb, 194, 70, "->", [60, 60, 60, 255], 2);
+    slot(fb, 224, 60, SLOT_PX + 4, hover == Some((0, 2)));
+    draw_item_icon(fb, 226, 62, output.id, SLOT_PX, tick);
+    for i in 0..9 {
+        let (x, y, w, h) = hot_slot_rect(i);
+        slot(fb, x, y, w, hover == Some((2, i)));
+        draw_item_icon(fb, x + 2, y + 2, hot[i].id, w - 4, tick);
+        if hot[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+    }
+    draw_cursor_stack(fb, cursor, tick);
+}
+
+pub fn draw_brewing_screen(
+    fb: &mut Framebuffer,
+    ing: crate::craft::Stack,
+    bottle: crate::craft::Stack,
+    output: crate::craft::Stack,
+    prog: f32,
+    hot: &[crate::craft::Stack; 9],
+    cursor: crate::craft::Stack,
+    tick: u32,
+    hover: Option<(usize, usize)>,
+) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
+    let (px, py, pw, ph) = (64, 16, 352, 238);
+    panel(fb, px, py, pw, ph);
+    text(fb, px + 10, py + 8, "BREWING STAND  (WART / BLAZE / SUGAR)", [60, 60, 60, 255], 1);
+    slot(fb, 180, 36, SLOT_PX, hover == Some((0, 0)));
+    draw_item_icon(fb, 182, 38, ing.id, SLOT_PX - 4, tick);
+    slot(fb, 140, 86, SLOT_PX, hover == Some((0, 1)));
+    draw_item_icon(fb, 142, 88, bottle.id, SLOT_PX - 4, tick);
+    slot(fb, 220, 86, SLOT_PX, hover == Some((0, 2)));
+    draw_item_icon(fb, 222, 88, output.id, SLOT_PX - 4, tick);
+    fb.rect(188, 66, 8, (prog * 18.0) as i32, [240, 180, 60, 255]);
+    text(fb, 84, 126, "RECIPES: GLISTER/APPLE->HEAL, MAGMA/BLAZE->FIRE RES", [65, 65, 70, 255], 1);
+    text(fb, 84, 138, "         WART/REDSTONE->SPEED", [65, 65, 70, 255], 1);
+    for i in 0..9 {
+        let (x, y, w, h) = hot_slot_rect(i);
+        slot(fb, x, y, w, hover == Some((2, i)));
+        draw_item_icon(fb, x + 2, y + 2, hot[i].id, w - 4, tick);
+        if hot[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+    }
+    draw_cursor_stack(fb, cursor, tick);
+}
+
+pub fn draw_trade_screen(
+    fb: &mut Framebuffer,
+    trades: &[(u16, u32, u16, u32)],
+    hot: &[crate::craft::Stack; 9],
+    tick: u32,
+    hover: Option<(usize, usize)>,
+) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
+    let (px, py, pw, ph) = (64, 16, 352, 238);
+    panel(fb, px, py, pw, ph);
+    text(fb, px + 10, py + 8, "VILLAGER TRADING  (CLICK TO TRADE)", [60, 60, 60, 255], 1);
+    for (i, &(cost_id, cost_n, out_id, out_n)) in trades.iter().enumerate() {
+        let by = 30 + i as i32 * 30;
+        let hv = hover == Some((0, i));
+        button(fb, 82, by, 316, 26, "", hv);
+        draw_item_icon(fb, 90, by + 3, cost_id, 20, tick);
+        text_shadow(fb, 114, by + 9, &format!("x{} {}", cost_n, crate::items::name(cost_id)), [255, 255, 255, 255], 1);
+        text_shadow(fb, 224, by + 9, "->", [255, 235, 120, 255], 1);
+        draw_item_icon(fb, 244, by + 3, out_id, 20, tick);
+        text_shadow(fb, 268, by + 9, &format!("x{} {}", out_n, crate::items::name(out_id)), [170, 255, 170, 255], 1);
+    }
+    for i in 0..9 {
+        let (x, y, w, h) = hot_slot_rect(i);
+        slot(fb, x, y, w, false);
+        draw_item_icon(fb, x + 2, y + 2, hot[i].id, w - 4, tick);
+        if hot[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+    }
+}
+
+pub fn draw_death_screen(fb: &mut Framebuffer, level: u32, hover: usize) {
+    fb.rect(0, 0, W as i32, H as i32, [130, 16, 16, 175]);
+    text_shadow(fb, W as i32 / 2 - 66, 62, "YOU DIED!", [255, 235, 235, 255], 2);
+    text_shadow(fb, W as i32 / 2 - 54, 92, &format!("SCORE / LEVEL: {}", level), [255, 235, 120, 255], 1);
+    let bx = (W as i32 - 200) / 2;
+    button(fb, bx, 128, 200, 22, "RESPAWN", hover == 0);
+    button(fb, bx, 158, 200, 22, "TITLE SCREEN", hover == 1);
 }

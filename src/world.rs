@@ -126,7 +126,22 @@ pub const PURPUR_BLOCK: u16 = 117;
 pub const NETHER_BRICKS: u16 = 118;
 pub const END_PORTAL_FRAME_EYE: u16 = 119;
 pub const DOOR_OPEN: u16 = 120;
-pub const MAX_BLOCK: u16 = 119;
+pub const LAPIS_ORE: u16 = 121;
+pub const LAPIS_BLOCK: u16 = 122;
+pub const BREWING_STAND: u16 = 123;
+pub const BEACON: u16 = 124;
+pub const HOPPER: u16 = 125;
+pub const PISTON: u16 = 126;
+pub const STICKY_PISTON: u16 = 127;
+pub const REPEATER: u16 = 128;
+pub const COMPARATOR: u16 = 129;
+pub const SPAWNER: u16 = 130;
+pub const SAPLING: u16 = 131;
+pub const NETHER_WART: u16 = 132;
+pub const BUTTON: u16 = 133;
+pub const IRON_DOOR: u16 = 134;
+pub const IRON_DOOR_OPEN: u16 = 135;
+pub const MAX_BLOCK: u16 = 135;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Dimension {
@@ -345,6 +360,7 @@ fn ore_at(x: i32, y: i32, z: i32) -> Option<u16> {
     if y < 46 && h % 47 == 0 { return Some(IRON_ORE); }
     if y < 60 && h % 31 == 0 { return Some(COAL_ORE); }
     if y < 40 && hash3(x / 3, y / 3, z / 3) % 140 == 0 { return Some(REDSTONE_ORE); }
+    if y < 32 && hash3(x / 3 + 7, y / 3, z / 3 - 5) % 135 == 0 { return Some(LAPIS_ORE); }
     if y < 44 && hash3(x / 4, y / 4, z / 4) % 110 == 0 { return Some(EMERALD_ORE); }
     None
 }
@@ -581,6 +597,13 @@ pub fn block_name(id: u16) -> &'static str {
         CHORUS_PLANT => "Chorus Plant", CHORUS_FLOWER => "Chorus Flower",
         PURPUR_BLOCK => "Purpur Block", NETHER_BRICKS => "Nether Bricks",
         END_PORTAL_FRAME_EYE => "End Portal Frame (Eye)",
+        DOOR_OPEN => "Oak Door",
+        LAPIS_ORE => "Lapis Lazuli Ore", LAPIS_BLOCK => "Lapis Lazuli Block",
+        BREWING_STAND => "Brewing Stand", BEACON => "Beacon",
+        HOPPER => "Hopper", PISTON => "Piston", STICKY_PISTON => "Sticky Piston",
+        REPEATER => "Redstone Repeater", COMPARATOR => "Redstone Comparator",
+        SPAWNER => "Monster Spawner", SAPLING => "Oak Sapling", NETHER_WART => "Nether Wart",
+        BUTTON => "Stone Button", IRON_DOOR | IRON_DOOR_OPEN => "Iron Door",
         _ => "Unknown",
     }
 }
@@ -590,7 +613,8 @@ pub fn is_solid(id: u16) -> bool {
         id,
         AIR | WATER | LAVA | TALL_GRASS | FLOWER_RED | FLOWER_YELLOW | COBWEB | VINE | WHEAT
             | TORCH | SNOW_LAYER | RAIL | REDSTONE_DUST | LEVER | PRESSURE_PLATE | REDSTONE_TORCH
-            | NETHER_PORTAL | END_PORTAL | DOOR_OPEN
+            | NETHER_PORTAL | END_PORTAL | DOOR_OPEN | IRON_DOOR_OPEN | SAPLING | NETHER_WART
+            | BUTTON | REPEATER | COMPARATOR
     )
 }
 
@@ -599,14 +623,17 @@ pub fn is_opaque(id: u16) -> bool {
         && !matches!(
             id,
             GLASS | LEAVES | SPRUCE_LEAVES | JUNGLE_LEAVES | BIRCH_LEAVES | DARK_LEAVES | ICE
+                | BEACON | BREWING_STAND | SPAWNER | FENCE | ANVIL | ENCHANTING | HOPPER
+                | SLAB | STAIRS | DOOR | IRON_DOOR | LADDER | CAMPFIRE | LANTERN | CAKE
         )
 }
 
 pub fn emits_light(id: u16) -> u8 {
     match id {
         TORCH | CAMPFIRE | LANTERN | SHROOMLIGHT | NETHER_PORTAL | END_PORTAL => 14,
-        GLOWSTONE | SEA_LANTERN => 15,
-        LAVA | MAGMA | CRYING_OBSIDIAN => 12,
+        GLOWSTONE | SEA_LANTERN | BEACON => 15,
+        LAVA | MAGMA | CRYING_OBSIDIAN | ENCHANTING => 12,
+        REDSTONE_TORCH => 7,
         _ => 0,
     }
 }
@@ -906,12 +933,14 @@ const CHUNK_LEN: usize = CHUNK as usize * WORLD_H * CHUNK as usize;
 
 pub struct RenderCache {
     valid: bool,
+    light_dirty: bool,
     dim: Dimension,
     cx: i32,
     cz: i32,
     ox: i32,
     oz: i32,
     data: Vec<u16>,
+    light: Vec<u8>,
     pub lit: Vec<(i32, i32, i32)>,
 }
 
@@ -919,14 +948,91 @@ impl RenderCache {
     pub fn new() -> Self {
         Self {
             valid: false,
+            light_dirty: true,
             dim: Dimension::Overworld,
             cx: 0,
             cz: 0,
             ox: 0,
             oz: 0,
             data: vec![0; CACHE_SIDE * CACHE_SIDE * CHUNK_LEN],
+            light: vec![0; CACHE_SIDE * CACHE_SIDE * CHUNK_LEN],
             lit: Vec::new(),
         }
+    }
+
+    #[inline(always)]
+    pub fn get_light(&self, x: i32, y: i32, z: i32) -> u8 {
+        if y < 0 || y >= WORLD_H as i32 { return 0; }
+        let rx = x - self.ox;
+        let rz = z - self.oz;
+        if (rx as u32) >= CACHE_BLOCKS as u32 || (rz as u32) >= CACHE_BLOCKS as u32 { return 0; }
+        let cxi = (rx >> 4) as usize;
+        let czi = (rz >> 4) as usize;
+        let lx = (rx & 15) as usize;
+        let lz = (rz & 15) as usize;
+        let ci = (cxi * CACHE_SIDE + czi) * CHUNK_LEN;
+        self.light[ci + (y as usize * CHUNK as usize + lx) * CHUNK as usize + lz]
+    }
+
+    #[inline(always)]
+    fn idx_of(&self, x: i32, y: i32, z: i32) -> Option<usize> {
+        if y < 0 || y >= WORLD_H as i32 { return None; }
+        let rx = x - self.ox;
+        let rz = z - self.oz;
+        if (rx as u32) >= CACHE_BLOCKS as u32 || (rz as u32) >= CACHE_BLOCKS as u32 { return None; }
+        let cxi = (rx >> 4) as usize;
+        let czi = (rz >> 4) as usize;
+        let lx = (rx & 15) as usize;
+        let lz = (rz & 15) as usize;
+        Some((cxi * CACHE_SIDE + czi) * CHUNK_LEN + (y as usize * CHUNK as usize + lx) * CHUNK as usize + lz)
+    }
+
+    pub fn rebuild_light(&mut self) {
+        self.light.fill(0);
+        let mut q: std::collections::VecDeque<(i32, i32, i32, u8)> = std::collections::VecDeque::new();
+        for cxi in 0..CACHE_SIDE {
+            for czi in 0..CACHE_SIDE {
+                let ci = (cxi * CACHE_SIDE + czi) * CHUNK_LEN;
+                let bx = self.ox + cxi as i32 * CHUNK;
+                let bz = self.oz + czi as i32 * CHUNK;
+                for y in 0..WORLD_H {
+                    let yoff = ci + y * CHUNK as usize * CHUNK as usize;
+                    for lx in 0..CHUNK as usize {
+                        let xoff = yoff + lx * CHUNK as usize;
+                        for lz in 0..CHUNK as usize {
+                            let id = self.data[xoff + lz];
+                            let e = emits_light(id);
+                            if e > 0 {
+                                self.light[xoff + lz] = e;
+                                q.push_back((bx + lx as i32, y as i32, bz + lz as i32, e));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for &(lx, ly, lz) in &self.lit {
+            if let Some(i) = self.idx_of(lx, ly, lz) {
+                if self.data[i] == LAMP && self.light[i] < 15 {
+                    self.light[i] = 15;
+                    q.push_back((lx, ly, lz, 15));
+                }
+            }
+        }
+        while let Some((x, y, z, lv)) = q.pop_front() {
+            if lv <= 1 { continue; }
+            let nlv = lv - 1;
+            for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
+                let nx = x + dx; let ny = y + dy; let nz = z + dz;
+                if let Some(ni) = self.idx_of(nx, ny, nz) {
+                    if !is_opaque(self.data[ni]) && self.light[ni] < nlv {
+                        self.light[ni] = nlv;
+                        q.push_back((nx, ny, nz, nlv));
+                    }
+                }
+            }
+        }
+        self.light_dirty = false;
     }
 
     #[inline(always)]
@@ -1039,6 +1145,7 @@ impl World {
         if y < 0 || y >= WORLD_H as i32 { return; }
         self.dims[self.dim.idx()].edits.insert(BPos(x, y, z), id);
         self.cache.set_if_in_bounds(x, y, z, id);
+        self.cache.light_dirty = true;
     }
 
     pub fn all_edits(&self) -> Vec<(u8, i32, i32, i32, u16)> {
@@ -1084,10 +1191,17 @@ impl World {
             for (&BPos(ex, ey, ez), &id) in edits_ref {
                 self.cache.set_if_in_bounds(ex, ey, ez, id);
             }
+            self.cache.light_dirty = true;
         }
-        self.cache.lit.clear();
-        for &p in &self.lit {
-            self.cache.lit.push(p);
+        if self.cache.lit != self.lit.iter().copied().collect::<Vec<_>>() {
+            self.cache.lit.clear();
+            for &p in &self.lit {
+                self.cache.lit.push(p);
+            }
+            self.cache.light_dirty = true;
+        }
+        if self.cache.light_dirty {
+            self.cache.rebuild_light();
         }
         &self.cache
     }
