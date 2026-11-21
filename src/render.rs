@@ -172,7 +172,7 @@ impl Textures {
             world::SPRUCE_LOG | world::DARK_LOG => 47,
             world::BIRCH_LOG => 71,
             world::PLANKS | world::FENCE | world::SIGN => 12,
-            world::DOOR => 85,
+            world::DOOR | world::DOOR_OPEN => 85,
             world::LADDER => 91,
             world::GLASS => 13,
             world::TORCH | world::CAMPFIRE => 14,
@@ -492,7 +492,7 @@ fn is_floor_block(b: u16) -> bool {
 fn is_cutout_cube(b: u16) -> bool {
     matches!(
         b,
-        world::GLASS | world::ICE | world::COBWEB | world::DOOR | world::LADDER | world::VINE
+        world::GLASS | world::ICE | world::COBWEB | world::DOOR | world::DOOR_OPEN | world::LADDER | world::VINE
             | world::LEVER | world::LANTERN | world::CAMPFIRE
     )
 }
@@ -1449,6 +1449,10 @@ pub fn draw_hud(
     selected: usize,
     health: f32,
     hunger: f32,
+    air: f32,
+    xp: u32,
+    level: u32,
+    burn: f32,
     tick: u32,
     message: &str,
     message_timer: f32,
@@ -1488,8 +1492,30 @@ pub fn draw_hud(
                 let filled = hunger >= (i as f32 + 1.0) * 2.0 - 0.5;
                 drumstick(fb, hb_left + 9 * (SLOT + 2) - 8 - i * 8, HOT_Y - 16, filled);
             }
-            fb.rect(hb_left, HOT_Y - 6, 9 * (SLOT + 2) - 2, 3, [20, 20, 20, 220]);
-            fb.rect(hb_left, HOT_Y - 6, 118, 3, [122, 232, 68, 255]);
+            if air < 9.95 {
+                let bubbles = air.ceil().clamp(0.0, 10.0) as i32;
+                for i in 0..bubbles {
+                    let bx = hb_left + 9 * (SLOT + 2) - 8 - i * 8;
+                    let by = HOT_Y - 25;
+                    fb.rect(bx, by, 6, 6, [40, 140, 240, 220]);
+                    fb.rect(bx + 1, by + 1, 2, 2, [215, 245, 255, 240]);
+                }
+            }
+            let xp_bar_w = 9 * (SLOT + 2) - 2;
+            let needed = (7 + level * 2).max(1);
+            let xp_fill = ((xp as f32 / needed as f32).clamp(0.0, 1.0) * xp_bar_w as f32) as i32;
+            fb.rect(hb_left, HOT_Y - 6, xp_bar_w, 3, [20, 20, 20, 220]);
+            if xp_fill > 0 {
+                fb.rect(hb_left, HOT_Y - 6, xp_fill, 3, [122, 232, 68, 255]);
+            }
+            if level > 0 {
+                let ls = level.to_string();
+                text_shadow(fb, W as i32 / 2 - (ls.len() as i32 * 3), HOT_Y - 14, &ls, [136, 246, 82, 255], 1);
+            }
+        }
+        if burn > 0.0 {
+            let flicker = ((tick / 3) % 2) as i32 * 4;
+            fb.rect(0, H as i32 - 22 - flicker, W as i32, 22 + flicker, [240, 96, 18, 85]);
         }
     }
 
@@ -2092,6 +2118,56 @@ pub fn draw_furnace_screen(
     }
     text(fb, px + 10, py + ph - 12, "E / ESC CLOSE", [60, 60, 60, 255], 1);
     draw_cursor_stack(fb, cursor, tick);
+}
+
+pub fn chest_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (76 + (i % 9) as i32 * (SLOT_PX + 2), 38 + (i / 9) as i32 * (SLOT_PX + 2), SLOT_PX, SLOT_PX)
+}
+pub fn chest_inv_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (76 + (i % 9) as i32 * (SLOT_PX + 2), 128 + (i / 9) as i32 * (SLOT_PX + 2), SLOT_PX, SLOT_PX)
+}
+
+pub fn draw_chest_screen(
+    fb: &mut Framebuffer,
+    chest: &[crate::craft::Stack; 27],
+    store: &[crate::craft::Stack; 27],
+    hot: &[crate::craft::Stack; 9],
+    cursor: crate::craft::Stack,
+    tick: u32,
+    hover: Option<(usize, usize)>,
+) {
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 140]);
+    let (px, py, pw, ph) = (64, 16, 352, 238);
+    panel(fb, px, py, pw, ph);
+    text(fb, 76, 26, "CHEST", [60, 60, 60, 255], 1);
+    let mut tip = String::new();
+    for i in 0..27 {
+        let (x, y, w, h) = (76 + (i % 9) as i32 * (SLOT_PX + 2), 38 + (i / 9) as i32 * (SLOT_PX + 2), SLOT_PX, SLOT_PX);
+        let hv = hover == Some((0, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 2, y + 2, chest[i].id, w - 4, tick);
+        if chest[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", chest[i].count), [255, 255, 255, 255], 1); }
+        if hv && !chest[i].is_empty() { tip = crate::items::name(chest[i].id).to_string(); }
+    }
+    text(fb, 76, 118, "INVENTORY", [60, 60, 60, 255], 1);
+    for i in 0..27 {
+        let (x, y, w, h) = (76 + (i % 9) as i32 * (SLOT_PX + 2), 128 + (i / 9) as i32 * (SLOT_PX + 2), SLOT_PX, SLOT_PX);
+        let hv = hover == Some((1, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 2, y + 2, store[i].id, w - 4, tick);
+        if store[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", store[i].count), [255, 255, 255, 255], 1); }
+        if hv && !store[i].is_empty() { tip = crate::items::name(store[i].id).to_string(); }
+    }
+    for i in 0..9 {
+        let (x, y, w, h) = hot_slot_rect(i);
+        let hv = hover == Some((2, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 2, y + 2, hot[i].id, w - 4, tick);
+        if hot[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+        if hv && !hot[i].is_empty() { tip = crate::items::name(hot[i].id).to_string(); }
+    }
+    draw_cursor_stack(fb, cursor, tick);
+    if cursor.is_empty() && !tip.is_empty() { draw_tooltip(fb, &tip); }
 }
 
 pub fn draw_chat(fb: &mut Framebuffer, lines: &[(String, f32)], input: Option<&str>, t: f32) {

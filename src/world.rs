@@ -125,6 +125,7 @@ pub const CHORUS_FLOWER: u16 = 116;
 pub const PURPUR_BLOCK: u16 = 117;
 pub const NETHER_BRICKS: u16 = 118;
 pub const END_PORTAL_FRAME_EYE: u16 = 119;
+pub const DOOR_OPEN: u16 = 120;
 pub const MAX_BLOCK: u16 = 119;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -589,7 +590,7 @@ pub fn is_solid(id: u16) -> bool {
         id,
         AIR | WATER | LAVA | TALL_GRASS | FLOWER_RED | FLOWER_YELLOW | COBWEB | VINE | WHEAT
             | TORCH | SNOW_LAYER | RAIL | REDSTONE_DUST | LEVER | PRESSURE_PLATE | REDSTONE_TORCH
-            | NETHER_PORTAL | END_PORTAL
+            | NETHER_PORTAL | END_PORTAL | DOOR_OPEN
     )
 }
 
@@ -652,8 +653,8 @@ fn generate_overworld_chunk(cx: i32, cz: i32) -> Chunk {
                 let mut id = AIR;
                 if y == 0 { id = BEDROCK; }
                 else if y <= h {
-                    if cave_at(x, y, z) && y < h - 2 && y > 3 {
-                        id = if y < 18 && hash3(x, y, z) % 90 == 0 { LAVA } else { AIR };
+                    if !matches!(b, Biome::Ocean | Biome::Beach) && cave_at(x, y, z) && y < h - 2 && y > 3 {
+                        id = if y <= 10 { LAVA } else { AIR };
                     } else {
                         id = STONE;
                         if let Some(o) = ore_at(x, y, z) { id = o; }
@@ -707,6 +708,7 @@ fn generate_overworld_chunk(cx: i32, cz: i32) -> Chunk {
             for t in 0..48 {
                 let (wx, wz) = if along_x { (mx * 48 + t, origin) } else { (origin, mz * 48 + t) };
                 if wx.div_euclid(CHUNK) != cx || wz.div_euclid(CHUNK) != cz { continue; }
+                if matches!(biome_at(wx, wz), Biome::Ocean | Biome::Beach) { continue; }
                 let lx = wx - cx * CHUNK;
                 let lz = wz - cz * CHUNK;
                 let y = 24 + (hash2(mx, mz) % 6) as i32;
