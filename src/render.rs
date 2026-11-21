@@ -1,7 +1,7 @@
 // Software renderer: 16x16 face-aware pixel textures, voxel raycaster,
 // 3D rasterized box-model mobs/player, isometric 3D block icons, and Minecraft UI.
 use crate::entities::{self, FaceArt, MobKind, Part3D};
-use crate::world::{self, Biome, RenderCache, World};
+use crate::world::{self, Biome, Dimension, RenderCache, World};
 use std::f32::consts::PI;
 use std::sync::OnceLock;
 
@@ -10,8 +10,8 @@ pub const H: usize = 270;
 pub const RW: usize = 480;
 pub const RH: usize = 270;
 const TEX: usize = 16;
-const NUM_BLOCK_TEX: usize = 96;
-const NUM_ITEM_TEX: usize = 90;
+const NUM_BLOCK_TEX: usize = 128;
+const NUM_ITEM_TEX: usize = 104;
 
 static ATLAS_BYTES: &[u8] = include_bytes!("../assets/textures.bin");
 static ATLAS_CACHE: OnceLock<Textures> = OnceLock::new();
@@ -137,6 +137,18 @@ impl Textures {
             world::CHEST => {
                 if nz > 0 { 40 } else { 76 }
             }
+            world::END_PORTAL_FRAME => {
+                if ny > 0 { 97 } else if ny < 0 { 59 } else { 98 }
+            }
+            world::END_PORTAL_FRAME_EYE => {
+                if ny > 0 { 99 } else if ny < 0 { 59 } else { 98 }
+            }
+            world::CRIMSON_NYLIUM => {
+                if ny > 0 { 101 } else { 60 }
+            }
+            world::WARPED_NYLIUM => {
+                if ny > 0 { 102 } else { 60 }
+            }
             _ => Self::kind(block),
         }
     }
@@ -230,6 +242,25 @@ impl Textures {
             world::LEVER => 67,
             world::LAMP => 68,
             world::PRESSURE_PLATE => 69,
+            world::NETHER_PORTAL => 96,
+            world::END_PORTAL_FRAME => 98,
+            world::END_PORTAL_FRAME_EYE => 99,
+            world::END_PORTAL => 115,
+            world::CRYING_OBSIDIAN => 100,
+            world::CRIMSON_NYLIUM => 101,
+            world::WARPED_NYLIUM => 102,
+            world::CRIMSON_STEM => 103,
+            world::CRIMSON_WART => 104,
+            world::WARPED_STEM => 105,
+            world::WARPED_WART => 106,
+            world::BASALT => 107,
+            world::SHROOMLIGHT => 108,
+            world::NETHER_QUARTZ_ORE => 109,
+            world::ANCIENT_DEBRIS => 110,
+            world::CHORUS_PLANT => 111,
+            world::CHORUS_FLOWER => 112,
+            world::PURPUR_BLOCK => 113,
+            world::NETHER_BRICKS => 114,
             _ => 0,
         }
     }
@@ -253,7 +284,7 @@ impl Textures {
         } else {
             Self::face_kind(block, nx, ny, nz)
         };
-        let animated = block == world::WATER || block == world::LAVA;
+        let animated = block == world::WATER || block == world::LAVA || block == world::NETHER_PORTAL;
         self.sample_kind(k, u, v, tick, animated)
     }
 
@@ -356,29 +387,44 @@ fn day_factor(time: f32) -> f32 {
     (sun * 2.2 + 0.35).clamp(0.0, 1.0)
 }
 
-fn sky_color(dir_y: f32, time: f32, x: i32, y: i32) -> [f32; 3] {
-    let sun = (time * 2.0 * PI).sin();
-    let day = day_factor(time);
-    let horizon = 0.22 + sun.abs() * 0.10;
-    let t = ((dir_y * 0.5 + 0.5) * (1.0 - horizon) + horizon).clamp(0.0, 1.0);
-    let night_top = [8.0, 14.0, 36.0];
-    let night_bot = [22.0, 26.0, 56.0];
-    let day_top = [72.0, 148.0, 242.0];
-    let day_bot = [178.0, 218.0, 252.0];
-    let dusk = [240.0, 138.0, 88.0];
-    let dusk_amt = (1.0 - sun.abs() * 3.0).clamp(0.0, 1.0) * 0.78;
-    let mut c = [0.0; 3];
-    for i in 0..3 {
-        let mut v = night_bot[i] + (night_top[i] - night_bot[i]) * t;
-        let dv = day_bot[i] + (day_top[i] - day_bot[i]) * t;
-        v = v + (dv - v) * day;
-        v = v * (1.0 - dusk_amt) + dusk[i] * dusk_amt * (1.0 - dir_y.abs().min(1.0)) * 0.72;
-        c[i] = v;
+fn sky_color(dim: Dimension, dir_y: f32, time: f32, x: i32, y: i32) -> [f32; 3] {
+    match dim {
+        Dimension::Nether => {
+            let t = (dir_y * 0.5 + 0.5).clamp(0.0, 1.0);
+            [52.0 + (1.0 - t) * 24.0, 12.0 + (1.0 - t) * 10.0, 10.0 + (1.0 - t) * 8.0]
+        }
+        Dimension::End => {
+            let mut c = [14.0, 9.0, 24.0];
+            if th(x, y, 91) % 620 == 0 {
+                c = [195.0, 170.0, 230.0];
+            }
+            c
+        }
+        Dimension::Overworld => {
+            let sun = (time * 2.0 * PI).sin();
+            let day = day_factor(time);
+            let horizon = 0.22 + sun.abs() * 0.10;
+            let t = ((dir_y * 0.5 + 0.5) * (1.0 - horizon) + horizon).clamp(0.0, 1.0);
+            let night_top = [8.0, 14.0, 36.0];
+            let night_bot = [22.0, 26.0, 56.0];
+            let day_top = [72.0, 148.0, 242.0];
+            let day_bot = [178.0, 218.0, 252.0];
+            let dusk = [240.0, 138.0, 88.0];
+            let dusk_amt = (1.0 - sun.abs() * 3.0).clamp(0.0, 1.0) * 0.78;
+            let mut c = [0.0; 3];
+            for i in 0..3 {
+                let mut v = night_bot[i] + (night_top[i] - night_bot[i]) * t;
+                let dv = day_bot[i] + (day_top[i] - day_bot[i]) * t;
+                v = v + (dv - v) * day;
+                v = v * (1.0 - dusk_amt) + dusk[i] * dusk_amt * (1.0 - dir_y.abs().min(1.0)) * 0.72;
+                c[i] = v;
+            }
+            if day < 0.2 && dir_y > 0.02 && th(x, y, 91) % 900 == 0 {
+                c = [235.0, 235.0, 220.0];
+            }
+            c
+        }
     }
-    if day < 0.2 && dir_y > 0.02 && th(x, y, 91) % 900 == 0 {
-        c = [235.0, 235.0, 220.0];
-    }
-    c
 }
 
 #[inline]
@@ -483,6 +529,30 @@ fn shade_voxel(
     ([t[0] as f32 * lr, t[1] as f32 * lg, t[2] as f32 * lb], t[3])
 }
 
+#[inline]
+fn apply_crack(
+    tex: &Textures,
+    mut rgb: [f32; 3],
+    bx: i32, by: i32, bz: i32,
+    u: f32, v: f32,
+    tick: u32,
+    mining: Option<(i32, i32, i32, u8)>,
+) -> [f32; 3] {
+    if let Some((mx, my, mz, stage)) = mining {
+        if bx == mx && by == my && bz == mz {
+            let st = (stage as usize).min(9);
+            let cr = tex.sample_kind(116 + st, u, v, tick, false);
+            if cr[3] > 20 {
+                let m = (cr[0] as f32 / 255.0) * 0.65;
+                rgb[0] *= m;
+                rgb[1] *= m;
+                rgb[2] *= m;
+            }
+        }
+    }
+    rgb
+}
+
 #[allow(clippy::too_many_arguments)]
 fn trace_ray(
     tex: &Textures,
@@ -494,6 +564,8 @@ fn trace_ray(
     tick: u32,
     time: f32,
     underwater: bool,
+    dim: Dimension,
+    mining: Option<(i32, i32, i32, u8)>,
 ) -> ([u8; 3], f32) {
     let ox = cam.x; let oy = cam.y; let oz = cam.z;
     let mut x = ox.floor() as i32;
@@ -522,15 +594,18 @@ fn trace_ray(
     let mut hit_rgb = sky;
     let mut hit_dist = f32::INFINITY;
     let max_dist = 76.0f32;
+    let fog_rate = if dim == Dimension::Nether { 0.016 } else { 0.009 };
 
-    // Precompute cloud color for sky fallback
-    if let Some(cc) = cloud_color(cam, dx, dy, dz, time, day) {
-        let fade = 0.50 + day * 0.42;
-        hit_rgb = [
-            hit_rgb[0] * (1.0 - fade) + cc[0] * fade,
-            hit_rgb[1] * (1.0 - fade) + cc[1] * fade,
-            hit_rgb[2] * (1.0 - fade) + cc[2] * fade,
-        ];
+    // Precompute cloud color for Overworld sky fallback
+    if dim == Dimension::Overworld {
+        if let Some(cc) = cloud_color(cam, dx, dy, dz, time, day) {
+            let fade = 0.50 + day * 0.42;
+            hit_rgb = [
+                hit_rgb[0] * (1.0 - fade) + cc[0] * fade,
+                hit_rgb[1] * (1.0 - fade) + cc[1] * fade,
+                hit_rgb[2] * (1.0 - fade) + cc[2] * fade,
+            ];
+        }
     }
 
     for _ in 0..220 {
@@ -569,9 +644,10 @@ fn trace_ray(
                     let mut hit_plant = false;
                     for ci in 0..nc {
                         let (tp, u, v) = cands[ci];
-                        let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, u, v, day, tick, false);
+                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, u, v, day, tick, false);
                         if a > 25 {
-                            let fog = (1.0 - (-tp * 0.009).exp()).min(0.86);
+                            let rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
+                            let fog = (1.0 - (-tp * fog_rate).exp()).min(0.86);
                             hit_rgb = [
                                 rgb[0] * (1.0 - fog) + sky[0] * fog,
                                 rgb[1] * (1.0 - fog) + sky[1] * fog,
@@ -590,9 +666,10 @@ fn trace_ray(
                             let px = ox + dx * tp - x as f32;
                             let pz = oz + dz * tp - z as f32;
                             if (0.0..=1.0).contains(&px) && (0.0..=1.0).contains(&pz) {
-                                let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, px, pz, day, tick, false);
+                                let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, px, pz, day, tick, false);
                                 if a > 25 {
-                                    let fog = (1.0 - (-tp * 0.009).exp()).min(0.86);
+                                    let rgb = apply_crack(tex, rgb0, x, y, z, px, pz, tick, mining);
+                                    let fog = (1.0 - (-tp * fog_rate).exp()).min(0.86);
                                     hit_rgb = [
                                         rgb[0] * (1.0 - fog) + sky[0] * fog,
                                         rgb[1] * (1.0 - fog) + sky[1] * fog,
@@ -604,11 +681,11 @@ fn trace_ray(
                             }
                         }
                     }
-                } else if b == world::WATER || b == world::LAVA {
-                    if t > 0.001 && !has_trans {
+                } else if b == world::WATER || b == world::LAVA || b == world::NETHER_PORTAL || b == world::END_PORTAL {
+                    if t > 0.001 {
                         let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
                         let tpx = tex.sample_face(b, nx, ny, nz, u, v, tick);
-                        if b == world::WATER {
+                        if b == world::WATER && !has_trans {
                             let fresnel = ((1.0 - dy.abs()).powf(2.5) * 0.35).clamp(0.05, 0.38);
                             let shimmer = if ((u * 16.0) as i32 + (v * 16.0) as i32 + (tick / 8) as i32) % 9 == 0 { 1.12 } else { 1.0 };
                             let light = 0.55 + day * 0.48;
@@ -620,8 +697,13 @@ fn trace_ray(
                             trans_alpha = 0.62;
                             trans_dist = t;
                             has_trans = true;
-                        } else {
-                            let fog = (1.0 - (-t * 0.009).exp()).min(0.85);
+                        } else if b == world::NETHER_PORTAL && !has_trans {
+                            trans_rgb = [tpx[0] as f32 * 1.25, tpx[1] as f32 * 1.10, tpx[2] as f32 * 1.35];
+                            trans_alpha = 0.72;
+                            trans_dist = t;
+                            has_trans = true;
+                        } else if b == world::LAVA || b == world::END_PORTAL {
+                            let fog = (1.0 - (-t * fog_rate).exp()).min(0.85);
                             hit_rgb = [
                                 tpx[0] as f32 * 1.15 * (1.0 - fog) + sky[0] * fog,
                                 tpx[1] as f32 * 1.15 * (1.0 - fog) + sky[1] * fog,
@@ -634,9 +716,10 @@ fn trace_ray(
                 } else if is_cutout_cube(b) {
                     if t > 0.001 {
                         let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
-                        let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true);
+                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true);
                         if a >= 240 {
-                            let fog = (1.0 - (-t * 0.009).exp()).min(0.86);
+                            let rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
+                            let fog = (1.0 - (-t * fog_rate).exp()).min(0.86);
                             hit_rgb = [
                                 rgb[0] * (1.0 - fog) + sky[0] * fog,
                                 rgb[1] * (1.0 - fog) + sky[1] * fog,
@@ -645,7 +728,7 @@ fn trace_ray(
                             hit_dist = t;
                             break;
                         } else if a > 20 && !has_trans {
-                            trans_rgb = rgb;
+                            trans_rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
                             trans_alpha = a as f32 / 255.0;
                             trans_dist = t;
                             has_trans = true;
@@ -653,9 +736,10 @@ fn trace_ray(
                     }
                 } else if t > 0.001 {
                     let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
-                    let (rgb, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true);
+                    let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true);
                     if a > 20 {
-                        let fog = (1.0 - (-t * 0.009).exp()).min(0.86);
+                        let rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
+                        let fog = (1.0 - (-t * fog_rate).exp()).min(0.86);
                         hit_rgb = [
                             rgb[0] * (1.0 - fog) + sky[0] * fog,
                             rgb[1] * (1.0 - fog) + sky[1] * fog,
@@ -673,7 +757,7 @@ fn trace_ray(
         if t > max_dist { break; }
     }
 
-    if hit_dist.is_infinite() {
+    if hit_dist.is_infinite() && dim == Dimension::Overworld {
         let ang = time * 2.0 * PI;
         let mut sx = ang.cos();
         let mut sy = ang.sin();
@@ -698,7 +782,7 @@ fn trace_ray(
     }
 
     if has_trans {
-        let fog = (1.0 - (-trans_dist * 0.009).exp()).min(0.85);
+        let fog = (1.0 - (-trans_dist * fog_rate).exp()).min(0.85);
         let tr = trans_rgb[0] * (1.0 - fog) + sky[0] * fog;
         let tg = trans_rgb[1] * (1.0 - fog) + sky[1] * fog;
         let tb = trans_rgb[2] * (1.0 - fog) + sky[2] * fog;
@@ -725,9 +809,22 @@ fn trace_ray(
     )
 }
 
-pub fn render_world(fb: &mut Framebuffer, tex: &Textures, world: &mut World, cam: &Cam, time: f32, tick: u32) {
+pub fn render_world(
+    fb: &mut Framebuffer,
+    tex: &Textures,
+    world: &mut World,
+    cam: &Cam,
+    time: f32,
+    tick: u32,
+    mining: Option<(i32, i32, i32, u8)>,
+) {
     fb.clear();
-    let day = day_factor(time);
+    let dim = world.dim;
+    let day = match dim {
+        Dimension::Overworld => day_factor(time),
+        Dimension::Nether => 0.72,
+        Dimension::End => 0.64,
+    };
     let w = fb.w;
     let h = fb.h;
     let aspect = w as f32 / h as f32;
@@ -755,8 +852,8 @@ pub fn render_world(fb: &mut Framebuffer, tex: &Textures, world: &mut World, cam
                         let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
                         let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
                         dx *= inv_len; dy *= inv_len; dz *= inv_len;
-                        let sky = sky_color(dy, time, px as i32, py as i32);
-                        let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater);
+                        let sky = sky_color(dim, dy, time, px as i32, py as i32);
+                        let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, dim, mining);
                         let pi = local_y * w + px;
                         depth_band[pi] = dist;
                         let di = pi * 4;
@@ -888,9 +985,59 @@ fn face_pixel(face: FaceArt, u: f32, v: f32, base: [u8; 3], alt: [u8; 3]) -> [u8
         }
         FaceArt::Villager => {
             if y <= 1 { return alt; }
-            if y == 3 && x >= 1 && x <= 6 { return [72, 48, 30]; } // unibrow
+            if y == 3 && x >= 1 && x <= 6 { return [72, 48, 30]; }
             if y == 4 && (x == 1 || x == 6) { return [245, 245, 245]; }
-            if y == 4 && (x == 2 || x == 5) { return [52, 152, 72]; } // emerald eyes
+            if y == 4 && (x == 2 || x == 5) { return [52, 152, 72]; }
+            base
+        }
+        FaceArt::ZombifiedPiglin => {
+            if x >= 4 && y <= 4 { return alt; }
+            if y == 4 && (x == 1 || x == 2 || x == 5 || x == 6) { return [30, 42, 26]; }
+            base
+        }
+        FaceArt::Piglin => {
+            if y <= 1 { return alt; }
+            if y == 4 && (x == 1 || x == 6) { return [246, 246, 246]; }
+            if y >= 5 && x >= 2 && x <= 5 { return [228, 128, 126]; }
+            base
+        }
+        FaceArt::Ghast => {
+            if y == 3 && (x == 1 || x == 2 || x == 5 || x == 6) { return [48, 48, 54]; }
+            if y >= 5 && y <= 6 && x >= 3 && x <= 4 { return [158, 54, 60]; }
+            base
+        }
+        FaceArt::Blaze => {
+            if y == 4 && (x == 1 || x == 2 || x == 5 || x == 6) { return [255, 250, 175]; }
+            if y <= 1 { return alt; }
+            base
+        }
+        FaceArt::WitherSkeleton => {
+            if y == 4 && (x == 1 || x == 2 || x == 5 || x == 6) { return [158, 158, 166]; }
+            if y == 6 && x >= 2 && x <= 5 { return [20, 18, 22]; }
+            base
+        }
+        FaceArt::Slime => {
+            if y == 3 && (x == 1 || x == 2 || x == 5 || x == 6) { return [24, 52, 24]; }
+            if y == 6 && x >= 3 && x <= 4 { return [24, 52, 24]; }
+            if x == 0 || x == 7 || y == 0 || y == 7 { alt } else { base }
+        }
+        FaceArt::Wolf => {
+            if y == 3 && (x == 1 || x == 6) { return [24, 24, 26]; }
+            if y >= 5 && x >= 3 && x <= 4 { return [30, 26, 26]; }
+            base
+        }
+        FaceArt::PolarBear => {
+            if y == 3 && (x == 1 || x == 6) { return [22, 24, 28]; }
+            if y >= 5 && x >= 3 && x <= 4 { return [32, 34, 40]; }
+            base
+        }
+        FaceArt::Parrot => {
+            if y == 3 && (x == 1 || x == 6) { return [24, 24, 28]; }
+            if y >= 4 && y <= 5 && x >= 3 && x <= 4 { return [240, 206, 54]; }
+            base
+        }
+        FaceArt::EnderDragon => {
+            if y == 4 && (x == 1 || x == 2 || x == 5 || x == 6) { return alt; }
             base
         }
         FaceArt::None => base,
@@ -1102,6 +1249,9 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     if item >= 256 && item <= 331 {
         return atlas.sample_item((item - 256) as usize, x, y);
     }
+    if item >= 332 && item <= 345 {
+        return atlas.sample_item((90 + (item - 332)) as usize, x, y);
+    }
     let flat_idx = match item {
         world::TORCH => Some(76),
         world::REDSTONE_TORCH => Some(77),
@@ -1303,6 +1453,8 @@ pub fn draw_hud(
     message: &str,
     message_timer: f32,
     biome: Biome,
+    dim: Dimension,
+    dragon_hp: Option<f32>,
     pos: (f32, f32, f32),
     fps: u32,
     camera: u8,
@@ -1345,8 +1497,17 @@ pub fn draw_hud(
     fb.rect(cx - 4, cy, 9, 1, [240, 240, 240, 200]);
     fb.rect(cx, cy - 4, 1, 9, [240, 240, 240, 200]);
 
-    text_shadow(fb, 8, 8, &format!("{}  XYZ {:.0} {:.0} {:.0}", biome.name(), pos.0, pos.1, pos.2), [240, 240, 240, 255], 1);
+    text_shadow(fb, 8, 8, &format!("{} ({})  XYZ {:.0} {:.0} {:.0}", biome.name(), dim.name(), pos.0, pos.1, pos.2), [240, 240, 240, 255], 1);
     text_shadow(fb, 8, 18, &format!("FPS {}  CAM {}  TIME {:02}:00  [{}]", fps, camera, ((time * 24.0) as i32) % 24, mode.name()), [200, 230, 255, 255], 1);
+
+    if let Some(hp) = dragon_hp {
+        let bw = 180;
+        let bx = W as i32 / 2 - bw / 2;
+        text_shadow(fb, W as i32 / 2 - 36, 28, "Ender Dragon", [228, 130, 248, 255], 1);
+        fb.rect(bx, 37, bw, 5, [34, 18, 42, 230]);
+        let fill = ((hp / 200.0).clamp(0.0, 1.0) * bw as f32) as i32;
+        fb.rect(bx, 37, fill, 5, [198, 56, 224, 255]);
+    }
 
     if message_timer > 0.0 {
         let w = message.len() as i32 * 6 + 10;

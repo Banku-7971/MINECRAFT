@@ -42,6 +42,11 @@ pub fn recipes() -> Vec<Recipe> {
         shaped!(p, 4, [0, world::SPRUCE_LOG, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(p, 4, [0, world::JUNGLE_LOG, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(p, 4, [0, world::DARK_LOG, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(p, 4, [0, world::CRIMSON_STEM, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(p, 4, [0, world::WARPED_STEM, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(BLAZE_POWDER, 2, [0, BLAZE_ROD, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(EYE_OF_ENDER, 1, [ENDER_PEARL, BLAZE_POWDER, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(world::NETHER_BRICKS, 1, [world::NETHERRACK, world::NETHERRACK, 0; world::NETHERRACK, world::NETHERRACK, 0; 0, 0, 0]),
         shaped!(s, 4, [0, p, 0; 0, p, 0; 0, 0, 0]),
         shaped!(world::CRAFTING, 1, [p, p, 0; p, p, 0; 0, 0, 0]),
         shaped!(world::FURNACE, 1, [c, c, c; c, 0, c; c, c, c]),
@@ -165,6 +170,9 @@ pub fn smelt_result(id: u16) -> Option<u16> {
         ROTTEN_FLESH => LEATHER,
         world::CACTUS => world::WOOL_GREEN,
         world::EMERALD_ORE => EMERALD,
+        world::NETHER_QUARTZ_ORE => NETHER_QUARTZ,
+        world::ANCIENT_DEBRIS => NETHERITE_INGOT,
+        world::NETHERRACK => world::NETHER_BRICKS,
         _ => return None,
     })
 }
@@ -173,6 +181,7 @@ pub fn smelt_result(id: u16) -> Option<u16> {
 pub fn fuel_time(id: u16) -> f32 {
     match id {
         items::COAL => 80.0,
+        items::BLAZE_ROD => 120.0,
         items::LAVA_BUCKET => 1000.0,
         world::PLANKS | world::FENCE | world::CRAFTING | world::BOOKSHELF => 15.0,
         world::LOG | world::BIRCH_LOG | world::SPRUCE_LOG | world::JUNGLE_LOG | world::DARK_LOG => 15.0,

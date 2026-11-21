@@ -91,7 +91,7 @@ impl Platform for Harness {
                             out.push(Event::Wheel(d));
                         }
                         Some("text") => {
-                            for c in it.next().unwrap_or("").chars() { out.push(Event::Char(c)); }
+                            for c in line.strip_prefix("text ").unwrap_or("").chars() { out.push(Event::Char(c)); }
                         }
                         Some("quit") => { self.quit = true; }
                         _ => {}

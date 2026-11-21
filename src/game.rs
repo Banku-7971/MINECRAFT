@@ -9,7 +9,7 @@ use crate::net::{Net, NetEvent};
 use crate::platform::{self as plat, Event, Platform};
 use crate::render::{self, Cam, EntityKind, Framebuffer, GameMode, Textures};
 use crate::sound::{Audio, Sfx};
-use crate::world::{self, World};
+use crate::world::{self, Dimension, World};
 
 pub const HOT: usize = 9;
 pub const STORE: usize = 27;
@@ -155,6 +155,10 @@ pub struct Game<P: Platform> {
     creative_scroll: usize,
     creative_search: String,
     creative_break_cd: f32,
+    portal_cd: f32,
+    save_timer: f32,
+    dragon_defeated: bool,
+    loaded_save: bool,
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -180,6 +184,9 @@ fn block_drop(b: u16, tick: u32) -> Stack {
         DIAMOND_ORE => Stack::new(items::DIAMOND, 1),
         EMERALD_ORE => Stack::new(items::EMERALD, 1),
         REDSTONE_ORE => Stack::new(REDSTONE_DUST, 4),
+        NETHER_QUARTZ_ORE => Stack::new(items::NETHER_QUARTZ, 1),
+        CRIMSON_NYLIUM | WARPED_NYLIUM => Stack::new(NETHERRACK, 1),
+        END_PORTAL_FRAME | END_PORTAL_FRAME_EYE | NETHER_PORTAL | END_PORTAL => Stack::EMPTY,
         IRON_ORE | GOLD_ORE => Stack::new(b, 1),
         CLAY => Stack::new(CLAY, 4),
         GRAVEL => if tick % 10 == 0 { Stack::new(items::FLINT, 1) } else { Stack::new(GRAVEL, 1) },
@@ -199,10 +206,11 @@ fn requires_pickaxe(b: u16) -> u8 {
     use world::*;
     match b {
         STONE | COBBLE | STONE_BRICKS | BRICK | FURNACE | SANDSTONE | COAL_ORE | QUARTZ | BLACKSTONE
-        | SLAB | STAIRS | ANVIL | ENCHANTING | MOSSY | IRON_BLOCK => 1,
+        | SLAB | STAIRS | ANVIL | ENCHANTING | MOSSY | IRON_BLOCK | NETHERRACK | NETHER_BRICKS
+        | CRIMSON_NYLIUM | WARPED_NYLIUM | BASALT | END_STONE | PURPUR_BLOCK | NETHER_QUARTZ_ORE => 1,
         IRON_ORE | LAMP => 2,
         GOLD_ORE | DIAMOND_ORE | REDSTONE_ORE | EMERALD_ORE | GOLD_BLOCK | DIAMOND_BLOCK | EMERALD_BLOCK => 3,
-        OBSIDIAN => 4,
+        OBSIDIAN | CRYING_OBSIDIAN | ANCIENT_DEBRIS => 4,
         _ => 0,
     }
 }
@@ -229,11 +237,12 @@ impl<P: Platform> Game<P> {
             let d = 11.0 + (i % 9) as f32 * 2.6;
             let x = spawn_x + a.cos() * d;
             let z = spawn_z + a.sin() * d;
-            let k = entities::random_kind(i * 17 + 3, 0.6);
+            let bm = world.biome(x as i32, z as i32);
+            let k = entities::biome_mob(bm, world.dim, i * 17 + 3, 0.6);
             mobs.push(Mob::spawn(k, x, world.highest_ground(x as i32, z as i32) as f32, z));
         }
-        let splash = "Now with crafting, furnaces, redstone & LAN!";
-        Game {
+        let splash = "Now with Nether, End, biomes, crafting & LAN!";
+        let mut game = Game {
             plat,
             audio: Audio::new(),
             net: Net::offline(),
@@ -308,7 +317,13 @@ impl<P: Platform> Game<P> {
             creative_scroll: 0,
             creative_search: String::new(),
             creative_break_cd: 0.0,
-        }
+            portal_cd: 0.0,
+            save_timer: 0.0,
+            dragon_defeated: false,
+            loaded_save: false,
+        };
+        game.load_world();
+        game
     }
 
     pub fn run(mut self) {
@@ -316,7 +331,10 @@ impl<P: Platform> Game<P> {
         self.plat.set_sound(true);
         self.plat.set_music(true);
         loop {
-            if self.plat.should_quit() || self.quit { break; }
+            if self.plat.should_quit() || self.quit {
+                self.save_world();
+                break;
+            }
             let now = self.plat.now();
             let dt = if self.last_frame == 0.0 { 0.016 } else { (now - self.last_frame).clamp(0.0005, 0.1) };
             self.last_frame = now;
@@ -593,8 +611,25 @@ impl<P: Platform> Game<P> {
                 }
                 true
             }
+            Some("/dim") | Some("/dimension") => {
+                if let Some(arg) = parts.get(1) {
+                    match arg.to_ascii_lowercase().as_str() {
+                        "overworld" | "ow" | "0" => self.travel_to(Dimension::Overworld, self.spawn.0, self.spawn.1, self.spawn.2),
+                        "nether" | "1" => {
+                            let nx = (self.player.x / 8.0).floor() + 0.5;
+                            let nz = (self.player.z / 8.0).floor() + 0.5;
+                            self.travel_to(Dimension::Nether, nx, 36.0, nz);
+                        }
+                        "end" | "2" => self.travel_to(Dimension::End, 0.5, 62.5, -18.5),
+                        _ => self.push_chat("Usage: /dim <overworld|nether|end>"),
+                    }
+                } else {
+                    self.push_chat("Usage: /dim <overworld|nether|end>");
+                }
+                true
+            }
             _ => {
-                self.push_chat("Commands: /gamemode <survival|creative|spectator>");
+                self.push_chat("Commands: /gamemode <survival|creative|spectator>, /dim <overworld|nether|end>");
                 true
             }
         }
@@ -607,7 +642,10 @@ impl<P: Platform> Game<P> {
         self.plat.set_cursor(false);
         self.plat.play(Sfx::LevelUp);
         self.set_mode(self.mode);
-        if self.mode == GameMode::Survival {
+        if self.loaded_save {
+            self.message = format!("Loaded world in {}", self.world.dim.name());
+            self.msg_timer = 3.5;
+        } else if self.mode == GameMode::Survival {
             self.message = String::from("Punch trees for wood! E inventory, F4 mode");
             self.msg_timer = 6.0;
         }
@@ -758,7 +796,14 @@ impl<P: Platform> Game<P> {
                         self.music_on = self.sound_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on);
                     }
                     3 => { self.return_to_pause = true; self.screen = Screen::Options; }
-                    _ => { self.net.close(); self.screen = Screen::Title; self.ui = Ui::None; self.plat.set_cursor(true); self.plat.set_capture(false); }
+                    _ => {
+                        self.save_world();
+                        self.net.close();
+                        self.screen = Screen::Title;
+                        self.ui = Ui::None;
+                        self.plat.set_cursor(true);
+                        self.plat.set_capture(false);
+                    }
                 }
                 return;
             }
@@ -1157,7 +1202,7 @@ impl<P: Platform> Game<P> {
             }
             return;
         }
-        self.mine_step(1.0);
+        self.mine_step(0.05);
     }
 
     fn mine_step(&mut self, speed_mul: f32) {
@@ -1174,28 +1219,57 @@ impl<P: Platform> Game<P> {
             }
             return;
         }
-        if h.block == world::BEDROCK { self.mining = None; return; }
+        if matches!(h.block, world::BEDROCK | world::END_PORTAL_FRAME | world::END_PORTAL_FRAME_EYE | world::END_PORTAL) {
+            self.mining = None;
+            return;
+        }
         let pos = (h.x, h.y, h.z);
         let held_id = self.player.held().id;
         let need = requires_pickaxe(h.block);
         let has_pick = items::pickaxe_tier(held_id) >= need;
-        let is_wood = matches!(h.block, world::LOG | world::BIRCH_LOG | world::SPRUCE_LOG | world::JUNGLE_LOG | world::DARK_LOG | world::PLANKS | world::CRAFTING | world::CHEST | world::FENCE | world::BOOKSHELF);
-        let is_dirt = matches!(h.block, world::GRASS | world::DIRT | world::SAND | world::RED_SAND | world::GRAVEL | world::CLAY | world::SNOW | world::PODZOL | world::MYCELIUM | world::FARMLAND);
+        let is_wood = matches!(
+            h.block,
+            world::LOG | world::BIRCH_LOG | world::SPRUCE_LOG | world::JUNGLE_LOG | world::DARK_LOG
+                | world::CRIMSON_STEM | world::WARPED_STEM | world::PLANKS | world::CRAFTING
+                | world::CHEST | world::FENCE | world::BOOKSHELF
+        );
+        let is_dirt = matches!(
+            h.block,
+            world::GRASS | world::DIRT | world::SAND | world::RED_SAND | world::GRAVEL | world::CLAY
+                | world::SNOW | world::PODZOL | world::MYCELIUM | world::FARMLAND | world::SOUL_SAND
+        );
         let is_axe = matches!(held_id, items::WOOD_AXE | items::IRON_AXE | items::DIAMOND_AXE);
         let is_shovel = matches!(held_id, items::WOOD_SHOVEL | items::IRON_SHOVEL);
 
         let tool_bonus = if need > 0 {
-            if has_pick { 1.4 + items::pickaxe_tier(held_id) as f32 * 0.9 } else { 0.25 }
+            if has_pick { 1.5 + items::pickaxe_tier(held_id) as f32 * 1.1 } else { 0.22 }
         } else if is_wood && is_axe {
-            1.4 + items::tool_tier(held_id) as f32 * 0.8
+            1.6 + items::tool_tier(held_id) as f32 * 0.9
         } else if is_dirt && is_shovel {
-            1.4 + items::tool_tier(held_id) as f32 * 0.8
+            1.8 + items::tool_tier(held_id) as f32 * 1.0
         } else {
             1.0
         };
-        let hardness = if h.block == world::OBSIDIAN { 4.5 } else if need > 0 { 1.0 } else { 0.45 };
+        let hardness = match h.block {
+            world::OBSIDIAN | world::CRYING_OBSIDIAN | world::ANCIENT_DEBRIS => 28.0,
+            world::IRON_BLOCK | world::GOLD_BLOCK | world::DIAMOND_BLOCK | world::EMERALD_BLOCK => 5.0,
+            world::COAL_ORE | world::IRON_ORE | world::GOLD_ORE | world::DIAMOND_ORE
+                | world::REDSTONE_ORE | world::EMERALD_ORE | world::NETHER_QUARTZ_ORE => 3.0,
+            world::END_STONE => 3.0,
+            world::NETHERRACK | world::CRIMSON_NYLIUM | world::WARPED_NYLIUM => 0.45,
+            _ if need > 0 => 1.8,
+            _ if is_wood => 2.0,
+            _ if is_dirt => 0.65,
+            world::LEAVES | world::BIRCH_LEAVES | world::SPRUCE_LEAVES | world::JUNGLE_LEAVES
+                | world::DARK_LEAVES | world::CRIMSON_WART | world::WARPED_WART
+                | world::GLASS | world::WOOL_WHITE | world::WOOL_RED | world::WOOL_BLUE
+                | world::WOOL_GREEN | world::WOOL_YELLOW => 0.30,
+            world::TALL_GRASS | world::FLOWER_RED | world::FLOWER_YELLOW
+                | world::BROWN_MUSHROOM | world::RED_MUSHROOM | world::TORCH | world::WHEAT => 0.08,
+            _ => 0.9,
+        };
         let mut prog = match self.mining { Some((p, v)) if p == pos => v, _ => 0.0 };
-        prog += speed_mul * tool_bonus / hardness * 0.45;
+        prog += speed_mul * tool_bonus / hardness;
         if prog >= 1.0 {
             self.mining = None;
             self.break_block(h.x, h.y, h.z, has_pick);
@@ -1294,8 +1368,51 @@ impl<P: Platform> Game<P> {
 
         let held = self.player.held();
         if held.is_empty() { return; }
-        // Spawn Eggs (322..=331)
-        if (items::SPAWN_SHEEP..=items::SPAWN_VILLAGER).contains(&held.id) {
+        // Flint and Steel -> ignite Nether Portal inside an Obsidian frame!
+        if held.id == items::FLINT_AND_STEEL {
+            let px = h.x + h.nx;
+            let py = h.y + h.ny;
+            let pz = h.z + h.nz;
+            if self.try_ignite_nether_portal(px, py, pz) {
+                self.plat.play(Sfx::LevelUp);
+                self.message = String::from("Nether Portal ignited!");
+                self.msg_timer = 3.0;
+            } else {
+                self.plat.play(Sfx::Click);
+                self.message = String::from("Build a closed Obsidian frame (at least 4x5) to ignite a Nether Portal!");
+                self.msg_timer = 3.0;
+            }
+            return;
+        }
+        // Eye of Ender -> activate End Portal Frame or locate Stronghold!
+        if held.id == items::EYE_OF_ENDER {
+            if h.block == world::END_PORTAL_FRAME {
+                self.world.set(h.x, h.y, h.z, world::END_PORTAL_FRAME_EYE);
+                if self.mode == GameMode::Survival {
+                    let s = &mut self.player.hot[self.player.selected];
+                    s.count -= 1;
+                    if s.count == 0 { *s = Stack::EMPTY; }
+                }
+                self.plat.play(Sfx::Place);
+                if self.try_activate_end_portal(h.x, h.y, h.z) {
+                    self.plat.play(Sfx::LevelUp);
+                    self.message = String::from("End Portal opened!");
+                    self.msg_timer = 4.0;
+                }
+            } else {
+                let dx_s = 100.0 - self.player.x;
+                let dz_s = -140.0 - self.player.z;
+                let dist = (dx_s * dx_s + dz_s * dz_s).sqrt();
+                self.message = format!("Eye of Ender points toward Stronghold (100, 19, -140) - {:.0}m away", dist);
+                self.msg_timer = 4.0;
+                self.plat.play(Sfx::Click);
+            }
+            return;
+        }
+        // Spawn Eggs (322..=331 and 336..=345)
+        if (items::SPAWN_SHEEP..=items::SPAWN_VILLAGER).contains(&held.id)
+            || (items::SPAWN_ZOMBIFIED_PIGLIN..=items::SPAWN_ENDER_DRAGON).contains(&held.id)
+        {
             let kind = match held.id {
                 items::SPAWN_SHEEP => MobKind::Sheep,
                 items::SPAWN_COW => MobKind::Cow,
@@ -1306,6 +1423,17 @@ impl<P: Platform> Game<P> {
                 items::SPAWN_CREEPER => MobKind::Creeper,
                 items::SPAWN_SPIDER => MobKind::Spider,
                 items::SPAWN_ENDERMAN => MobKind::Enderman,
+                items::SPAWN_VILLAGER => MobKind::Villager,
+                items::SPAWN_ZOMBIFIED_PIGLIN => MobKind::ZombifiedPiglin,
+                items::SPAWN_PIGLIN => MobKind::Piglin,
+                items::SPAWN_GHAST => MobKind::Ghast,
+                items::SPAWN_BLAZE => MobKind::Blaze,
+                items::SPAWN_WITHER_SKELETON => MobKind::WitherSkeleton,
+                items::SPAWN_SLIME => MobKind::Slime,
+                items::SPAWN_WOLF => MobKind::Wolf,
+                items::SPAWN_POLAR_BEAR => MobKind::PolarBear,
+                items::SPAWN_PARROT => MobKind::Parrot,
+                items::SPAWN_ENDER_DRAGON => MobKind::EnderDragon,
                 _ => MobKind::Villager,
             };
             let mx = (h.x + h.nx) as f32 + 0.5;
@@ -1628,13 +1756,32 @@ impl<P: Platform> Game<P> {
             }
         }
 
-        // mobs + creeper blasts
+        // mobs + creeper blasts + Ender Dragon victory
         let mut creeper_blasts: Vec<(f32, f32, f32)> = Vec::new();
+        let mut dragon_killed = false;
         for m in self.mobs.iter_mut() {
             m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace, self.mode != GameMode::Survival);
             if m.kind == MobKind::Creeper && m.fuse >= 1.5 {
                 m.hp = 0.0;
                 creeper_blasts.push((m.x, m.y + 0.5, m.z));
+            }
+            if m.kind == MobKind::EnderDragon && m.hp <= 0.0 {
+                dragon_killed = true;
+            }
+        }
+        if dragon_killed && !self.dragon_defeated {
+            self.dragon_defeated = true;
+            self.message = String::from("The Ender Dragon is defeated! Enter the Exit Portal at (0, 61, 0)!");
+            self.msg_timer = 6.0;
+            self.plat.play(Sfx::LevelUp);
+            if self.world.dim == Dimension::End {
+                for ox in -1..=1 {
+                    for oz in -1..=1 {
+                        if ox != 0 || oz != 0 {
+                            self.world.set(ox, 61, oz, world::END_PORTAL);
+                        }
+                    }
+                }
             }
         }
         for (bx, by, bz) in creeper_blasts {
@@ -1676,10 +1823,11 @@ impl<P: Platform> Game<P> {
                 let z = self.player.z + a.sin() * d;
                 let sy_m = self.world.highest_ground(x as i32, z as i32) as f32;
                 let ground_b = self.world.get(x as i32, sy_m as i32 - 1, z as i32);
-                let k = if matches!(ground_b, world::FARMLAND | world::PLANKS) && day > 0.45 {
+                let k = if self.world.dim == Dimension::Overworld && matches!(ground_b, world::FARMLAND | world::PLANKS) && day > 0.45 {
                     MobKind::Villager
                 } else {
-                    entities::random_kind(self.tick.wrapping_mul(7919), day)
+                    let bm = self.world.biome(x as i32, z as i32);
+                    entities::biome_mob(bm, self.world.dim, self.tick.wrapping_mul(7919), day)
                 };
                 self.mobs.push(Mob::spawn(k, x, sy_m, z));
             }
@@ -1776,6 +1924,7 @@ impl<P: Platform> Game<P> {
         if self.player.hp <= 0.0 {
             self.player.hp = 20.0;
             self.player.hunger = 20.0;
+            self.world.set_dim(Dimension::Overworld);
             self.player.x = self.spawn.0;
             self.player.y = self.spawn.1;
             self.player.z = self.spawn.2;
@@ -1785,6 +1934,36 @@ impl<P: Platform> Game<P> {
             self.msg_timer = 4.0;
             self.grace = 6.0;
             self.plat.play(Sfx::Hurt);
+        }
+        // Dimension portal travel
+        self.portal_cd = (self.portal_cd - dt).max(0.0);
+        if self.portal_cd <= 0.0 {
+            let feet_b = self.world.get(px, py, pz);
+            let head_b = self.world.get(px, py + 1, pz);
+            if feet_b == world::NETHER_PORTAL || head_b == world::NETHER_PORTAL {
+                if self.world.dim == Dimension::Overworld {
+                    let nx = (self.player.x / 8.0).floor() + 0.5;
+                    let nz = (self.player.z / 8.0).floor() + 0.5;
+                    self.travel_to(Dimension::Nether, nx, 36.0, nz);
+                } else if self.world.dim == Dimension::Nether {
+                    let ox = (self.player.x * 8.0).floor() + 0.5;
+                    let oz = (self.player.z * 8.0).floor() + 0.5;
+                    let oy = self.world.highest_ground(ox as i32, oz as i32) as f32 + 0.2;
+                    self.travel_to(Dimension::Overworld, ox, oy, oz);
+                }
+            } else if feet_b == world::END_PORTAL || self.world.get(px, py - 1, pz) == world::END_PORTAL {
+                if self.world.dim == Dimension::End {
+                    self.travel_to(Dimension::Overworld, self.spawn.0, self.spawn.1, self.spawn.2);
+                } else {
+                    self.travel_to(Dimension::End, 0.5, 62.5, -18.5);
+                }
+            }
+        }
+        // Auto-save every 20 seconds
+        self.save_timer += dt;
+        if self.save_timer >= 20.0 {
+            self.save_timer = 0.0;
+            self.save_world();
         }
         self.world.prune(self.player.x as i32 / 16, self.player.z as i32 / 16);
     }
@@ -1878,7 +2057,10 @@ impl<P: Platform> Game<P> {
         let cam = Cam::from(self.player.yaw, self.player.pitch, cam_x, cam_y, cam_z);
         self.scene.clear();
         self.fb.cursor = (self.mouse_x, self.mouse_y);
-        render::render_world(&mut self.scene, &self.tex, &mut self.world, &cam, self.time, self.tick);
+        let mining_overlay = self.mining.map(|((mx, my, mz), prog)| {
+            (mx, my, mz, (prog * 10.0).clamp(0.0, 9.0) as u8)
+        });
+        render::render_world(&mut self.scene, &self.tex, &mut self.world, &cam, self.time, self.tick, mining_overlay);
         if self.mode != GameMode::Spectator && self.ui == Ui::None {
             if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, REACH, false) {
                 render::draw_block_outline(&mut self.scene, &cam, h.x, h.y, h.z);
@@ -1907,6 +2089,9 @@ impl<P: Platform> Game<P> {
             if self.camera == 0 && self.mode != GameMode::Spectator {
                 render::draw_held_item(&mut self.fb, self.player.hot[self.player.selected].id, self.tick);
             }
+            let dragon_hp = if self.world.dim == Dimension::End {
+                self.mobs.iter().find(|m| m.kind == MobKind::EnderDragon).map(|m| m.hp)
+            } else { None };
             render::draw_hud(
                 &mut self.fb,
                 &self.player.hot.map(|s| s.id),
@@ -1917,7 +2102,9 @@ impl<P: Platform> Game<P> {
                 self.tick,
                 &self.message,
                 self.msg_timer,
-                world::biome_at(self.player.x.floor() as i32, self.player.z.floor() as i32),
+                self.world.biome(self.player.x.floor() as i32, self.player.z.floor() as i32),
+                self.world.dim,
+                dragon_hp,
                 (self.player.x, self.player.y, self.player.z),
                 self.fps,
                 self.camera,
@@ -2021,6 +2208,292 @@ impl<P: Platform> Game<P> {
             if mx >= x && mx < x + w && my >= y && my < y + h { return Some((1, i)); }
         }
         None
+    }
+
+    // --------------------------------------------------- dimensions & portals
+    fn try_ignite_nether_portal(&mut self, ax: i32, ay: i32, az: i32) -> bool {
+        for axis_x in [true, false] {
+            let mut min_h = 0i32;
+            while min_h > -8 {
+                let (cx, cz) = if axis_x { (ax + min_h, az) } else { (ax, az + min_h) };
+                if self.world.get(cx, ay, cz) == world::OBSIDIAN { break; }
+                min_h -= 1;
+            }
+            let mut max_h = 0i32;
+            while max_h < 8 {
+                let (cx, cz) = if axis_x { (ax + max_h, az) } else { (ax, az + max_h) };
+                if self.world.get(cx, ay, cz) == world::OBSIDIAN { break; }
+                max_h += 1;
+            }
+            let width = max_h - min_h - 1;
+            if width < 2 || width > 6 { continue; }
+            let mut min_y = ay;
+            while min_y > ay - 8 && self.world.get(ax, min_y, az) != world::OBSIDIAN { min_y -= 1; }
+            let mut max_y = ay;
+            while max_y < ay + 8 && self.world.get(ax, max_y, az) != world::OBSIDIAN { max_y += 1; }
+            let height = max_y - min_y - 1;
+            if height < 3 || height > 6 { continue; }
+            let mut valid = true;
+            for h_off in (min_h + 1)..max_h {
+                let (cx, cz) = if axis_x { (ax + h_off, az) } else { (ax, az + h_off) };
+                if self.world.get(cx, min_y, cz) != world::OBSIDIAN || self.world.get(cx, max_y, cz) != world::OBSIDIAN {
+                    valid = false; break;
+                }
+                for y in (min_y + 1)..max_y {
+                    let b = self.world.get(cx, y, cz);
+                    if b != world::AIR && b != world::NETHER_PORTAL { valid = false; break; }
+                }
+                if !valid { break; }
+            }
+            for y in (min_y + 1)..max_y {
+                let (lx, lz) = if axis_x { (ax + min_h, az) } else { (ax, az + min_h) };
+                let (rx, rz) = if axis_x { (ax + max_h, az) } else { (ax, az + max_h) };
+                if self.world.get(lx, y, lz) != world::OBSIDIAN || self.world.get(rx, y, rz) != world::OBSIDIAN {
+                    valid = false; break;
+                }
+            }
+            if valid {
+                for h_off in (min_h + 1)..max_h {
+                    let (cx, cz) = if axis_x { (ax + h_off, az) } else { (ax, az + h_off) };
+                    for y in (min_y + 1)..max_y {
+                        self.world.set(cx, y, cz, world::NETHER_PORTAL);
+                    }
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    fn try_activate_end_portal(&mut self, fx: i32, fy: i32, fz: i32) -> bool {
+        // Scan nearby 5x5 centers to find a complete 3x3 ring of END_PORTAL_FRAME_EYE
+        for cx in (fx - 3)..=(fx + 3) {
+            for cz in (fz - 3)..=(fz + 3) {
+                let mut ok = true;
+                for ox in -1..=1 {
+                    for oz in -1..=1 {
+                        if self.world.get(cx + ox, fy, cz + oz) == world::END_PORTAL_FRAME
+                            || self.world.get(cx + ox, fy, cz + oz) == world::END_PORTAL_FRAME_EYE
+                        {
+                            ok = false;
+                        }
+                    }
+                }
+                if !ok { continue; }
+                for d in -1..=1 {
+                    let ring = [
+                        (cx - 2, cz + d), (cx + 2, cz + d),
+                        (cx + d, cz - 2), (cx + d, cz + 2),
+                    ];
+                    for (rx, rz) in ring {
+                        if self.world.get(rx, fy, rz) != world::END_PORTAL_FRAME_EYE {
+                            ok = false; break;
+                        }
+                    }
+                    if !ok { break; }
+                }
+                if ok {
+                    for ox in -1..=1 {
+                        for oz in -1..=1 {
+                            self.world.set(cx + ox, fy, cz + oz, world::END_PORTAL);
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn travel_to(&mut self, target_dim: Dimension, tx: f32, ty: f32, tz: f32) {
+        self.world.set_dim(target_dim);
+        self.portal_cd = 3.5;
+        self.player.vy = 0.0;
+        let ix = tx.floor() as i32;
+        let iy = ty.floor() as i32;
+        let iz = tz.floor() as i32;
+
+        if target_dim == Dimension::Nether {
+            // Ensure a safe Obsidian platform & return Nether Portal in The Nether
+            for ox in -2..=2 {
+                for oz in -2..=2 {
+                    self.world.set(ix + ox, iy - 1, iz + oz, world::OBSIDIAN);
+                    for oy in 0..=4 {
+                        self.world.set(ix + ox, iy + oy, iz + oz, world::AIR);
+                    }
+                }
+            }
+            for ox in -1..=2 {
+                self.world.set(ix + ox, iy - 1, iz + 2, world::OBSIDIAN);
+                self.world.set(ix + ox, iy + 3, iz + 2, world::OBSIDIAN);
+            }
+            for oy in 0..=3 {
+                self.world.set(ix - 1, iy + oy, iz + 2, world::OBSIDIAN);
+                self.world.set(ix + 2, iy + oy, iz + 2, world::OBSIDIAN);
+            }
+            for ox in 0..=1 {
+                for oy in 0..=2 {
+                    self.world.set(ix + ox, iy + oy, iz + 2, world::NETHER_PORTAL);
+                }
+            }
+        } else if target_dim == Dimension::End {
+            for ox in -2..=2 {
+                for oz in -2..=2 {
+                    self.world.set(ix + ox, iy - 1, iz + oz, world::OBSIDIAN);
+                    for oy in 0..=3 {
+                        self.world.set(ix + ox, iy + oy, iz + oz, world::AIR);
+                    }
+                }
+            }
+        }
+
+        self.player.x = tx;
+        self.player.y = ty;
+        self.player.z = tz;
+        self.fall_y = ty;
+
+        // Repopulate dimension-appropriate mobs
+        self.mobs.clear();
+        if target_dim == Dimension::End && !self.dragon_defeated {
+            self.mobs.push(Mob::spawn(MobKind::EnderDragon, 0.0, 72.0, 0.0));
+        }
+        for i in 0..18 {
+            let a = i as f32 * 2.39996;
+            let d = 12.0 + (i % 7) as f32 * 3.0;
+            let mx = tx + a.cos() * d;
+            let mz = tz + a.sin() * d;
+            let bm = self.world.biome(mx as i32, mz as i32);
+            let k = entities::biome_mob(bm, target_dim, i * 31 + 7, 0.2);
+            let my = if target_dim == Dimension::Nether { ty } else { self.world.highest_ground(mx as i32, mz as i32) as f32 };
+            self.mobs.push(Mob::spawn(k, mx, my, mz));
+        }
+        self.message = format!("Entered {}", target_dim.name());
+        self.msg_timer = 4.0;
+        self.plat.play(Sfx::LevelUp);
+        self.save_world();
+    }
+
+    fn save_path() -> std::path::PathBuf {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("world_save.dat")))
+            .unwrap_or_else(|| std::path::PathBuf::from("world_save.dat"))
+    }
+
+    fn save_world(&self) {
+        let mut out = Vec::with_capacity(4096);
+        out.extend_from_slice(b"MCS1");
+        out.push(match self.mode {
+            GameMode::Survival => 0,
+            GameMode::Creative => 1,
+            GameMode::Spectator => 2,
+        });
+        out.push(self.world.dim.idx() as u8);
+        out.push(if self.dragon_defeated { 1 } else { 0 });
+        out.push(self.player.selected as u8);
+        for f in [
+            self.player.x, self.player.y, self.player.z, self.player.yaw, self.player.pitch,
+            self.player.hp, self.player.hunger, self.spawn.0, self.spawn.1, self.spawn.2, self.time,
+        ] {
+            out.extend_from_slice(&f.to_le_bytes());
+        }
+        for s in self.player.hot.iter().chain(self.player.store.iter()) {
+            out.extend_from_slice(&s.id.to_le_bytes());
+            out.extend_from_slice(&s.count.to_le_bytes());
+        }
+        let edits = self.world.all_edits();
+        out.extend_from_slice(&(edits.len() as u32).to_le_bytes());
+        for (d, x, y, z, id) in edits {
+            out.push(d);
+            out.extend_from_slice(&x.to_le_bytes());
+            out.extend_from_slice(&y.to_le_bytes());
+            out.extend_from_slice(&z.to_le_bytes());
+            out.extend_from_slice(&id.to_le_bytes());
+        }
+        out.extend_from_slice(&(self.mobs.len() as u32).to_le_bytes());
+        for m in &self.mobs {
+            out.push(m.kind.to_u8());
+            out.extend_from_slice(&m.x.to_le_bytes());
+            out.extend_from_slice(&m.y.to_le_bytes());
+            out.extend_from_slice(&m.z.to_le_bytes());
+            out.extend_from_slice(&m.hp.to_le_bytes());
+        }
+        let _ = std::fs::write(Self::save_path(), out);
+    }
+
+    fn load_world(&mut self) {
+        let Ok(data) = std::fs::read(Self::save_path()) else { return; };
+        if data.len() < 8 + 44 + 36 * 6 + 4 || &data[0..4] != b"MCS1" { return; }
+        self.loaded_save = true;
+        let mut p = 4usize;
+        let read_u8 = |b: &[u8], pos: &mut usize| -> u8 { let v = b[*pos]; *pos += 1; v };
+        let read_u16 = |b: &[u8], pos: &mut usize| -> u16 {
+            let v = u16::from_le_bytes([b[*pos], b[*pos + 1]]); *pos += 2; v
+        };
+        let read_u32 = |b: &[u8], pos: &mut usize| -> u32 {
+            let v = u32::from_le_bytes([b[*pos], b[*pos + 1], b[*pos + 2], b[*pos + 3]]); *pos += 4; v
+        };
+        let read_i32 = |b: &[u8], pos: &mut usize| -> i32 {
+            let v = i32::from_le_bytes([b[*pos], b[*pos + 1], b[*pos + 2], b[*pos + 3]]); *pos += 4; v
+        };
+        let read_f32 = |b: &[u8], pos: &mut usize| -> f32 {
+            let v = f32::from_le_bytes([b[*pos], b[*pos + 1], b[*pos + 2], b[*pos + 3]]); *pos += 4; v
+        };
+
+        self.mode = match read_u8(&data, &mut p) {
+            1 => GameMode::Creative,
+            2 => GameMode::Spectator,
+            _ => GameMode::Survival,
+        };
+        let dim = Dimension::from_idx(read_u8(&data, &mut p));
+        self.world.set_dim(dim);
+        self.dragon_defeated = read_u8(&data, &mut p) != 0;
+        self.player.selected = (read_u8(&data, &mut p) as usize).min(HOT - 1);
+        self.player.x = read_f32(&data, &mut p);
+        self.player.y = read_f32(&data, &mut p);
+        self.player.z = read_f32(&data, &mut p);
+        self.player.yaw = read_f32(&data, &mut p);
+        self.player.pitch = read_f32(&data, &mut p);
+        self.player.hp = read_f32(&data, &mut p);
+        self.player.hunger = read_f32(&data, &mut p);
+        self.spawn.0 = read_f32(&data, &mut p);
+        self.spawn.1 = read_f32(&data, &mut p);
+        self.spawn.2 = read_f32(&data, &mut p);
+        self.time = read_f32(&data, &mut p);
+        self.fall_y = self.player.y;
+
+        for s in self.player.hot.iter_mut().chain(self.player.store.iter_mut()) {
+            let id = read_u16(&data, &mut p);
+            let cnt = read_u32(&data, &mut p);
+            *s = if id == 0 || cnt == 0 { Stack::EMPTY } else { Stack::new(id, cnt) };
+        }
+        let n_edits = read_u32(&data, &mut p) as usize;
+        for _ in 0..n_edits {
+            if p + 15 > data.len() { break; }
+            let d = Dimension::from_idx(read_u8(&data, &mut p));
+            let x = read_i32(&data, &mut p);
+            let y = read_i32(&data, &mut p);
+            let z = read_i32(&data, &mut p);
+            let id = read_u16(&data, &mut p);
+            self.world.insert_dim_edit(d, x, y, z, id);
+        }
+        if p + 4 <= data.len() {
+            let n_mobs = read_u32(&data, &mut p) as usize;
+            if n_mobs > 0 {
+                self.mobs.clear();
+                for _ in 0..n_mobs {
+                    if p + 17 > data.len() { break; }
+                    let kind = MobKind::from_u8(read_u8(&data, &mut p));
+                    let mx = read_f32(&data, &mut p);
+                    let my = read_f32(&data, &mut p);
+                    let mz = read_f32(&data, &mut p);
+                    let hp = read_f32(&data, &mut p);
+                    let mut m = Mob::spawn(kind, mx, my, mz);
+                    m.hp = hp;
+                    self.mobs.push(m);
+                }
+            }
+        }
     }
 }
 
