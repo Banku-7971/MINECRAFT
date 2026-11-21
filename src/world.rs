@@ -463,7 +463,34 @@ fn structure_cell(x: i32, z: i32, size: i32) -> (i32, i32) {
 fn village_center(cx: i32, cz: i32) -> Option<(i32, i32)> {
     if hash2(cx + 91, cz - 37) % 3 != 0 { return None; }
     let size = 256;
-    Some((cx * size + 64 + (hash2(cx, cz) % 80) as i32, cz * size + 64 + (hash2(cx + 7, cz - 3) % 80) as i32))
+    let vx = cx * size + 64 + (hash2(cx, cz) % 80) as i32;
+    let vz = cz * size + 64 + (hash2(cx + 7, cz - 3) % 80) as i32;
+    if matches!(biome_at(vx, vz), Biome::Ocean) { return None; }
+    Some((vx, vz))
+}
+
+/// Find the closest village center `(x, surface_y, z)` near `(px, pz)`.
+pub fn nearest_village(px: i32, pz: i32) -> Option<(i32, i32, i32)> {
+    let (vcx, vcz) = structure_cell(px, pz, 256);
+    let mut best: Option<(i32, i32, i32, i64)> = None;
+    for r in 0..=4 {
+        for cx in vcx - r..=vcx + r {
+            for cz in vcz - r..=vcz + r {
+                if let Some((vx, vz)) = village_center(cx, cz) {
+                    let dx = (vx - px) as i64;
+                    let dz = (vz - pz) as i64;
+                    let d2 = dx * dx + dz * dz;
+                    if best.map_or(true, |b| d2 < b.3) {
+                        best = Some((vx, surface_height(vx, vz) + 1, vz, d2));
+                    }
+                }
+            }
+        }
+        if let Some((vx, vy, vz, _)) = best {
+            return Some((vx, vy, vz));
+        }
+    }
+    None
 }
 
 /// Deterministic Stronghold End Portal room in Overworld at (100, 19, -140).
@@ -497,40 +524,121 @@ fn structure_block(x: i32, y: i32, z: i32) -> Option<u16> {
             if let Some((vx, vz)) = village_center(cx, cz) {
                 let dx = x - vx;
                 let dz = z - vz;
-                let h = surface_height(x, z);
-                if dx.abs() <= 20 && dz.abs() <= 20 {
-                    if dx.abs() <= 1 || dz.abs() <= 1 {
-                        if y == h { return Some(COBBLE); }
+                if dx.abs() > 24 || dz.abs() > 24 { continue; }
+                let vh = surface_height(vx, vz);
+                let col_h = surface_height(x, z);
+                let desert_style = matches!(biome_at(vx, vz), Biome::Desert | Biome::Badlands | Biome::Savanna);
+                let wall_b = if desert_style { SANDSTONE } else { PLANKS };
+                let trim_b = if desert_style { TERRACOTTA } else { LOG };
+                let roof_b = if desert_style { SANDSTONE } else { STAIRS };
+                let road_b = if desert_style { SANDSTONE } else { COBBLE };
+
+                // 1. Town Well at (0, 0)
+                if dx.abs() <= 2 && dz.abs() <= 2 {
+                    if y < vh { return Some(COBBLE); }
+                    if y == vh {
+                        return Some(if dx.abs() <= 1 && dz.abs() <= 1 { WATER } else { MOSSY });
                     }
-                    if dx.abs() <= 1 && dz.abs() <= 1 && y > h && y <= h + 1 {
-                        return if dx == 0 && dz == 0 { Some(WATER) } else { Some(COBBLE) };
-                    }
-                    let houses = [(-13, -11), (11, -10), (-12, 12), (12, 12)];
-                    for (ox, oz) in houses {
-                        let hx = x - (vx + ox);
-                        let hz = z - (vz + oz);
-                        if hx >= -3 && hx <= 3 && hz >= -3 && hz <= 3 {
-                            let wall = hx.abs() == 3 || hz.abs() == 3;
-                            if y == h { return Some(PLANKS); }
-                            if y > h && y <= h + 4 {
-                                if wall {
-                                    if hx == 0 && hz == 3 && y <= h + 2 { return Some(AIR); }
-                                    if (hx.abs() == 3 && hz.abs() == 3) || (y == h + 4) { return Some(LOG); }
-                                    if (hx.abs() == 3 && hz == 0) || (hz.abs() == 3 && hx == 0) { return Some(GLASS); }
-                                    return Some(PLANKS);
-                                }
-                                return Some(AIR);
-                            }
-                            if y == h + 5 && hx.abs() <= 3 && hz.abs() <= 3 { return Some(STAIRS); }
-                            if y == h + 6 && hx.abs() <= 2 && hz.abs() <= 2 { return Some(STAIRS); }
-                            if y == h + 7 && hx.abs() <= 1 && hz.abs() <= 1 { return Some(STAIRS); }
+                    if y == vh + 1 && (dx.abs() == 2 || dz.abs() == 2) { return Some(COBBLE); }
+                    if y > vh + 1 && y <= vh + 3 && dx.abs() == 2 && dz.abs() == 2 { return Some(FENCE); }
+                    if y == vh + 4 { return Some(PLANKS); }
+                    if y > vh && y <= vh + 7 { return Some(AIR); }
+                }
+
+                // 2. Village Roads + Torch Lamp Posts
+                if (dx.abs() <= 1 && dz.abs() <= 22) || (dz.abs() <= 1 && dx.abs() <= 22) {
+                    if y == col_h { return Some(road_b); }
+                    if y > col_h && y <= col_h + 4 {
+                        // Lamp posts along road corners
+                        let is_lamp = (dx.abs() == 1 && dz.abs() == 6) || (dz.abs() == 1 && dx.abs() == 6)
+                            || (dx.abs() == 1 && dz.abs() == 16) || (dz.abs() == 1 && dx.abs() == 16);
+                        if is_lamp && (dx == 1 || dz == 1) {
+                            if y <= col_h + 2 { return Some(FENCE); }
+                            if y == col_h + 3 { return Some(LANTERN); }
                         }
+                        return Some(AIR);
                     }
-                    if dx.abs() > 5 && dz.abs() > 5 && y == h && (hash2(x, z) % 5 == 0) {
-                        return Some(FARMLAND);
+                }
+
+                // 3. Blacksmith Forge at (+13, -12)
+                let bx = x - (vx + 13);
+                let bz = z - (vz - 12);
+                if bx >= -4 && bx <= 4 && bz >= -3 && bz <= 3 {
+                    let wall = bx.abs() == 4 || bz.abs() == 3;
+                    if y < vh && y >= col_h.min(vh - 3) { return Some(COBBLE); }
+                    if y == vh { return Some(COBBLE); }
+                    if y > vh && y <= vh + 4 {
+                        if bz == 3 && bx == 0 && y <= vh + 2 { return Some(AIR); }
+                        if bx <= -1 && bz <= 0 && y == vh + 1 {
+                            if bx == -3 && bz == -2 { return Some(LAVA); }
+                            if bx == -2 && bz == -2 { return Some(FURNACE); }
+                            if bx == -1 && bz == -2 { return Some(ANVIL); }
+                            if bx == -3 && bz == -1 { return Some(CHEST); }
+                        }
+                        if wall {
+                            if (bx.abs() == 4 && bz.abs() == 3) || y == vh + 4 { return Some(COBBLE); }
+                            if bx == 4 && bz == 0 && y == vh + 2 { return Some(GLASS); }
+                            return Some(COBBLE);
+                        }
+                        if y == vh + 3 && bx == 3 && bz == 2 { return Some(TORCH); }
+                        return Some(AIR);
                     }
-                    if y == h + 1 && dx.abs() > 5 && dz.abs() > 5 && hash2(x + 9, z - 4) % 13 == 0 {
-                        return Some(WHEAT);
+                    if y == vh + 5 && bx.abs() <= 4 && bz.abs() <= 3 { return Some(SLAB); }
+                    if y > vh + 5 && y <= vh + 8 { return Some(AIR); }
+                }
+
+                // 4. Three Villager Houses
+                let houses = [(-13, -11), (-12, 12), (12, 12)];
+                for &(ox, oz) in &houses {
+                    let hx = x - (vx + ox);
+                    let hz = z - (vz + oz);
+                    if hx >= -3 && hx <= 3 && hz >= -3 && hz <= 3 {
+                        let wall = hx.abs() == 3 || hz.abs() == 3;
+                        if y < vh && y >= col_h.min(vh - 3) { return Some(COBBLE); }
+                        if y == vh { return Some(wall_b); }
+                        if y > vh && y <= vh + 4 {
+                            if hx == 0 && hz == 3 {
+                                if y == vh + 1 { return Some(DOOR); }
+                                if y == vh + 2 { return Some(AIR); }
+                            }
+                            if wall {
+                                if (hx.abs() == 3 && hz.abs() == 3) || (y == vh + 4) { return Some(trim_b); }
+                                if ((hx.abs() == 3 && hz == 0) || (hz.abs() == 3 && hx == 0)) && y == vh + 2 { return Some(GLASS); }
+                                return Some(wall_b);
+                            }
+                            if y == vh + 1 {
+                                if hx == -2 && hz == -2 { return Some(BED); }
+                                if hx == 2 && hz == -2 { return Some(CHEST); }
+                                if hx == -2 && hz == 2 { return Some(CRAFTING); }
+                            }
+                            if y == vh + 3 && hx == 0 && hz == -2 { return Some(TORCH); }
+                            return Some(AIR);
+                        }
+                        if y == vh + 5 && hx.abs() <= 3 && hz.abs() <= 3 { return Some(roof_b); }
+                        if y == vh + 6 && hx.abs() <= 2 && hz.abs() <= 2 { return Some(roof_b); }
+                        if y == vh + 7 && hx.abs() <= 1 && hz.abs() <= 1 { return Some(roof_b); }
+                        if y > vh + 7 && y <= vh + 9 { return Some(AIR); }
+                    }
+                }
+
+                // 5. Irrigated Wheat Farm at (-13, 2) and (+13, 3)
+                let farms = [(-14, 2), (13, 3)];
+                for &(fx, fz) in &farms {
+                    let lx = x - (vx + fx);
+                    let lz = z - (vz + fz);
+                    if lx.abs() <= 4 && lz.abs() <= 3 {
+                        let fh = surface_height(vx + fx, vz + fz);
+                        if y < fh && y >= col_h.min(fh - 2) { return Some(DIRT); }
+                        if y == fh {
+                            if lx.abs() == 4 || lz.abs() == 3 { return Some(LOG); }
+                            if lz == 0 { return Some(WATER); }
+                            return Some(FARMLAND);
+                        }
+                        if y == fh + 1 {
+                            if lx.abs() < 4 && lz.abs() < 3 && lz != 0 { return Some(WHEAT); }
+                            return Some(AIR);
+                        }
+                        if y > fh + 1 && y <= fh + 5 { return Some(AIR); }
                     }
                 }
             }

@@ -45,18 +45,75 @@ let activeMods = [];
 
 // WebAudio Synthesizer + Real Resource-Pack (.ogg/.wav) Sound Loader
 let audioCtx = null;
+let musicReverb = null;
+let musicBus = null;
+let sfxBus = null;
 let musicNextAt = 0;
 let musicStep = 0;
 let customSoundVersion = -1;
 const customAudioBuffers = new Map();
-const MUSIC_MELODY = [523.25, 392.0, 329.63, 392.0, 440.0, 392.0, 329.63, 261.63, 392.0, 329.63, 261.63, 329.63, 440.0, 523.25, 440.0, 392.0];
-const MUSIC_CHORDS = [[261.63, 329.63, 392.0], [220.0, 261.63, 329.63], [174.61, 220.0, 261.63], [196.0, 246.94, 293.66]];
+
+// Expressive C418-inspired ambient felt-piano phrases: [notes_hz[], hold_sec, pause_sec, vel]
+// Warm Fmaj7 / C / Am / G contemplative progression with natural breathing space
+const AMBIENT_PHRASES = [
+  [[261.63, 392.00], 3.4, 1.35, 0.055],
+  [[329.63], 2.8, 1.15, 0.048],
+  [[440.00], 3.2, 1.65, 0.052],
+  [[392.00], 3.8, 2.25, 0.044],
+  [[220.00, 329.63, 523.25], 4.0, 1.55, 0.050],
+  [[493.88], 2.9, 1.15, 0.045],
+  [[440.00], 3.5, 2.10, 0.046],
+  [[174.61, 261.63, 349.23], 4.4, 1.70, 0.052],
+  [[329.63], 2.6, 1.10, 0.046],
+  [[293.66], 3.4, 1.45, 0.044],
+  [[261.63], 4.2, 2.80, 0.042],
+  [[196.00, 293.66, 392.00], 4.2, 1.60, 0.050],
+  [[440.00], 2.8, 1.25, 0.044],
+  [[392.00], 3.6, 1.80, 0.042],
+  [[329.63], 4.6, 3.40, 0.038],
+];
+
+function createRoomImpulse(ctx, dur = 3.0, decay = 2.6) {
+  const len = Math.floor(ctx.sampleRate * dur);
+  const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const data = ir.getChannelData(ch);
+    let lp = 0;
+    for (let i = 0; i < len; i++) {
+      const env = Math.pow(1 - i / len, decay);
+      const white = Math.random() * 2 - 1;
+      lp = lp * 0.72 + white * 0.28;
+      data[i] = lp * env;
+    }
+  }
+  return ir;
+}
 
 function ensureAudio() {
   if (!audioCtx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
     audioCtx = new AC();
+
+    // Warm stereo hall reverb bus for ambient music + subtle room depth for SFX
+    musicReverb = audioCtx.createConvolver();
+    musicReverb.buffer = createRoomImpulse(audioCtx, 3.1, 2.7);
+    const wetGain = audioCtx.createGain();
+    wetGain.gain.value = 0.46;
+    const dryGain = audioCtx.createGain();
+    dryGain.gain.value = 0.68;
+    musicBus = audioCtx.createGain();
+    musicBus.gain.value = 0.90;
+    musicBus.connect(dryGain);
+    musicBus.connect(musicReverb);
+    musicReverb.connect(wetGain);
+    dryGain.connect(audioCtx.destination);
+    wetGain.connect(audioCtx.destination);
+
+    sfxBus = audioCtx.createDynamicsCompressor();
+    sfxBus.threshold.value = -14;
+    sfxBus.ratio.value = 4;
+    sfxBus.connect(audioCtx.destination);
   }
   if (audioCtx.state === 'suspended') {
     audioCtx.resume().catch(() => {});
@@ -86,43 +143,100 @@ function syncCustomSounds() {
   }
 }
 
-function playTone(freq, dur, vol, type = 'sine', slideTo = null, delay = 0) {
+function playFeltPianoNote(freq, dur, vol, delay = 0) {
+  const ctx = ensureAudio();
+  if (!ctx || ctx.state !== 'running' || !musicBus) return;
+  const t = ctx.currentTime + delay;
+  const flt = ctx.createBiquadFilter();
+  flt.type = 'lowpass';
+  flt.frequency.setValueAtTime(Math.min(1550, freq * 3.6), t);
+  flt.frequency.exponentialRampToValueAtTime(Math.max(240, freq * 1.35), t + dur * 0.75);
+
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.linearRampToValueAtTime(vol, t + 0.032);
+  env.gain.exponentialRampToValueAtTime(vol * 0.35, t + dur * 0.35);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+  // Soft fundamental + warm 2nd harmonic + gentle felt transient
+  const o1 = ctx.createOscillator();
+  o1.type = 'triangle';
+  o1.frequency.setValueAtTime(freq, t);
+  const g1 = audioCtx.createGain();
+  g1.gain.value = 0.76;
+
+  const o2 = ctx.createOscillator();
+  o2.type = 'sine';
+  o2.frequency.setValueAtTime(freq * 2.001, t);
+  const g2 = audioCtx.createGain();
+  g2.gain.value = 0.16;
+
+  const oSub = ctx.createOscillator();
+  oSub.type = 'sine';
+  oSub.frequency.setValueAtTime(freq * 0.5, t);
+  const gSub = audioCtx.createGain();
+  gSub.gain.value = 0.14;
+
+  o1.connect(g1); g1.connect(flt);
+  o2.connect(g2); g2.connect(flt);
+  oSub.connect(gSub); gSub.connect(flt);
+  flt.connect(env);
+  env.connect(musicBus);
+
+  o1.start(t); o2.start(t); oSub.start(t);
+  o1.stop(t + dur + 0.05); o2.stop(t + dur + 0.05); oSub.stop(t + dur + 0.05);
+}
+
+function playTone(freq, dur, vol, type = 'sine', slideTo = null, delay = 0, lpHz = 2800) {
   const ctx = ensureAudio();
   if (!ctx || ctx.state !== 'running') return;
   const t = ctx.currentTime + delay;
   const osc = ctx.createOscillator();
+  const flt = ctx.createBiquadFilter();
+  flt.type = 'lowpass';
+  flt.frequency.value = lpHz;
   const gain = ctx.createGain();
   osc.type = type;
   osc.frequency.setValueAtTime(freq, t);
   if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t + dur);
   gain.gain.setValueAtTime(0.0001, t);
-  gain.gain.linearRampToValueAtTime(vol, t + 0.008);
+  gain.gain.linearRampToValueAtTime(vol, t + 0.010);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
+  osc.connect(flt);
+  flt.connect(gain);
+  gain.connect(sfxBus || ctx.destination);
   osc.start(t);
   osc.stop(t + dur + 0.02);
 }
 
-function playNoise(dur, vol, filterFreq = 900, filterType = 'lowpass', delay = 0) {
+function playNoise(dur, vol, filterFreq = 900, filterType = 'lowpass', delay = 0, q = 0.9) {
   const ctx = ensureAudio();
   if (!ctx || ctx.state !== 'running') return;
   const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
   const buf = ctx.createBuffer(1, len, ctx.sampleRate);
   const data = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  // Pinkish smoothed noise sounds far more organic than harsh white noise
+  let b0 = 0, b1 = 0;
+  for (let i = 0; i < len; i++) {
+    const w = Math.random() * 2 - 1;
+    b0 = 0.88 * b0 + w * 0.12;
+    b1 = 0.60 * b1 + w * 0.40;
+    data[i] = (b0 + b1) * 0.75;
+  }
   const src = ctx.createBufferSource();
   src.buffer = buf;
   const flt = ctx.createBiquadFilter();
   flt.type = filterType;
   flt.frequency.value = filterFreq;
+  flt.Q.value = q;
   const gain = ctx.createGain();
   const t = ctx.currentTime + delay;
-  gain.gain.setValueAtTime(vol, t);
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.linearRampToValueAtTime(vol, t + Math.min(0.012, dur * 0.25));
   gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   src.connect(flt);
   flt.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(sfxBus || ctx.destination);
   src.start(t);
 }
 
@@ -138,37 +252,38 @@ function playWebSfx(id) {
     src.start();
     return;
   }
+  const p = 0.92 + Math.random() * 0.16; // natural human/Foley pitch variation
   switch (id) {
-    case 0: playTone(1020, 0.03, 0.06, 'triangle', 760); playNoise(0.02, 0.03, 2400, 'bandpass'); break; // Click
-    case 1: playTone(185, 0.06, 0.12, 'triangle', 95); playNoise(0.055, 0.09, 750, 'bandpass'); break; // Place
-    case 2: playNoise(0.15, 0.16, 1100, 'bandpass'); playTone(145, 0.08, 0.11, 'triangle', 62); break; // Break
+    case 0: playTone(720 * p, 0.025, 0.045, 'triangle', 540 * p, 0, 1800); break; // UI Click
+    case 1: playNoise(0.07, 0.11, 520 * p, 'lowpass'); playTone(145 * p, 0.055, 0.09, 'sine', 78 * p, 0, 600); break; // Place block thud
+    case 2: playNoise(0.14, 0.17, 920 * p, 'bandpass', 0, 1.1); playTone(118 * p, 0.075, 0.10, 'triangle', 56 * p, 0, 700); break; // Break block
     case 3:
-    case 4: playNoise(0.07, 0.07, 680, 'bandpass'); playTone(98, 0.04, 0.05, 'sine', 68); break; // StepGrass
-    case 5: playTone(430, 0.04, 0.08, 'triangle', 210); playNoise(0.045, 0.07, 1750, 'bandpass'); break; // StepStone
-    case 6: playTone(215, 0.06, 0.10, 'triangle', 145); playTone(430, 0.04, 0.04, 'sine', 290); break; // StepWood
-    case 7: playNoise(0.09, 0.08, 2200, 'highpass'); break; // StepSand
-    case 8: playNoise(0.14, 0.09, 950, 'bandpass'); break; // StepWater
-    case 9: playTone(155, 0.09, 0.06, 'sine', 290); break; // Jump
-    case 10: playTone(92, 0.09, 0.11, 'triangle', 52); playNoise(0.05, 0.05, 550); break; // Land
-    case 11: playTone(185, 0.11, 0.13, 'triangle', 85); playNoise(0.08, 0.10, 950); break; // Hurt
-    case 12: playTone(220, 0.10, 0.12, 'triangle', 92); playNoise(0.07, 0.09, 1050); break; // MobHurt
-    case 13: playTone(290, 0.20, 0.11, 'triangle', 72); playNoise(0.10, 0.07, 800); break; // MobDie
-    case 14: playTone(920, 0.05, 0.07, 'sine', 1560); break; // Pickup pop
-    case 15: playTone(587, 0.06, 0.07, 'triangle', 784); break; // Craft
-    case 17: playNoise(0.55, 0.24, 380); playTone(58, 0.42, 0.18, 'triangle', 32); break; // Explode
-    case 18: playNoise(0.24, 0.11, 1100, 'bandpass'); break; // Splash
-    case 19: playTone(108, 0.34, 0.10, 'sawtooth', 82); playTone(162, 0.28, 0.05, 'triangle', 120); break; // Zombie
-    case 20: playNoise(0.04, 0.08, 2200, 'bandpass'); playNoise(0.04, 0.07, 2600, 'bandpass', 0.06); break; // Skeleton rattle
-    case 21: playTone(145, 0.44, 0.11, 'sawtooth', 112); playTone(290, 0.40, 0.04, 'sine', 224); break; // Cow moo
-    case 22: playTone(285, 0.30, 0.09, 'triangle', 255); playTone(570, 0.25, 0.04, 'sine', 510); break; // Sheep baa
-    case 23: playTone(185, 0.16, 0.10, 'triangle', 245); break; // Pig oink
-    case 24: playTone(680, 0.06, 0.07, 'triangle', 840); playTone(560, 0.06, 0.06, 'triangle', 740, 0.07); break; // Chicken cluck
-    case 25: playNoise(0.16, 0.09, 2100, 'bandpass'); break; // Spider
-    case 26: playNoise(0.42, 0.13, 2500, 'highpass'); break; // Creeper hiss
-    case 27: playTone(220, 0.28, 0.08, 'sawtooth', 145); playTone(445, 0.25, 0.05, 'sine', 210); break; // Enderman
-    case 28: playTone(160, 0.11, 0.10, 'triangle', 105); playNoise(0.06, 0.06, 700, 'bandpass'); break; // Door
-    case 29: playTone(659.25, 0.10, 0.08, 'sine'); playTone(830.61, 0.10, 0.08, 'sine', null, 0.07); playTone(987.77, 0.12, 0.08, 'sine', null, 0.14); playTone(1318.51, 0.22, 0.09, 'sine', null, 0.21); break; // LevelUp chime
-    default: playNoise(0.07, 0.06, 900); break;
+    case 4: playNoise(0.075, 0.09, 640 * p, 'lowpass', 0, 0.7); break; // Grass rustle step
+    case 5: playNoise(0.045, 0.08, 1350 * p, 'bandpass', 0, 1.4); playTone(260 * p, 0.035, 0.05, 'triangle', 140 * p, 0, 1000); break; // Stone tap step
+    case 6: playTone(185 * p, 0.055, 0.08, 'triangle', 120 * p, 0, 900); playNoise(0.04, 0.06, 800 * p, 'bandpass'); break; // Wood creak step
+    case 7: playNoise(0.085, 0.09, 1750 * p, 'bandpass', 0, 0.8); break; // Sand crunch step
+    case 8: playNoise(0.16, 0.11, 820 * p, 'bandpass', 0, 1.6); playNoise(0.12, 0.06, 1500 * p, 'bandpass', 0.03, 1.2); break; // Water splash step
+    case 9: playNoise(0.06, 0.05, 520, 'lowpass'); playTone(140 * p, 0.07, 0.04, 'sine', 220 * p, 0, 800); break; // Jump
+    case 10: playNoise(0.07, 0.10, 420, 'lowpass'); playTone(88 * p, 0.08, 0.08, 'sine', 48 * p, 0, 400); break; // Land
+    case 11: playNoise(0.09, 0.12, 760, 'lowpass'); playTone(165 * p, 0.10, 0.10, 'triangle', 76 * p, 0, 800); break; // Hurt
+    case 12: playNoise(0.07, 0.10, 880, 'bandpass'); playTone(190 * p, 0.09, 0.10, 'triangle', 86 * p, 0, 900); break; // MobHurt
+    case 13: playNoise(0.11, 0.09, 680, 'lowpass'); playTone(220 * p, 0.16, 0.07, 'sine', 70 * p, 0, 600); break; // MobDie
+    case 14: playTone(740 * p, 0.045, 0.055, 'sine', 1240 * p, 0, 2400); break; // Pickup pop
+    case 15: playNoise(0.05, 0.06, 1100, 'bandpass'); playTone(480, 0.05, 0.05, 'triangle', 640, 0.02, 1600); break; // Craft
+    case 17: playNoise(0.65, 0.28, 340, 'lowpass'); playTone(56, 0.45, 0.20, 'sine', 28, 0, 260); break; // Explode boom
+    case 18: playNoise(0.28, 0.13, 980 * p, 'bandpass', 0, 1.3); playNoise(0.18, 0.08, 1750 * p, 'bandpass', 0.04); break; // Splash
+    case 19: playTone(98 * p, 0.36, 0.09, 'sawtooth', 76 * p, 0, 460); playTone(146 * p, 0.32, 0.05, 'triangle', 108 * p, 0, 520); break; // Zombie groan
+    case 20: playNoise(0.035, 0.08, 1850 * p, 'bandpass', 0, 2.2); playNoise(0.035, 0.07, 2200 * p, 'bandpass', 0.06, 2.2); break; // Skeleton bone clack
+    case 21: playTone(132 * p, 0.48, 0.09, 'sawtooth', 106 * p, 0, 480); playTone(264 * p, 0.42, 0.04, 'sine', 212 * p, 0, 700); break; // Cow moo
+    case 22: playTone(255 * p, 0.30, 0.08, 'triangle', 228 * p, 0, 900); playTone(510 * p, 0.26, 0.03, 'sine', 456 * p, 0, 1200); break; // Sheep baa
+    case 23: playTone(165 * p, 0.15, 0.08, 'triangle', 215 * p, 0, 820); break; // Pig oink
+    case 24: playTone(610 * p, 0.055, 0.06, 'triangle', 740 * p, 0, 1600); playTone(520 * p, 0.055, 0.05, 'triangle', 660 * p, 0.07, 1500); break; // Chicken cluck
+    case 25: playNoise(0.14, 0.08, 1800 * p, 'bandpass', 0, 2.0); break; // Spider hiss
+    case 26: playNoise(0.45, 0.13, 2100, 'bandpass', 0, 1.4); break; // Creeper fuse hiss
+    case 27: playTone(195 * p, 0.28, 0.07, 'sawtooth', 128 * p, 0, 620); playTone(390 * p, 0.24, 0.04, 'sine', 190 * p, 0, 900); break; // Enderman
+    case 28: playNoise(0.06, 0.08, 620, 'lowpass'); playTone(132 * p, 0.10, 0.08, 'triangle', 88 * p, 0, 600); break; // Door
+    case 29: playFeltPianoNote(659.25, 0.55, 0.06, 0.00); playFeltPianoNote(830.61, 0.55, 0.06, 0.07); playFeltPianoNote(987.77, 0.65, 0.06, 0.14); playFeltPianoNote(1318.51, 0.90, 0.07, 0.21); break; // LevelUp
+    default: playNoise(0.06, 0.06, 750); break;
   }
 }
 
@@ -187,13 +302,11 @@ function pumpAudio() {
   if (musicOn && audioCtx && audioCtx.state === 'running') {
     const now = audioCtx.currentTime;
     if (now >= musicNextAt) {
-      musicNextAt = now + 0.92;
-      const mel = MUSIC_MELODY[musicStep % MUSIC_MELODY.length];
-      playTone(mel, 1.35, 0.045, 'sine');
-      if (musicStep % 4 === 0) {
-        const chord = MUSIC_CHORDS[(musicStep / 4) % MUSIC_CHORDS.length];
-        for (const f of chord) playTone(f * 0.5, 2.4, 0.028, 'sine');
+      const [notes, hold, pause, vel] = AMBIENT_PHRASES[musicStep % AMBIENT_PHRASES.length];
+      for (let i = 0; i < notes.length; i++) {
+        playFeltPianoNote(notes[i], hold, vel * (i === 0 ? 1.0 : 0.72), i * 0.045);
       }
+      musicNextAt = now + pause;
       musicStep++;
     }
   }
@@ -641,11 +754,18 @@ document.addEventListener('keydown', e => {
   if (!playing || !wasm) return;
 
   const isF5 = e.code === 'F5' || e.key === 'F5' || e.keyCode === 116;
-  if (isF5 || preventDefault.has(e.code)) {
+  const isGameCtrlKey =
+    e.code === 'ControlLeft' || e.code === 'ControlRight' ||
+    (e.ctrlKey && (
+      e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD' ||
+      e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight'
+    ));
+  if (isF5 || preventDefault.has(e.code) || isGameCtrlKey) {
     e.preventDefault();
     e.stopPropagation();
   }
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.metaKey || e.altKey) return;
+  if (e.ctrlKey && !isGameCtrlKey && VK[e.code] === undefined) return;
 
   const code = isF5 ? 116 : VK[e.code];
   if (code === undefined) {

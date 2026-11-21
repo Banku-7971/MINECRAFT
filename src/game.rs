@@ -264,6 +264,9 @@ pub struct Game<P: Platform> {
     chat_history: Vec<String>,
     chat_hist_idx: Option<usize>,
     ignore_open_char: bool,
+    spectate_mob: Option<usize>,
+    swimming: bool,
+    spawned_villages: HashSet<(i32, i32)>,
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -488,6 +491,9 @@ impl<P: Platform> Game<P> {
             chat_history: Vec::new(),
             chat_hist_idx: None,
             ignore_open_char: false,
+            spectate_mob: None,
+            swimming: false,
+            spawned_villages: HashSet::new(),
         };
         game.load_world();
         #[cfg(not(target_arch = "wasm32"))]
@@ -662,7 +668,32 @@ impl<P: Platform> Game<P> {
                                 Ui::Chat => {}
                                 Ui::None => {
                                     self.plat.set_capture(true);
-                                    if self.mode != GameMode::Spectator {
+                                    if self.mode == GameMode::Spectator {
+                                        if b == 0 {
+                                            let (dx, dy, dz) = self.look_dir();
+                                            let (ex, ey, ez) = self.eye();
+                                            let mut best: Option<(usize, f32)> = None;
+                                            for (i, m) in self.mobs.iter().enumerate() {
+                                                let ox = m.x - ex;
+                                                let oy = (m.y + m.kind.height() * 0.5) - ey;
+                                                let oz = m.z - ez;
+                                                let proj = ox * dx + oy * dy + oz * dz;
+                                                if proj <= 0.4 || proj > 28.0 { continue; }
+                                                let cx = ox - dx * proj;
+                                                let cy = oy - dy * proj;
+                                                let cz = oz - dz * proj;
+                                                let hr = (m.kind.radius() + 0.45).max(0.75);
+                                                if cx * cx + cy * cy + cz * cz < hr * hr && best.map_or(true, |(_, t)| proj < t) {
+                                                    best = Some((i, proj));
+                                                }
+                                            }
+                                            if let Some((mi, _)) = best {
+                                                self.spectate_mob = Some(mi);
+                                                self.message = format!("Spectating {} (Shift to exit)", self.mobs[mi].kind.name());
+                                                self.msg_timer = 3.0;
+                                            }
+                                        }
+                                    } else {
                                         if b == 0 {
                                             self.mouse_left = true;
                                             self.try_attack();
@@ -889,6 +920,8 @@ impl<P: Platform> Game<P> {
     fn set_mode(&mut self, mode: GameMode) {
         self.mode = mode;
         self.mining = None;
+        self.spectate_mob = None;
+        self.swimming = false;
         match mode {
             GameMode::Survival => {
                 self.flying = false;
@@ -902,7 +935,7 @@ impl<P: Platform> Game<P> {
             }
             GameMode::Spectator => {
                 self.flying = true;
-                self.message = String::from("Game Mode: Spectator (Fly through blocks, scroll speed)");
+                self.message = String::from("Game Mode: Spectator (Fly through blocks, click mob, scroll speed)");
             }
         }
         self.msg_timer = 3.5;
@@ -1739,7 +1772,16 @@ impl<P: Platform> Game<P> {
         (self.player.yaw.sin() * cp, self.player.pitch.sin(), -self.player.yaw.cos() * cp)
     }
 
-    fn eye(&self) -> (f32, f32, f32) { let dy = if self.keys.contains(&plat::VK_SHIFT) { 1.48 } else { 1.62 }; (self.player.x, self.player.y + dy, self.player.z) }
+    fn eye(&self) -> (f32, f32, f32) {
+        let dy = if self.swimming {
+            1.05
+        } else if self.keys.contains(&plat::VK_SHIFT) {
+            1.48
+        } else {
+            1.62
+        };
+        (self.player.x, self.player.y + dy, self.player.z)
+    }
 
 fn step_sfx_for(b: u16) -> Sfx {
     match b {
@@ -1821,13 +1863,13 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             let kdx = self.mobs[i].x - self.player.x;
             let kdz = self.mobs[i].z - self.player.z;
             let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
-            let kb = if self.sprinting { 5.2 } else { 3.4 } + ench * 0.8;
+            let kb = if self.sprinting { 8.4 } else { 5.2 } + ench * 1.4;
             self.mobs[i].kb_vx = (kdx / kd) * kb;
             self.mobs[i].kb_vz = (kdz / kd) * kb;
-            self.mobs[i].vy = self.mobs[i].vy.max(2.6);
+            self.mobs[i].vy = self.mobs[i].vy.max(if self.sprinting { 4.2 } else { 3.2 });
             self.mobs[i].on_ground = false;
-            if !self.mobs[i].kind.hostile() {
-                self.mobs[i].panic = 4.0;
+            if !self.mobs[i].kind.hostile() || self.mobs[i].kind == MobKind::Spider {
+                self.mobs[i].panic = if self.mobs[i].kind == MobKind::Spider { 12.0 } else { 4.0 };
                 self.mobs[i].timer = 0.0;
             }
             self.damage_held_tool();
@@ -1844,6 +1886,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     self.drops.push(Drop::new(m.x, m.y + 0.4, m.z, id));
                     if m.kind == MobKind::Cow && self.tick % 2 == 0 {
                         self.drops.push(Drop::new(m.x + 0.2, m.y + 0.4, m.z, items::LEATHER));
+                    } else if m.kind == MobKind::IronGolem {
+                        self.drops.push(Drop::new(m.x + 0.2, m.y + 0.4, m.z, items::IRON_INGOT));
+                        self.drops.push(Drop::new(m.x - 0.2, m.y + 0.4, m.z, world::FLOWER_RED));
                     }
                 }
                 let xp_gain = if m.kind == MobKind::EnderDragon { 500 } else if m.kind.hostile() { 5 } else { 2 };
@@ -2473,9 +2518,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
             return;
         }
-        // Spawn Eggs (322..=331 and 336..=345)
+        // Spawn Eggs (322..=331, 336..=345, 367..=368)
         if (items::SPAWN_SHEEP..=items::SPAWN_VILLAGER).contains(&held.id)
             || (items::SPAWN_ZOMBIFIED_PIGLIN..=items::SPAWN_ENDER_DRAGON).contains(&held.id)
+            || held.id == items::SPAWN_IRON_GOLEM
+            || held.id == items::SPAWN_SNOW_GOLEM
         {
             let kind = match held.id {
                 items::SPAWN_SHEEP => MobKind::Sheep,
@@ -2498,6 +2545,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 items::SPAWN_POLAR_BEAR => MobKind::PolarBear,
                 items::SPAWN_PARROT => MobKind::Parrot,
                 items::SPAWN_ENDER_DRAGON => MobKind::EnderDragon,
+                items::SPAWN_IRON_GOLEM => MobKind::IronGolem,
+                items::SPAWN_SNOW_GOLEM => MobKind::SnowGolem,
                 _ => MobKind::Villager,
             };
             let mx = (h.x + h.nx) as f32 + 0.5;
@@ -3002,6 +3051,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             let sneaking = self.keys.contains(&plat::VK_SHIFT);
             let sprinting = (self.keys.contains(&plat::VK_CONTROL) || self.sprinting)
                 && !sneaking && fwd > 0.0 && (self.mode != GameMode::Survival || self.player.hunger > 6.0);
+            self.sprinting = sprinting;
             let (sy, cy) = (self.player.yaw.sin(), self.player.yaw.cos());
             if let Some(vi) = self.riding {
                 if vi < self.vehicles.len() {
@@ -3029,27 +3079,52 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     self.riding = None;
                 }
             } else if self.mode == GameMode::Spectator {
-                let fly_sp = 9.0 * self.spec_speed * if sprinting { 1.6 } else { 1.0 };
-                let (fx, fy, fz) = self.look_dir();
-                self.player.x += (fx * fwd + cy * strafe) * fly_sp * dt;
-                self.player.y += fy * fwd * fly_sp * dt;
-                self.player.z += (fz * fwd + sy * strafe) * fly_sp * dt;
-                if self.keys.contains(&plat::VK_SPACE) { self.player.y += fly_sp * dt; }
-                if sneaking { self.player.y -= fly_sp * dt; }
-                self.player.y = self.player.y.clamp(1.0, 120.0);
-                self.player.vy = 0.0;
-                self.fall_y = self.player.y;
+                self.swimming = false;
+                if sneaking && self.spectate_mob.is_some() {
+                    self.spectate_mob = None;
+                    self.message = String::from("Stopped spectating");
+                    self.msg_timer = 1.5;
+                }
+                if let Some(mi) = self.spectate_mob {
+                    if mi < self.mobs.len() && self.mobs[mi].hp > 0.0 {
+                        let m = &self.mobs[mi];
+                        self.player.x = m.x;
+                        self.player.y = m.y + (m.kind.height() - 1.3).max(0.0);
+                        self.player.z = m.z;
+                        self.player.vy = 0.0;
+                        self.fall_y = self.player.y;
+                    } else {
+                        self.spectate_mob = None;
+                    }
+                } else {
+                    let fly_sp = 9.0 * self.spec_speed * if sprinting { 1.6 } else { 1.0 };
+                    let (fx, fy, fz) = self.look_dir();
+                    self.player.x += (fx * fwd + cy * strafe) * fly_sp * dt;
+                    self.player.y += fy * fwd * fly_sp * dt;
+                    self.player.z += (fz * fwd + sy * strafe) * fly_sp * dt;
+                    if self.keys.contains(&plat::VK_SPACE) { self.player.y += fly_sp * dt; }
+                    if sneaking { self.player.y -= fly_sp * dt; }
+                    self.player.y = self.player.y.clamp(1.0, 120.0);
+                    self.player.vy = 0.0;
+                    self.fall_y = self.player.y;
+                }
             } else {
                 let feet_b = self.world.get(self.player.x.floor() as i32, (self.player.y + 0.2).floor() as i32, self.player.z.floor() as i32);
                 let head_b = self.world.get(self.player.x.floor() as i32, (self.player.y + 1.2).floor() as i32, self.player.z.floor() as i32);
                 let under_b = self.world.get(self.player.x.floor() as i32, (self.player.y - 0.15).floor() as i32, self.player.z.floor() as i32);
                 let on_climbable = matches!(feet_b, world::LADDER | world::VINE) || matches!(head_b, world::LADDER | world::VINE);
                 let in_cobweb = feet_b == world::COBWEB || head_b == world::COBWEB;
+                let in_water = feet_b == world::WATER || head_b == world::WATER;
+                self.swimming = in_water && sprinting;
 
                 let mut speed = if self.flying {
                     if sprinting { 11.0 } else { 7.8 }
                 } else if self.elytra_gliding {
                     14.0
+                } else if self.swimming {
+                    5.4
+                } else if in_water {
+                    2.9
                 } else if sneaking {
                     2.0
                 } else if sprinting {
@@ -3072,17 +3147,15 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 let vx = (sy * fwd + cy * strafe) * speed + self.player_kb_vx;
                 let vz = (-cy * fwd + sy * strafe) * speed + self.player_kb_vz;
 
-                let in_water = feet_b == world::WATER;
-
                 let nx = self.player.x + vx * dt;
                 if !collides(&mut self.world, nx, self.player.y, self.player.z) {
-                    if self.flying || !sneaking || !self.player.on_ground || collides(&mut self.world, nx, self.player.y - 0.6, self.player.z) {
+                    if self.flying || in_water || !sneaking || !self.player.on_ground || collides(&mut self.world, nx, self.player.y - 0.6, self.player.z) {
                         self.player.x = nx;
                     }
                 }
                 let nz = self.player.z + vz * dt;
                 if !collides(&mut self.world, self.player.x, self.player.y, nz) {
-                    if self.flying || !sneaking || !self.player.on_ground || collides(&mut self.world, self.player.x, self.player.y - 0.6, nz) {
+                    if self.flying || in_water || !sneaking || !self.player.on_ground || collides(&mut self.world, self.player.x, self.player.y - 0.6, nz) {
                         self.player.z = nz;
                     }
                 }
@@ -3101,9 +3174,16 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 } else if in_water {
                     self.fall_y = self.player.y;
                     if self.keys.contains(&plat::VK_SPACE) {
-                        self.player.vy = 4.2;
+                        self.player.vy = 4.4;
+                    } else if sneaking {
+                        self.player.vy = -3.4;
+                    } else if self.swimming {
+                        // Minecraft-style pitch-steered sprint-swim
+                        let (_, fy, _) = self.look_dir();
+                        let target_vy = fy * 4.8;
+                        self.player.vy = self.player.vy * (1.0 - 8.0 * dt).max(0.0) + target_vy * (8.0 * dt).min(1.0);
                     } else {
-                        self.player.vy = (self.player.vy - 6.0 * dt).max(-3.0);
+                        self.player.vy = (self.player.vy - 5.5 * dt).max(-1.4);
                     }
                 } else {
                     if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
@@ -3266,7 +3346,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 if m.kind == MobKind::EnderDragon { dragon_killed = true; }
             }
         }
-        // Tamed Wolves protect the player from nearby hostiles
+        // Tamed Wolves, Iron Golems, and Snow Golems protect Villagers & Player from hostiles
         let wolf_positions: Vec<(f32, f32, f32)> = self.mobs.iter()
             .filter(|m| m.kind == MobKind::Wolf && m.tamed && !m.sitting && m.hp > 0.0)
             .map(|m| (m.x, m.y, m.z))
@@ -3281,6 +3361,46 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                         target.attack_cd = 0.8;
                         break;
                     }
+                }
+            }
+        }
+        let golem_indices: Vec<usize> = self.mobs.iter().enumerate()
+            .filter(|(_, m)| matches!(m.kind, MobKind::IronGolem | MobKind::SnowGolem) && m.hp > 0.0)
+            .map(|(i, _)| i)
+            .collect();
+        for gi in golem_indices {
+            let (gx, gy, gz, is_iron) = (self.mobs[gi].x, self.mobs[gi].y, self.mobs[gi].z, self.mobs[gi].kind == MobKind::IronGolem);
+            let mut best_target: Option<(usize, f32, f32, f32)> = None;
+            for (ti, t) in self.mobs.iter().enumerate() {
+                if t.kind.hostile() && t.hp > 0.0 {
+                    let d = ((t.x - gx).powi(2) + (t.y - gy).powi(2) + (t.z - gz).powi(2)).sqrt();
+                    if d < 18.0 && best_target.map_or(true, |b| d < b.1) {
+                        best_target = Some((ti, d, t.x - gx, t.z - gz));
+                    }
+                }
+            }
+            if let Some((ti, d, tdx, tdz)) = best_target {
+                let d_xz = (tdx * tdx + tdz * tdz).sqrt().max(0.05);
+                if d > 1.8 {
+                    let sp = if is_iron { 2.7 } else { 1.8 };
+                    self.mobs[gi].vx = tdx / d_xz * sp;
+                    self.mobs[gi].vz = tdz / d_xz * sp;
+                    self.mobs[gi].yaw = tdx.atan2(tdz);
+                }
+                let hit_range = if is_iron { 2.6 } else { 8.5 };
+                if d < hit_range && self.mobs[gi].attack_cd <= 0.0 {
+                    self.mobs[gi].attack_cd = if is_iron { 1.1 } else { 1.3 };
+                    let target = &mut self.mobs[ti];
+                    target.hp -= if is_iron { 14.0 } else { 1.5 };
+                    target.hurt = 0.45;
+                    let kb = if is_iron { 7.5 } else { 3.5 };
+                    target.kb_vx = (tdx / d_xz) * kb;
+                    target.kb_vz = (tdz / d_xz) * kb;
+                    if is_iron {
+                        target.vy = target.vy.max(8.2);
+                        target.on_ground = false;
+                    }
+                    self.plat.play(Sfx::MobHurt);
                 }
             }
         }
@@ -3309,7 +3429,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         }
         self.mobs.retain(|m| m.hp > 0.0 && (m.x - self.player.x).abs() < 75.0 && (m.z - self.player.z).abs() < 75.0);
         for i in 0..self.mobs.len() {
-            if self.mobs[i].kind.hostile() && self.mobs[i].kind != MobKind::Creeper {
+            let spider_docile = self.mobs[i].kind == MobKind::Spider && day >= 0.55 && self.mobs[i].panic <= 0.0;
+            if self.mobs[i].kind.hostile() && !spider_docile && self.mobs[i].kind != MobKind::Creeper {
                 let d = ((self.mobs[i].x - self.player.x).powi(2) + (self.mobs[i].y - self.player.y).powi(2) + (self.mobs[i].z - self.player.z).powi(2)).sqrt();
                 if self.mode == GameMode::Survival && d < 1.8 && self.mobs[i].attack_cd <= 0.0 && self.hurt_cd <= 0.0 && self.grace <= 0.0 {
                     self.mobs[i].attack_cd = 1.2;
@@ -3321,6 +3442,23 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     self.player_kb_vz = (kdz / kd) * 6.0;
                     self.player.vy = self.player.vy.max(3.6);
                     self.damage_player(2.0, false);
+                }
+            }
+        }
+
+        // Auto-populate nearby Villages with Villagers + an Iron Golem
+        if self.world.dim == Dimension::Overworld && (self.tick % 40) == 0 {
+            if let Some((vx, vy, vz)) = world::nearest_village(self.player.x.floor() as i32, self.player.z.floor() as i32) {
+                let vd2 = (vx as f32 - self.player.x).powi(2) + (vz as f32 - self.player.z).powi(2);
+                if vd2 < 52.0 * 52.0 && !self.spawned_villages.contains(&(vx, vz)) {
+                    self.spawned_villages.insert((vx, vz));
+                    self.mobs.push(Mob::spawn(MobKind::IronGolem, vx as f32 + 3.5, vy as f32 + 0.5, vz as f32 + 3.5));
+                    for &(ox, oz) in &[(-6.0f32, -3.0f32), (6.0, 4.0), (-5.0, 7.0), (5.0, -6.0)] {
+                        let mx = vx as f32 + ox;
+                        let mz = vz as f32 + oz;
+                        let gy = self.world.highest_ground(mx as i32, mz as i32) as f32;
+                        self.mobs.push(Mob::spawn(MobKind::Villager, mx, gy + 0.2, mz));
+                    }
                 }
             }
         }
@@ -3716,7 +3854,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let atlas = Textures::atlas();
         let shader = packs::active_shader();
         self.scene.clear();
-        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader);
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader, false);
         render::upscale(&self.scene, &mut self.fb);
         render::draw_title_overlay(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
         self.plat.set_capture(false);
@@ -3752,8 +3890,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         // camera
         let (fx, fy, fz) = self.look_dir();
         let eye_y = self.eye().1;
+        let fov_mul = if self.sprinting || self.swimming { 1.10 } else { 1.0 };
         let cam = if self.camera == 0 {
-            Cam::from(self.player.yaw, self.player.pitch, self.player.x, eye_y, self.player.z)
+            Cam::with_fov(self.player.yaw, self.player.pitch, self.player.x, eye_y, self.player.z, fov_mul)
         } else if self.camera == 1 {
             let back = 3.8;
             let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast_solid(&mut self.world, self.player.x, eye_y, self.player.z, -fx, -fy, -fz, back + 0.5) {
@@ -3762,7 +3901,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             } else {
                 (self.player.x - fx * back, eye_y - fy * back - 0.25, self.player.z - fz * back)
             };
-            Cam::from(self.player.yaw, self.player.pitch, cam_x, cam_y, cam_z)
+            Cam::with_fov(self.player.yaw, self.player.pitch, cam_x, cam_y, cam_z, fov_mul)
         } else {
             let front = 3.8;
             let (cam_x, cam_y, cam_z) = if let Some(h) = world::raycast_solid(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, front + 0.5) {
@@ -3771,7 +3910,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             } else {
                 (self.player.x + fx * front, eye_y + fy * front + 0.15, self.player.z + fz * front)
             };
-            Cam::from(self.player.yaw + std::f32::consts::PI, -self.player.pitch, cam_x, cam_y, cam_z)
+            Cam::with_fov(self.player.yaw + std::f32::consts::PI, -self.player.pitch, cam_x, cam_y, cam_z, fov_mul)
         };
         self.scene.clear();
         self.fb.cursor = (self.mouse_x, self.mouse_y);
@@ -3780,27 +3919,29 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         });
         let atlas = Textures::atlas();
         let shader = packs::active_shader();
-        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, self.time, self.tick, mining_overlay, &shader);
-        if self.mode != GameMode::Spectator && self.ui == Ui::None {
+        let is_spectator = self.mode == GameMode::Spectator;
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, self.time, self.tick, mining_overlay, &shader, is_spectator);
+        if !is_spectator && self.ui == Ui::None {
             let b_reach = self.block_reach();
             if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, b_reach, false) {
                 render::draw_block_outline(&mut self.scene, &cam, h.x, h.y, h.z);
             }
         }
-        if self.camera != 0 && self.mode != GameMode::Spectator {
+        if self.camera != 0 && !is_spectator {
             let steve_yaw = std::f32::consts::PI - self.player.yaw;
-            render::draw_entity_3d(&mut self.scene, &cam, self.player.x, self.player.y, self.player.z, steve_yaw, self.player_walk, day, EntityKind::Steve, 0, true);
+            render::draw_entity_3d(&mut self.scene, &cam, self.player.x, self.player.y, self.player.z, steve_yaw, self.player_walk, day, EntityKind::Steve, 0, true, false);
         }
         for (_, (x, y, z, yaw, _)) in self.remote.iter() {
-            render::draw_entity_3d(&mut self.scene, &cam, *x, *y, *z, *yaw, self.title_t * 2.0, day, EntityKind::Steve, 0, false);
+            render::draw_entity_3d(&mut self.scene, &cam, *x, *y, *z, *yaw, self.title_t * 2.0, day, EntityKind::Steve, 0, false, false);
         }
-        for m in self.mobs.iter() {
+        for (mi, m) in self.mobs.iter().enumerate() {
+            if is_spectator && self.spectate_mob == Some(mi) { continue; }
             let flash = if m.hurt > 0.05 { 1 } else if m.kind == MobKind::Creeper && m.fuse > 0.0 && (self.tick / 3) % 2 == 0 { 2 } else { 0 };
-            render::draw_entity_3d(&mut self.scene, &cam, m.x, m.y, m.z, m.yaw, m.walk, day, EntityKind::Mob(m.kind), flash, false);
+            render::draw_entity_3d(&mut self.scene, &cam, m.x, m.y, m.z, m.yaw, m.walk, day, EntityKind::Mob(m.kind), flash, false, !m.on_ground);
         }
         for v in self.vehicles.iter() {
             let kind = if v.is_boat { EntityKind::Boat } else { EntityKind::Minecart };
-            render::draw_entity_3d(&mut self.scene, &cam, v.x, v.y, v.z, v.yaw, 0.0, day, kind, 0, false);
+            render::draw_entity_3d(&mut self.scene, &cam, v.x, v.y, v.z, v.yaw, 0.0, day, kind, 0, false, false);
         }
         for t in self.tnt_primed.iter() {
             let id = if (self.tick / 4) % 2 == 0 { world::SNOW } else { world::TNT };

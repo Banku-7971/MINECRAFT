@@ -544,25 +544,29 @@ fn note_hz(semi: i32) -> f32 {
     440.0 * 2f32.powf((semi as f32 - 9.0) / 12.0)
 }
 
-/// Calm C418-inspired looping ambient soundtrack (soft felt piano + warm pad).
+/// Calm C418-inspired looping ambient soundtrack (sparse warm felt piano + lush room tail).
 fn render_music() -> Vec<i16> {
-    const BPM: f32 = 66.0;
+    const BPM: f32 = 58.0;
     let beat = 60.0 / BPM;
-    let step = beat / 2.0;
-    let bars = 8usize;
-    let steps = bars * 8;
+    let step = beat;
+    let bars = 12usize;
+    let steps = bars * 4;
     let total = (steps as f32 * step * SAMPLE_RATE as f32) as usize;
     let mut buf = vec![0.0f32; total];
 
-    let chords: [[i32; 3]; 8] = [
-        [0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2],
-        [0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2],
+    let chords: [[i32; 3]; 6] = [
+        [-7, -3, 0], // Fmaj / C-root warmth
+        [-12, -5, 0],
+        [-3, 0, 4],
+        [-7, -3, 2],
+        [-10, -3, 0],
+        [-5, -1, 2],
     ];
-    let melody: [i32; 32] = [
-        12, 7, 4, 7, 9, 7, 4, 0,
-        7, 4, 0, 4, 9, 12, 9, 7,
-        4, 7, 12, 16, 14, 12, 9, 7,
-        7, 9, 12, 9, 7, 4, 0, -1,
+    // Sparse contemplative melody (-99 = rest)
+    let melody: [i32; 24] = [
+        12, 7, -99, 4, 9, -99, 7, -99,
+        16, 12, -99, 9, 7, -99, 4, 0,
+        7, 9, -99, 12, 7, -99, 4, -99,
     ];
 
     let add_tone = |buf: &mut Vec<f32>, start: usize, freq: f32, dur: f32, vol: f32, bright: f32| {
@@ -571,36 +575,43 @@ fn render_music() -> Vec<i16> {
             let idx = start + i;
             if idx >= buf.len() { break; }
             let t = i as f32 / SAMPLE_RATE as f32;
-            let a = env(t, 0.025, dur * 0.38);
-            let s = (t * freq * 6.283).sin() * 0.72
-                + (t * freq * 2.0 * 6.283).sin() * 0.18 * bright
-                + (t * freq * 3.0 * 6.283).sin() * 0.06 * bright;
+            let a = env(t, 0.040, dur * 0.45);
+            let s = (t * freq * 6.283).sin() * 0.74
+                + (t * freq * 2.0 * 6.283).sin() * 0.14 * bright
+                + (t * freq * 0.5 * 6.283).sin() * 0.12;
             buf[idx] += s * a * vol;
         }
     };
 
     for s in 0..steps {
         let start = (s as f32 * step * SAMPLE_RATE as f32) as usize;
-        let chord = chords[(s / 8).min(7)];
+        let chord = chords[(s / 8) % chords.len()];
         if s % 8 == 0 {
-            for c in chord.iter() {
-                add_tone(&mut buf, start, note_hz(c - 12), 2.3, 0.22, 0.35);
+            for (ci, c) in chord.iter().enumerate() {
+                add_tone(&mut buf, start + ci * 950, note_hz(c - 12), 4.2, 0.16, 0.25);
             }
         }
         if s % 2 == 0 {
-            let c = chord[(s / 2) % 3] - 24;
-            add_tone(&mut buf, start, note_hz(c), 0.9, 0.20, 0.2);
+            let m = melody[(s / 2) % melody.len()];
+            if m != -99 {
+                add_tone(&mut buf, start, note_hz(m), 2.8, 0.18, 0.50);
+            }
         }
-        if s % 2 == 0 {
-            let m = melody[(s / 2) % 32];
-            add_tone(&mut buf, start, note_hz(m), 1.2, 0.18, 0.65);
+    }
+
+    // Simple warm multi-tap room reverb + lowpass felt filter
+    let taps = [(1900usize, 0.26f32), (4300, 0.18), (7900, 0.12), (12500, 0.07)];
+    let dry = buf.clone();
+    for (delay, gain) in taps {
+        for i in delay..buf.len() {
+            buf[i] += dry[i - delay] * gain;
         }
     }
 
     let mut prev = 0.0f32;
     for v in buf.iter_mut() {
-        prev = prev * 0.62 + *v * 0.38;
+        prev = prev * 0.70 + *v * 0.30;
         *v = prev;
     }
-    buf.iter().map(|v| (v.clamp(-1.0, 1.0) * 26000.0) as i16).collect()
+    buf.iter().map(|v| (v.clamp(-1.0, 1.0) * 24000.0) as i16).collect()
 }
