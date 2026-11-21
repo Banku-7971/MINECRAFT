@@ -32,14 +32,20 @@ Browser limitations:
 
 ## Native Windows game
 
-Builds are written to `runtime/`:
+Download the pre-built Windows binaries from **[GitHub Releases](https://github.com/Banku-7971/MINECRAFT/releases/latest)** (built automatically by `.github/workflows/release-windows.yml`), or compile them locally into `runtime/`:
 
-- **`runtime/Minecraft.exe`** - standalone portable Windows 64-bit GUI
-  application (`x86_64-pc-windows-gnu`), zero external DLL dependencies.
-- **`runtime/Minecraft-Setup.exe`** - native Windows GUI installer. It installs
+- **`Minecraft.exe`** (~3 MB) - standalone portable Windows 64-bit GUI
+  application, zero external DLL or Java dependencies.
+- **`Minecraft-Setup.exe`** (~5 MB) - native Windows GUI installer. It installs
   `Minecraft.exe` to `%LOCALAPPDATA%\Minecraft\`, creates Desktop and Start Menu
   shortcuts, registers **Minecraft** in Windows Apps & Features (with uninstall
   support), and offers to launch immediately.
+
+> **Why is it ~3–5 MB instead of 200+ MB?** Official Minecraft Java Edition
+> ships the Java Virtual Machine (JRE), LWJGL/OpenGL native libraries, and
+> ~150 MB of `.ogg` audio and texture archives. This engine is compiled straight
+> to native machine code in zero-dependency Rust, with procedural audio
+> synthesis and compressed `assets/textures.bin` baked directly into the `.exe`.
 
 ## Features
 
