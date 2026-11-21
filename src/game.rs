@@ -7,7 +7,7 @@ use crate::entities::{self, Drop, Mob, MobKind};
 use crate::items;
 use crate::net::{Net, NetEvent};
 use crate::platform::{self as plat, Event, Platform};
-use crate::render::{self, Cam, Framebuffer, SpriteKind, Textures};
+use crate::render::{self, Cam, EntityKind, Framebuffer, GameMode, Textures};
 use crate::sound::{Audio, Sfx};
 use crate::world::{self, World};
 
@@ -78,7 +78,7 @@ impl Furnace {
 pub enum Screen { Title, Multiplayer, Options, Playing }
 
 #[derive(PartialEq, Clone, Copy)]
-pub enum Ui { None, Inventory, Furnace, Chat, Pause }
+pub enum Ui { None, Inventory, Creative, Furnace, Chat, Pause }
 
 pub struct Game<P: Platform> {
     plat: P,
@@ -147,6 +147,14 @@ pub struct Game<P: Platform> {
     recipe_page: usize,
     recipe_sel: usize,
     return_to_pause: bool,
+    mode: GameMode,
+    flying: bool,
+    space_tap_t: f64,
+    spec_speed: f32,
+    creative_tab: usize,
+    creative_scroll: usize,
+    creative_search: String,
+    creative_break_cd: f32,
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -292,6 +300,14 @@ impl<P: Platform> Game<P> {
             recipe_page: 0,
             recipe_sel: 0,
             return_to_pause: false,
+            mode: GameMode::Survival,
+            flying: false,
+            space_tap_t: -10.0,
+            spec_speed: 1.0,
+            creative_tab: 0,
+            creative_scroll: 0,
+            creative_search: String::new(),
+            creative_break_cd: 0.0,
         }
     }
 
@@ -353,7 +369,7 @@ impl<P: Platform> Game<P> {
                 Event::Resize(_, _) => {}
                 Event::FocusLost => { self.keys.clear(); self.mouse_left = false; self.sprinting = false; }
                 Event::MouseMove { dx, dy } => {
-                    if self.screen == Screen::Playing && self.ui != Ui::Inventory && self.ui != Ui::Furnace && self.ui != Ui::Pause {
+                    if self.screen == Screen::Playing && (self.ui == Ui::None || self.ui == Ui::Chat) {
                         let sens = 0.0026;
                         self.player.yaw += dx as f32 * sens;
                         self.player.pitch = (self.player.pitch - dy as f32 * 0.0024).clamp(-1.52, 1.52);
@@ -375,6 +391,12 @@ impl<P: Platform> Game<P> {
                 Event::Char(c) => {
                     if self.ui == Ui::Chat {
                         if !c.is_control() && self.chat_input.len() < 80 { self.chat_input.push(c); }
+                    } else if self.ui == Ui::Creative {
+                        if !c.is_control() && self.creative_search.len() < 24 {
+                            self.creative_search.push(c);
+                            self.creative_tab = 5;
+                            self.creative_scroll = 0;
+                        }
                     } else if self.screen == Screen::Multiplayer {
                         if c.is_ascii_graphic() || c == '.' || c == ':' {
                             if self.net_addr.len() < 40 { self.net_addr.push(c); }
@@ -390,12 +412,15 @@ impl<P: Platform> Game<P> {
                         Screen::Playing => {
                             match self.ui {
                                 Ui::Inventory | Ui::Furnace => self.click_inventory(b == 1),
+                                Ui::Creative => self.click_creative(b == 1),
                                 Ui::Pause => self.click_pause(),
                                 Ui::Chat => {}
                                 Ui::None => {
                                     self.plat.set_capture(true);
-                                    if b == 0 { self.mouse_left = true; self.try_attack(); }
-                                    else if b == 1 { self.try_use(); }
+                                    if self.mode != GameMode::Spectator {
+                                        if b == 0 { self.mouse_left = true; self.try_attack(); }
+                                        else if b == 1 { self.try_use(); }
+                                    }
                                 }
                             }
                         }
@@ -405,9 +430,21 @@ impl<P: Platform> Game<P> {
                     if b == 0 { self.mouse_left = false; self.mining = None; }
                 }
                 Event::Wheel(d) => {
-                    if self.screen == Screen::Playing && self.ui == Ui::None {
-                        let sel = (self.player.selected as i32 - d).rem_euclid(9) as usize;
-                        self.player.selected = sel;
+                    if self.screen == Screen::Playing {
+                        if self.ui == Ui::Creative {
+                            let max_scroll = ((self.creative_items_filtered().len() + 8) / 9).saturating_sub(5);
+                            if d > 0 { self.creative_scroll = self.creative_scroll.saturating_sub(1); }
+                            else if d < 0 { self.creative_scroll = (self.creative_scroll + 1).min(max_scroll); }
+                        } else if self.ui == Ui::None {
+                            if self.mode == GameMode::Spectator {
+                                self.spec_speed = (self.spec_speed + d as f32 * 0.25).clamp(0.4, 4.0);
+                                self.message = format!("Fly speed: {:.2}x", self.spec_speed);
+                                self.msg_timer = 1.2;
+                            } else {
+                                let sel = (self.player.selected as i32 - d).rem_euclid(9) as usize;
+                                self.player.selected = sel;
+                            }
+                        }
                     }
                 }
             }
@@ -433,12 +470,16 @@ impl<P: Platform> Game<P> {
                     if code == VK_RETURN {
                         let text = self.chat_input.clone();
                         if !text.is_empty() {
-                            self.chat_lines.push((format!("<Player> {}", text), 0.0));
-                            self.net.send(format!("CHAT|Player|{}", text));
+                            if !self.handle_command(&text) {
+                                self.chat_lines.push((format!("<Player> {}", text), 0.0));
+                                self.net.send(format!("CHAT|Player|{}", text));
+                            }
                         }
                         self.chat_input.clear();
                         self.ui = Ui::None;
                         self.plat.set_capture(true);
+                    } else if code == VK_BACK {
+                        self.chat_input.pop();
                     } else if code == VK_ESCAPE {
                         self.chat_input.clear();
                         self.ui = Ui::None;
@@ -450,23 +491,51 @@ impl<P: Platform> Game<P> {
                     if code == VK_ESCAPE { self.resume(); }
                     return;
                 }
+                if self.ui == Ui::Creative {
+                    if code == VK_ESCAPE || (code == VK_E && self.creative_tab != 5) {
+                        self.close_ui();
+                    } else if code == VK_BACK {
+                        self.creative_search.pop();
+                        self.creative_scroll = 0;
+                    }
+                    return;
+                }
                 if self.ui == Ui::Inventory || self.ui == Ui::Furnace {
                     if code == VK_E || code == VK_ESCAPE { self.close_ui(); }
                     return;
                 }
                 match code {
                     VK_ESCAPE => self.open_pause(),
-                    VK_E => { self.open_inventory(false); }
+                    VK_E => {
+                        if self.mode == GameMode::Creative { self.open_creative(); }
+                        else if self.mode == GameMode::Survival { self.open_inventory(false); }
+                    }
                     VK_T => {
                         self.ui = Ui::Chat;
                         self.chat_input.clear();
                         self.plat.set_capture(false);
                         self.plat.set_cursor(true);
                     }
+                    VK_F4 => {
+                        let next = self.mode.next();
+                        self.set_mode(next);
+                    }
                     VK_F5 => {
                         self.camera = (self.camera + 1) % 3;
                         self.message = format!("Camera: {}", ["First person", "Third person", "Distant"][self.camera as usize]);
                         self.msg_timer = 2.0;
+                    }
+                    VK_SPACE => {
+                        if self.mode == GameMode::Creative {
+                            let now = self.plat.now();
+                            if now - self.space_tap_t < 0.30 {
+                                self.flying = !self.flying;
+                                self.player.vy = 0.0;
+                                self.space_tap_t = -10.0;
+                            } else {
+                                self.space_tap_t = now;
+                            }
+                        }
                     }
                     VK_W => {
                         let now = self.plat.now();
@@ -483,14 +552,73 @@ impl<P: Platform> Game<P> {
     }
 
     // ------------------------------------------------------------------ menus
+    fn set_mode(&mut self, mode: GameMode) {
+        self.mode = mode;
+        self.mining = None;
+        match mode {
+            GameMode::Survival => {
+                self.flying = false;
+                self.message = String::from("Game Mode: Survival");
+            }
+            GameMode::Creative => {
+                self.flying = true;
+                self.player.hp = 20.0;
+                self.player.hunger = 20.0;
+                self.message = String::from("Game Mode: Creative (E inventory, double-Space fly)");
+            }
+            GameMode::Spectator => {
+                self.flying = true;
+                self.message = String::from("Game Mode: Spectator (Fly through blocks, scroll speed)");
+            }
+        }
+        self.msg_timer = 3.5;
+    }
+
+    fn handle_command(&mut self, cmd: &str) -> bool {
+        let trim = cmd.trim();
+        if !trim.starts_with('/') { return false; }
+        let parts: Vec<&str> = trim.split_whitespace().collect();
+        match parts.first().copied() {
+            Some("/gamemode") | Some("/gm") => {
+                if let Some(arg) = parts.get(1) {
+                    match arg.to_ascii_lowercase().as_str() {
+                        "survival" | "s" | "0" => self.set_mode(GameMode::Survival),
+                        "creative" | "c" | "1" => self.set_mode(GameMode::Creative),
+                        "spectator" | "sp" | "3" => self.set_mode(GameMode::Spectator),
+                        _ => self.push_chat("Usage: /gamemode <survival|creative|spectator>"),
+                    }
+                } else {
+                    let next = self.mode.next();
+                    self.set_mode(next);
+                }
+                true
+            }
+            _ => {
+                self.push_chat("Commands: /gamemode <survival|creative|spectator>");
+                true
+            }
+        }
+    }
+
     fn start_singleplayer(&mut self) {
         self.screen = Screen::Playing;
         self.ui = Ui::None;
         self.plat.set_capture(true);
         self.plat.set_cursor(false);
         self.plat.play(Sfx::LevelUp);
-        self.message = String::from("Punch a tree, craft a pickaxe, dig down!");
-        self.msg_timer = 6.0;
+        self.set_mode(self.mode);
+        if self.mode == GameMode::Survival {
+            self.message = String::from("Punch trees for wood! E inventory, F4 mode");
+            self.msg_timer = 6.0;
+        }
+    }
+
+    fn open_creative(&mut self) {
+        self.ui = Ui::Creative;
+        self.plat.set_capture(false);
+        self.plat.set_cursor(true);
+        self.plat.play(Sfx::Click);
+        self.mouse_left = false;
     }
 
     fn join_game(&mut self) {
@@ -564,7 +692,7 @@ impl<P: Platform> Game<P> {
         match self.screen {
             Screen::Title => {
                 let bx = (render::W as i32 - 200) / 2;
-                (0..4).map(|i| (bx, 132 + i as i32 * 28, 200, 22)).collect()
+                (0..5).map(|i| (bx, 116 + i as i32 * 26, 200, 21)).collect()
             }
             Screen::Multiplayer => {
                 let (px, py) = (50, 20);
@@ -592,8 +720,9 @@ impl<P: Platform> Game<P> {
                 match self.screen {
                     Screen::Title => match i {
                         0 => self.start_singleplayer(),
-                        1 => { self.screen = Screen::Multiplayer; }
-                        2 => { self.screen = Screen::Options; }
+                        1 => { self.mode = self.mode.next(); }
+                        2 => { self.screen = Screen::Multiplayer; }
+                        3 => { self.screen = Screen::Options; }
                         _ => self.plat.request_quit(),
                     },
                     Screen::Multiplayer => match i {
@@ -617,14 +746,17 @@ impl<P: Platform> Game<P> {
 
     fn click_pause(&mut self) {
         let (mx, my) = (self.mouse_x, self.mouse_y);
-        let bx = (render::W as i32 - 200) / 2;
+        let bx = (render::W as i32 - 210) / 2;
         for i in 0..5 {
-            let (x, y, w, h) = (bx, 76 + i as i32 * 26, 200, 20);
+            let (x, y, w, h) = (bx, 76 + i as i32 * 26, 210, 20);
             if mx >= x && mx < x + w && my >= y && my < y + h {
                 match i {
                     0 => self.resume(),
-                    1 => { self.sound_on = !self.sound_on; self.audio.sound_on = self.sound_on; self.plat.set_sound(self.sound_on); }
-                    2 => { self.music_on = !self.music_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on); }
+                    1 => { let next = self.mode.next(); self.set_mode(next); }
+                    2 => {
+                        self.sound_on = !self.sound_on; self.audio.sound_on = self.sound_on; self.plat.set_sound(self.sound_on);
+                        self.music_on = self.sound_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on);
+                    }
                     3 => { self.return_to_pause = true; self.screen = Screen::Options; }
                     _ => { self.net.close(); self.screen = Screen::Title; self.ui = Ui::None; self.plat.set_cursor(true); self.plat.set_capture(false); }
                 }
@@ -645,6 +777,87 @@ impl<P: Platform> Game<P> {
             1 => &mut self.player.store[idx],
             2 => &mut self.player.hot[idx],
             _ => &mut self.cursor,
+        }
+    }
+
+    fn creative_items_filtered(&self) -> Vec<u16> {
+        if self.creative_tab == 5 {
+            let q = self.creative_search.to_ascii_lowercase();
+            items::all_creative_items()
+                .into_iter()
+                .filter(|&id| q.is_empty() || items::name(id).to_ascii_lowercase().contains(&q))
+                .collect()
+        } else {
+            items::creative_tab_items(self.creative_tab).to_vec()
+        }
+    }
+
+    fn creative_hover(&self) -> Option<(usize, usize)> {
+        let (mx, my) = (self.mouse_x, self.mouse_y);
+        for t in 0..12 {
+            let (x, y, w, h) = render::creative_tab_rect(t);
+            if mx >= x && mx < x + w && my >= y && my < y + h { return Some((0, t)); }
+        }
+        for i in 0..45 {
+            let (x, y, w, h) = render::creative_grid_rect(i);
+            if mx >= x && mx < x + w && my >= y && my < y + h { return Some((1, i)); }
+        }
+        for i in 0..HOT {
+            let (x, y, w, h) = render::creative_hot_rect(i);
+            if mx >= x && mx < x + w && my >= y && my < y + h { return Some((2, i)); }
+        }
+        let (ux, uy, uw, uh) = render::creative_scroll_up_rect();
+        if mx >= ux && mx < ux + uw && my >= uy && my < uy + uh { return Some((3, 0)); }
+        let (dx, dy, dw, dh) = render::creative_scroll_dn_rect();
+        if mx >= dx && mx < dx + dw && my >= dy && my < dy + dh { return Some((3, 1)); }
+        let (tx, ty, tw, th_r) = render::creative_trash_rect();
+        if mx >= tx && mx < tx + tw && my >= ty && my < ty + th_r { return Some((4, 0)); }
+        None
+    }
+
+    fn click_creative(&mut self, right: bool) {
+        let Some(hv) = self.creative_hover() else { return; };
+        let shift = self.keys.contains(&plat::VK_SHIFT);
+        match hv {
+            (0, t) => {
+                self.plat.play(Sfx::Click);
+                if t == 11 {
+                    self.open_inventory(false);
+                } else {
+                    self.creative_tab = t;
+                    self.creative_scroll = 0;
+                    if t != 5 { self.creative_search.clear(); }
+                }
+            }
+            (1, i) => {
+                let list = self.creative_items_filtered();
+                let idx = self.creative_scroll * 9 + i;
+                if let Some(&id) = list.get(idx) {
+                    let amt = if right { 1 } else { items::max_stack(id) };
+                    if shift {
+                        self.player.add(id, amt);
+                    } else if self.cursor.id == id {
+                        self.cursor.count = (self.cursor.count + amt).min(items::max_stack(id));
+                    } else {
+                        self.cursor = Stack::new(id, amt);
+                    }
+                    self.plat.play(Sfx::Click);
+                }
+            }
+            (2, i) => {
+                self.slot_click(right, 2, i);
+            }
+            (3, dir) => {
+                let max_scroll = ((self.creative_items_filtered().len() + 8) / 9).saturating_sub(5);
+                if dir == 0 { self.creative_scroll = self.creative_scroll.saturating_sub(1); }
+                else { self.creative_scroll = (self.creative_scroll + 1).min(max_scroll); }
+                self.plat.play(Sfx::Click);
+            }
+            (4, _) => {
+                self.cursor = Stack::EMPTY;
+                self.plat.play(Sfx::Click);
+            }
+            _ => {}
         }
     }
 
@@ -948,10 +1161,19 @@ impl<P: Platform> Game<P> {
     }
 
     fn mine_step(&mut self, speed_mul: f32) {
+        if self.mode == GameMode::Spectator { self.mining = None; return; }
         let (dx, dy, dz) = self.look_dir();
         let (ex, ey, ez) = self.eye();
         let hit = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, REACH, false);
         let Some(h) = hit else { self.mining = None; return; };
+        if self.mode == GameMode::Creative {
+            if self.creative_break_cd <= 0.0 {
+                self.creative_break_cd = 0.18;
+                self.mining = None;
+                self.break_block(h.x, h.y, h.z, false);
+            }
+            return;
+        }
         if h.block == world::BEDROCK { self.mining = None; return; }
         let pos = (h.x, h.y, h.z);
         let held_id = self.player.held().id;
@@ -994,7 +1216,7 @@ impl<P: Platform> Game<P> {
                 let left = self.player.add(drop.id, drop.count);
                 if left > 0 { self.drops.push(Drop::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5, drop.id)); }
             }
-        } else {
+        } else if self.mode == GameMode::Survival {
             self.message = String::from("Need a better pickaxe to harvest that!");
             self.msg_timer = 1.8;
         }
@@ -1072,14 +1294,61 @@ impl<P: Platform> Game<P> {
 
         let held = self.player.held();
         if held.is_empty() { return; }
-        // eat food
-        if items::is_food(held.id) > 0.0 {
-            if self.player.hunger < 20.0 {
-                self.player.hunger = (self.player.hunger + items::is_food(held.id) * 2.0).min(20.0);
-                self.player.hp = (self.player.hp + 2.0).min(20.0);
+        // Spawn Eggs (322..=331)
+        if (items::SPAWN_SHEEP..=items::SPAWN_VILLAGER).contains(&held.id) {
+            let kind = match held.id {
+                items::SPAWN_SHEEP => MobKind::Sheep,
+                items::SPAWN_COW => MobKind::Cow,
+                items::SPAWN_PIG => MobKind::Pig,
+                items::SPAWN_CHICKEN => MobKind::Chicken,
+                items::SPAWN_ZOMBIE => MobKind::Zombie,
+                items::SPAWN_SKELETON => MobKind::Skeleton,
+                items::SPAWN_CREEPER => MobKind::Creeper,
+                items::SPAWN_SPIDER => MobKind::Spider,
+                items::SPAWN_ENDERMAN => MobKind::Enderman,
+                _ => MobKind::Villager,
+            };
+            let mx = (h.x + h.nx) as f32 + 0.5;
+            let my = (h.y + h.ny) as f32 + 0.05;
+            let mz = (h.z + h.nz) as f32 + 0.5;
+            let mut m = Mob::spawn(kind, mx, my, mz);
+            m.yaw = (self.player.x - mx).atan2(self.player.z - mz);
+            self.mobs.push(m);
+            if self.mode == GameMode::Survival {
                 let s = &mut self.player.hot[self.player.selected];
                 s.count -= 1;
                 if s.count == 0 { *s = Stack::EMPTY; }
+            }
+            self.plat.play(Sfx::Click);
+            return;
+        }
+        // Ender Pearl teleport
+        if held.id == items::ENDER_PEARL {
+            if let Some(tp) = world::raycast(&mut self.world, ex, ey, ez, dx, dy, dz, 24.0, false) {
+                self.player.x = (tp.x + tp.nx) as f32 + 0.5;
+                self.player.y = (tp.y + tp.ny) as f32 + 0.2;
+                self.player.z = (tp.z + tp.nz) as f32 + 0.5;
+                self.fall_y = self.player.y;
+                if self.mode == GameMode::Survival {
+                    let s = &mut self.player.hot[self.player.selected];
+                    s.count -= 1;
+                    if s.count == 0 { *s = Stack::EMPTY; }
+                }
+                self.plat.play(Sfx::LevelUp);
+            }
+            return;
+        }
+        // eat food
+        if items::is_food(held.id) > 0.0 {
+            if self.player.hunger < 20.0 || held.id == items::GOLDEN_APPLE {
+                self.player.hunger = (self.player.hunger + items::is_food(held.id) * 2.0).min(20.0);
+                let heal = if held.id == items::GOLDEN_APPLE { 8.0 } else { 2.0 };
+                self.player.hp = (self.player.hp + heal).min(20.0);
+                if self.mode == GameMode::Survival {
+                    let s = &mut self.player.hot[self.player.selected];
+                    s.count -= 1;
+                    if s.count == 0 { *s = Stack::EMPTY; }
+                }
                 self.plat.play(Sfx::Pickup);
                 self.message = String::from("Yum!");
                 self.msg_timer = 1.2;
@@ -1093,7 +1362,6 @@ impl<P: Platform> Game<P> {
             let pz = h.z + h.nz;
             let existing = self.world.get(px, py, pz);
             if existing != world::AIR && existing != world::WATER && existing != world::TALL_GRASS { return; }
-            // don't place inside the player
             let (fx, fy, fz) = (px as f32 + 0.5, py as f32, pz as f32 + 0.5);
             if (fx - self.player.x).abs() < 0.9 && (fz - self.player.z).abs() < 0.9
                 && fy + 1.0 > self.player.y && fy < self.player.y + 1.8 {
@@ -1101,9 +1369,11 @@ impl<P: Platform> Game<P> {
             }
             self.world.set(px, py, pz, held.id);
             self.net.send(format!("BLOCK|{}|{}|{}|{}", px, py, pz, held.id));
-            let s = &mut self.player.hot[self.player.selected];
-            s.count -= 1;
-            if s.count == 0 { *s = Stack::EMPTY; }
+            if self.mode == GameMode::Survival {
+                let s = &mut self.player.hot[self.player.selected];
+                s.count -= 1;
+                if s.count == 0 { *s = Stack::EMPTY; }
+            }
             self.plat.play(Sfx::Place);
             if held.id == world::FURNACE { self.furnaces.insert((px, py, pz), Furnace::new()); }
             if matches!(held.id, world::REDSTONE_TORCH | world::LEVER | world::PRESSURE_PLATE) {
@@ -1191,7 +1461,7 @@ impl<P: Platform> Game<P> {
         // damage player
         let pd = ((self.player.x - cx).powi(2) + (self.player.y + 0.9 - cy).powi(2) + (self.player.z - cz).powi(2)).sqrt();
         let blast_reach = radius * 1.8;
-        if pd < blast_reach {
+        if self.mode == GameMode::Survival && pd < blast_reach {
             let dmg = ((1.0 - pd / blast_reach) * 14.0).max(1.0);
             self.player.hp -= dmg;
             self.hurt_flash = 0.6;
@@ -1213,6 +1483,7 @@ impl<P: Platform> Game<P> {
         let dt = dt.min(0.05);
         self.attack_cd = (self.attack_cd - dt).max(0.0);
         self.place_cd = (self.place_cd - dt).max(0.0);
+        self.creative_break_cd = (self.creative_break_cd - dt).max(0.0);
         self.msg_timer = (self.msg_timer - dt).max(0.0);
         self.hurt_flash = (self.hurt_flash - dt * 2.5).max(0.0);
         self.grace = (self.grace - dt).max(0.0);
@@ -1242,7 +1513,7 @@ impl<P: Platform> Game<P> {
             p.4 = (p.4 + dt * 0.6) % 6.283;
         }
 
-        let ui_open = self.ui == Ui::Inventory || self.ui == Ui::Furnace;
+        let ui_open = self.ui == Ui::Inventory || self.ui == Ui::Creative || self.ui == Ui::Furnace;
         if !ui_open {
             let mut fwd: f32 = 0.0;
             let mut strafe: f32 = 0.0;
@@ -1255,84 +1526,112 @@ impl<P: Platform> Game<P> {
             strafe /= len;
             let sneaking = self.keys.contains(&plat::VK_SHIFT);
             let sprinting = (self.keys.contains(&plat::VK_CONTROL) || self.sprinting)
-                && !sneaking && fwd > 0.0 && self.player.hunger > 6.0;
-            let speed = if sneaking { 2.0 } else if sprinting { 6.2 } else { 4.3 };
+                && !sneaking && fwd > 0.0 && (self.mode != GameMode::Survival || self.player.hunger > 6.0);
             let (sy, cy) = (self.player.yaw.sin(), self.player.yaw.cos());
-            // Cam forward is (sin(yaw), -cos(yaw)); right is (cos(yaw), sin(yaw)).
-            let vx = (sy * fwd + cy * strafe) * speed;
-            let vz = (-cy * fwd + sy * strafe) * speed;
-
-            let in_water = self.world.get(
-                self.player.x.floor() as i32,
-                (self.player.y + 0.4).floor() as i32,
-                self.player.z.floor() as i32,
-            ) == world::WATER;
-
-            let nx = self.player.x + vx * dt;
-            if !collides(&mut self.world, nx, self.player.y, self.player.z) {
-                if !sneaking || !self.player.on_ground || collides(&mut self.world, nx, self.player.y - 0.6, self.player.z) {
-                    self.player.x = nx;
-                }
-            }
-            let nz = self.player.z + vz * dt;
-            if !collides(&mut self.world, self.player.x, self.player.y, nz) {
-                if !sneaking || !self.player.on_ground || collides(&mut self.world, self.player.x, self.player.y - 0.6, nz) {
-                    self.player.z = nz;
-                }
-            }
-            if in_water {
-                self.fall_y = self.player.y;
-                if self.keys.contains(&plat::VK_SPACE) {
-                    self.player.vy = 4.2;
-                } else {
-                    self.player.vy = (self.player.vy - 6.0 * dt).max(-3.0);
-                }
-            } else {
-                if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
-                    self.player.vy = 8.4;
-                    self.player.on_ground = false;
-                    self.plat.play(Sfx::Step);
-                }
-                self.player.vy -= 22.0 * dt;
-            }
-            let ny = self.player.y + self.player.vy * dt;
-            if collides(&mut self.world, self.player.x, ny, self.player.z) {
-                if self.player.vy < 0.0 {
-                    if !self.player.on_ground && !in_water {
-                        let fall_dist = self.fall_y - self.player.y;
-                        if fall_dist > 3.5 && self.grace <= 0.0 {
-                            let dmg = (fall_dist - 3.0).floor();
-                            self.player.hp -= dmg;
-                            self.hurt_flash = 0.45;
-                            self.plat.play(Sfx::Hurt);
-                        }
-                    }
-                    self.player.on_ground = true;
-                    self.fall_y = self.player.y;
-                }
+            if self.mode == GameMode::Spectator {
+                let fly_sp = 9.0 * self.spec_speed * if sprinting { 1.6 } else { 1.0 };
+                let (fx, fy, fz) = self.look_dir();
+                self.player.x += (fx * fwd + cy * strafe) * fly_sp * dt;
+                self.player.y += fy * fwd * fly_sp * dt;
+                self.player.z += (fz * fwd + sy * strafe) * fly_sp * dt;
+                if self.keys.contains(&plat::VK_SPACE) { self.player.y += fly_sp * dt; }
+                if sneaking { self.player.y -= fly_sp * dt; }
+                self.player.y = self.player.y.clamp(1.0, 120.0);
                 self.player.vy = 0.0;
+                self.fall_y = self.player.y;
             } else {
-                self.player.y = ny;
-                self.player.on_ground = false;
-                if self.player.y > self.fall_y { self.fall_y = self.player.y; }
-            }
-            if (vx.abs() + vz.abs()) > 0.1 && self.player.on_ground && !sneaking {
-                self.audio_timer += dt as f64;
-                if self.audio_timer > if sprinting { 0.28 } else { 0.42 } {
-                    self.audio_timer = 0.0;
-                    self.plat.play(Sfx::Step);
+                let speed = if self.flying {
+                    if sprinting { 11.0 } else { 7.8 }
+                } else if sneaking {
+                    2.0
+                } else if sprinting {
+                    6.2
+                } else {
+                    4.3
+                };
+                let vx = (sy * fwd + cy * strafe) * speed;
+                let vz = (-cy * fwd + sy * strafe) * speed;
+
+                let in_water = self.world.get(
+                    self.player.x.floor() as i32,
+                    (self.player.y + 0.4).floor() as i32,
+                    self.player.z.floor() as i32,
+                ) == world::WATER;
+
+                let nx = self.player.x + vx * dt;
+                if !collides(&mut self.world, nx, self.player.y, self.player.z) {
+                    if self.flying || !sneaking || !self.player.on_ground || collides(&mut self.world, nx, self.player.y - 0.6, self.player.z) {
+                        self.player.x = nx;
+                    }
                 }
+                let nz = self.player.z + vz * dt;
+                if !collides(&mut self.world, self.player.x, self.player.y, nz) {
+                    if self.flying || !sneaking || !self.player.on_ground || collides(&mut self.world, self.player.x, self.player.y - 0.6, nz) {
+                        self.player.z = nz;
+                    }
+                }
+                if self.flying {
+                    self.fall_y = self.player.y;
+                    let mut vy = 0.0f32;
+                    if self.keys.contains(&plat::VK_SPACE) { vy += 6.8; }
+                    if sneaking { vy -= 6.8; }
+                    self.player.vy = vy;
+                } else if in_water {
+                    self.fall_y = self.player.y;
+                    if self.keys.contains(&plat::VK_SPACE) {
+                        self.player.vy = 4.2;
+                    } else {
+                        self.player.vy = (self.player.vy - 6.0 * dt).max(-3.0);
+                    }
+                } else {
+                    if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
+                        self.player.vy = 8.4;
+                        self.player.on_ground = false;
+                        self.plat.play(Sfx::Step);
+                    }
+                    self.player.vy -= 22.0 * dt;
+                }
+                let ny = self.player.y + self.player.vy * dt;
+                if collides(&mut self.world, self.player.x, ny, self.player.z) {
+                    if self.player.vy < 0.0 {
+                        if self.flying {
+                            self.flying = false;
+                        } else if !self.player.on_ground && !in_water && self.mode == GameMode::Survival {
+                            let fall_dist = self.fall_y - self.player.y;
+                            if fall_dist > 3.5 && self.grace <= 0.0 {
+                                let dmg = (fall_dist - 3.0).floor();
+                                self.player.hp -= dmg;
+                                self.hurt_flash = 0.45;
+                                self.plat.play(Sfx::Hurt);
+                            }
+                        }
+                        self.player.on_ground = true;
+                        self.fall_y = self.player.y;
+                    }
+                    self.player.vy = 0.0;
+                } else {
+                    self.player.y = ny;
+                    self.player.on_ground = false;
+                    if self.player.y > self.fall_y { self.fall_y = self.player.y; }
+                }
+                if (vx.abs() + vz.abs()) > 0.1 && self.player.on_ground && !sneaking && !self.flying {
+                    self.audio_timer += dt as f64;
+                    if self.audio_timer > if sprinting { 0.28 } else { 0.42 } {
+                        self.audio_timer = 0.0;
+                        self.plat.play(Sfx::Step);
+                    }
+                }
+                if sprinting && self.mode == GameMode::Survival {
+                    self.player.hunger = (self.player.hunger - dt * 0.12).max(0.0);
+                }
+                if self.mouse_left { self.mine_step(dt); }
             }
-            if sprinting {
-                self.player.hunger = (self.player.hunger - dt * 0.12).max(0.0);
-            }
-            if self.mouse_left { self.mine_step(dt); }
         }
 
         // mobs + creeper blasts
         let mut creeper_blasts: Vec<(f32, f32, f32)> = Vec::new();
         for m in self.mobs.iter_mut() {
-            m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace);
+            m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace, self.mode != GameMode::Survival);
             if m.kind == MobKind::Creeper && m.fuse >= 1.5 {
                 m.hp = 0.0;
                 creeper_blasts.push((m.x, m.y + 0.5, m.z));
@@ -1345,7 +1644,7 @@ impl<P: Platform> Game<P> {
         for m in self.mobs.iter_mut() {
             if m.kind.hostile() && m.kind != MobKind::Creeper {
                 let d = ((m.x - self.player.x).powi(2) + (m.y - self.player.y).powi(2) + (m.z - self.player.z).powi(2)).sqrt();
-                if d < 1.8 && m.attack_cd <= 0.0 && self.hurt_cd <= 0.0 && self.grace <= 0.0 {
+                if self.mode == GameMode::Survival && d < 1.8 && m.attack_cd <= 0.0 && self.hurt_cd <= 0.0 && self.grace <= 0.0 {
                     self.player.hp -= 2.0;
                     self.hurt_flash = 0.4;
                     self.hurt_cd = 0.7;
@@ -1449,7 +1748,11 @@ impl<P: Platform> Game<P> {
         }
         if self.redstone_dirty { self.update_redstone(); }
 
-        // hunger + health regeneration (Minecraft rules: regen at hunger >= 18, starve at hunger == 0)
+        // hunger + health regeneration (Survival only)
+        if self.mode != GameMode::Survival {
+            self.player.hp = 20.0;
+            self.player.hunger = 20.0;
+        } else {
         self.player.hunger = (self.player.hunger - dt * 0.035).max(0.0);
         if self.player.hunger <= 0.5 && self.hurt_cd <= 0.0 && self.player.hp > 1.0 {
             self.player.hp = (self.player.hp - 1.0).max(1.0);
@@ -1466,6 +1769,7 @@ impl<P: Platform> Game<P> {
             }
         } else {
             self.regen = 0.0;
+        }
         }
 
         // death
@@ -1522,7 +1826,8 @@ impl<P: Platform> Game<P> {
     fn draw_title(&mut self) {
         if self.ui != Ui::None { self.ui = Ui::None; }
         let hover = self.hover_index();
-        render::draw_title(&mut self.fb, &["Singleplayer", "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
+        let gm_label = format!("Game Mode: {}", self.mode.name());
+        render::draw_title(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
     }
@@ -1574,29 +1879,32 @@ impl<P: Platform> Game<P> {
         self.scene.clear();
         self.fb.cursor = (self.mouse_x, self.mouse_y);
         render::render_world(&mut self.scene, &self.tex, &mut self.world, &cam, self.time, self.tick);
-        if self.camera != 0 {
-            render::draw_sprite(&mut self.scene, &cam, self.player.x, self.player.y, self.player.z, 1.8, self.tick, day, SpriteKind::Steve, true);
+        if self.mode != GameMode::Spectator && self.ui == Ui::None {
+            if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, REACH, false) {
+                render::draw_block_outline(&mut self.scene, &cam, h.x, h.y, h.z);
+            }
         }
-        for (id, (x, y, z, yaw, _)) in self.remote.iter() {
-            let _ = id;
-            render::draw_sprite(&mut self.scene, &cam, *x, *y, *z, 1.8, self.tick, day, SpriteKind::Steve, false);
-            let _ = yaw;
+        if self.camera != 0 && self.mode != GameMode::Spectator {
+            render::draw_entity_3d(&mut self.scene, &cam, self.player.x, self.player.y, self.player.z, self.player.yaw, self.title_t * 2.0, day, EntityKind::Steve, false, true);
+        }
+        for (_, (x, y, z, yaw, _)) in self.remote.iter() {
+            render::draw_entity_3d(&mut self.scene, &cam, *x, *y, *z, *yaw, self.title_t * 2.0, day, EntityKind::Steve, false, false);
         }
         for m in self.mobs.iter() {
             let flash = m.hurt > 0.15 || (m.kind == MobKind::Creeper && m.fuse > 0.0 && (self.tick / 3) % 2 == 0);
-            render::draw_sprite(&mut self.scene, &cam, m.x, m.y, m.z, m.kind.height(), self.tick, day, SpriteKind::Mob(m.kind, flash), false);
+            render::draw_entity_3d(&mut self.scene, &cam, m.x, m.y, m.z, m.yaw, m.walk, day, EntityKind::Mob(m.kind), flash, false);
         }
         for t in self.tnt_primed.iter() {
             let id = if (self.tick / 4) % 2 == 0 { world::SNOW } else { world::TNT };
-            render::draw_sprite(&mut self.scene, &cam, t.0, t.1, t.2, 0.95, self.tick, day, SpriteKind::Drop(id), false);
+            render::draw_drop_sprite(&mut self.scene, &cam, t.0, t.1, t.2, id, self.tick, day);
         }
         for d in self.drops.iter() {
-            render::draw_sprite(&mut self.scene, &cam, d.x, d.y, d.z, 0.35, self.tick, day, SpriteKind::Drop(d.item), false);
+            render::draw_drop_sprite(&mut self.scene, &cam, d.x, d.y, d.z, d.item, self.tick, day);
         }
         render::upscale(&self.scene, &mut self.fb);
 
         if self.ui == Ui::None || self.ui == Ui::Chat {
-            if self.camera == 0 {
+            if self.camera == 0 && self.mode != GameMode::Spectator {
                 render::draw_held_item(&mut self.fb, self.player.hot[self.player.selected].id, self.tick);
             }
             render::draw_hud(
@@ -1614,6 +1922,7 @@ impl<P: Platform> Game<P> {
                 self.fps,
                 self.camera,
                 self.time,
+                self.mode,
             );
             // crosshair progress
             if let Some((_, prog)) = self.mining {
@@ -1626,6 +1935,14 @@ impl<P: Platform> Game<P> {
                 let a = (self.hurt_flash * 140.0) as u8;
                 self.fb.rect(0, 0, render::W as i32, render::H as i32, [180, 20, 20, a]);
             }
+        }
+        if self.ui == Ui::Creative {
+            let list = self.creative_items_filtered();
+            let hover = self.creative_hover();
+            render::draw_creative_screen(
+                &mut self.fb, &self.player.hot, self.cursor, self.creative_tab,
+                self.creative_scroll, &self.creative_search, &list, self.tick, hover,
+            );
         }
         if self.ui == Ui::Inventory {
             let grid_size = if self.craft3 { 3 } else { 2 };
@@ -1647,23 +1964,13 @@ impl<P: Platform> Game<P> {
         }
         if self.ui == Ui::Pause {
             let (mx, my) = (self.mouse_x, self.mouse_y);
-            let bx = (render::W as i32 - 200) / 2;
+            let bx = (render::W as i32 - 210) / 2;
             let mut hover = usize::MAX;
             for i in 0..5 {
-                let (x, y, w, h) = (bx, 76 + i as i32 * 26, 200, 20);
+                let (x, y, w, h) = (bx, 76 + i as i32 * 26, 210, 20);
                 if mx >= x && mx < x + w && my >= y && my < y + h { hover = i; }
             }
-            render::draw_pause(&mut self.fb, hover, self.title_t);
-            let labels = [
-                "BACK TO GAME".to_string(),
-                format!("SOUND: {}", if self.sound_on { "ON" } else { "OFF" }),
-                format!("MUSIC: {}", if self.music_on { "ON" } else { "OFF" }),
-                "OPTIONS".to_string(),
-                "SAVE AND QUIT".to_string(),
-            ];
-            for (i, l) in labels.iter().enumerate() {
-                render::button(&mut self.fb, bx, 76 + i as i32 * 26, 200, 20, l, hover == i);
-            }
+            render::draw_pause(&mut self.fb, hover, self.mode, self.sound_on, self.music_on);
         }
         if self.ui == Ui::None {
             self.plat.set_cursor(false);

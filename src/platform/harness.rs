@@ -31,8 +31,8 @@ impl Harness {
             keymap: vec![
                 ("W".into(), 0x57), ("A".into(), 0x41), ("S".into(), 0x53), ("D".into(), 0x44),
                 ("E".into(), 0x45), ("T".into(), 0x54), ("Q".into(), 0x51), ("F".into(), 0x46),
-                ("SPACE".into(), 0x20), ("SHIFT".into(), 0x10), ("ESC".into(), 0x1B),
-                ("ENTER".into(), 0x0D), ("BACK".into(), 0x08), ("F5".into(), 0x74),
+                ("SPACE".into(), 0x20), ("SHIFT".into(), 0x10), ("CTRL".into(), 0x11), ("ESC".into(), 0x1B),
+                ("ENTER".into(), 0x0D), ("BACK".into(), 0x08), ("F4".into(), 0x73), ("F5".into(), 0x74),
                 ("LEFT".into(), 0x25), ("UP".into(), 0x26), ("RIGHT".into(), 0x27), ("DOWN".into(), 0x28),
                 ("1".into(), 0x31), ("2".into(), 0x32), ("3".into(), 0x33), ("4".into(), 0x34),
                 ("5".into(), 0x35), ("6".into(), 0x36), ("7".into(), 0x37), ("8".into(), 0x38),

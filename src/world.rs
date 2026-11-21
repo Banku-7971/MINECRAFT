@@ -577,14 +577,6 @@ impl World {
         self.edits.insert(BPos(x, y, z), id);
     }
 
-    pub fn highest(&mut self, x: i32, z: i32) -> i32 {
-        for y in (0..WORLD_H as i32).rev() {
-            let b = self.get(x, y, z);
-            if is_solid(b) && b != WATER { return y + 1; }
-        }
-        SEA + 1
-    }
-
     pub fn highest_ground(&mut self, x: i32, z: i32) -> i32 {
         for y in (0..WORLD_H as i32).rev() {
             let b = self.get(x, y, z);
