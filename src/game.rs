@@ -1911,6 +1911,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         MobKind::Spider => Some(Sfx::Spider),
         MobKind::Creeper => Some(Sfx::Creeper),
         MobKind::Enderman | MobKind::EnderDragon => Some(Sfx::Enderman),
+        MobKind::Villager => Some(Sfx::Villager),
+        MobKind::Wolf | MobKind::Fox => Some(Sfx::Wolf),
+        MobKind::Bee => Some(Sfx::Bee),
+        MobKind::Wither => Some(Sfx::Wither),
         _ => None,
     }
 }
