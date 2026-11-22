@@ -933,7 +933,7 @@ impl Launcher {
             horizon_launcher::worlds::list(&backend::game_home())
                 .into_iter()
                 .map(|w| {
-                    let line = format!("Horizon · {} · {}", tr(w.mode), bytes(w.size));
+                    let line = format!("Sigma Craft · {} · {}", tr(w.mode), bytes(w.size));
                     (w.path, (w.name, line))
                 })
                 .collect()
@@ -2795,8 +2795,8 @@ impl Launcher {
                 &[("tag", tag), ("release", &release)],
             ),
             (None, Some(_), _) => trf("Up to date: Horizon {release}.", &[("release", &release)]),
-            (None, None, Some((last, _))) => format!("Horizon {release}. {last}"),
-            (None, None, None) => format!("Horizon {release}."),
+            (None, None, Some((last, _))) => format!("Sigma Craft {release}. {last}"),
+            (None, None, None) => format!("Sigma Craft {release}."),
         };
         let control = match available {
             Some(tag) => {

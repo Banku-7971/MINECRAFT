@@ -465,9 +465,9 @@ impl<'a> Split<'a> {
             n => format!(" - Window {n}"),
         };
         if self.players() > 1 && !who.is_empty() {
-            format!("Horizon{name} · {}", who.join(", "))
+            format!("Sigma Craft{name} · {}", who.join(", "))
         } else {
-            format!("Horizon{name}")
+            format!("Sigma Craft{name}")
         }
     }
 

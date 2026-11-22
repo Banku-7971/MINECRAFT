@@ -179,35 +179,19 @@ pub(crate) fn version_tag(tag: &str) -> Div {
         )
 }
 
-/// Horizon's mark: two stems, their reflection below, and the horizon across in the accent.
+/// Sigma Craft's pixel sigma, drawn in the current theme.
 pub(crate) fn mark(size: f32, t: &Theme) -> Div {
-    let u = size / 16.;
-    let stem = |x: f32, y: f32, color: Hsla| {
-        div()
-            .absolute()
-            .left(px(x * u))
-            .top(px(y * u))
-            .w(px(2. * u))
-            .h(px(4. * u))
-            .bg(color)
-    };
-    div()
-        .relative()
-        .flex_none()
-        .size(px(size))
-        .child(stem(4., 3., t.ink))
-        .child(stem(10., 3., t.ink))
-        .child(stem(4., 8., t.ink.opacity(0.36)))
-        .child(stem(10., 8., t.ink.opacity(0.36)))
-        .child(
-            div()
-                .absolute()
-                .left(px(u))
-                .top(px(7. * u))
-                .w(px(14. * u))
-                .h(px(u))
-                .bg(t.accent),
-        )
+    let u = size / 7.;
+    let pixels = ["1111111", "1100000", "0110000", "0011000", "0110000", "1100000", "1111111"];
+    let mut icon = div().relative().flex_none().size(px(size));
+    for (y, row) in pixels.iter().enumerate() {
+        for (x, pixel) in row.bytes().enumerate() {
+            if pixel == b'1' {
+                icon = icon.child(div().absolute().left(px(x as f32 * u)).top(px(y as f32 * u)).size(px(u)).bg(t.ink));
+            }
+        }
+    }
+    icon
 }
 
 /// The last thing the player did was press Tab: focused controls show a ring (a click focuses them

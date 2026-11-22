@@ -252,3 +252,11 @@ fn polish_entries_are_valid_and_keep_placeholders() {
         assert_eq!(holes(en), holes(said), "Polish: {en:?}");
     }
 }
+
+#[test]
+fn visible_branding_preserves_keys_and_placeholders() {
+    assert_eq!(tr_in(Language::English, "Horizon Settings"), "Sigma Craft Settings");
+    assert_eq!(brand("Horizon {version}"), "Sigma Craft {version}");
+    assert_eq!(brand("HORIZON_HOME"), "HORIZON_HOME");
+    assert_eq!(brand("Horizontal"), "Horizontal");
+}

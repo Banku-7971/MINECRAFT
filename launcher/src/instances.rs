@@ -474,7 +474,7 @@ fn list_with_packs(
     let mut out = vec![instance_at(
         store,
         DEFAULT.into(),
-        "Horizon".into(),
+        "Sigma Craft".into(),
         Kind::Default,
         game_home.to_path_buf(),
         game_home.to_path_buf(),

@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
@@ -642,7 +642,38 @@ fn table(language: Language) -> &'static Table {
 
 /// `en` in `language`, or `en` itself where the table lacks it.
 pub fn tr_in(language: Language, en: &str) -> &str {
-    table(language).get(en).copied().unwrap_or(en)
+    let translated = table(language).get(en).copied().unwrap_or(en);
+    brand(translated)
+}
+
+/// Keep translation keys and compatibility names unchanged; only rebrand visible copy.
+fn brand(text: &str) -> &str {
+    let mut branded = String::new();
+    let mut last = 0;
+    for (at, _) in text.match_indices("Horizon") {
+        let before = text[..at].chars().next_back();
+        let after = text[at + "Horizon".len()..].chars().next();
+        if before.is_some_and(|c| c.is_ascii_alphabetic())
+            || after.is_some_and(|c| c.is_ascii_alphabetic())
+        {
+            continue;
+        }
+        branded.push_str(&text[last..at]);
+        branded.push_str("Sigma Craft");
+        last = at + "Horizon".len();
+    }
+    if last == 0 {
+        return text;
+    }
+    branded.push_str(&text[last..]);
+    static BRANDED: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let mut cache = BRANDED.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    if let Some(value) = cache.get(text) {
+        return *value;
+    }
+    let value: &'static str = Box::leak(branded.into_boxed_str());
+    cache.insert(text.to_owned(), value);
+    value
 }
 
 /// `en` in the launcher's language.
