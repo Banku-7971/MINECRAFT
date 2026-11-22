@@ -13,6 +13,7 @@ pub const SAMPLE_RATE: u32 = 22050;
 static SOUNDS_BIN: &[u8] = include_bytes!("../assets/sounds.bin");
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)]
 #[repr(u8)]
 pub enum Sfx {
     Click = 0,

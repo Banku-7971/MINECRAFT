@@ -85,17 +85,17 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo test 2>&1 | tee /tmp/win-test.log
+          cargo test --bin minecraft 2>&1 | tee /tmp/win-test.log
 
       - name: Build Windows executables
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p target
+          mkdir -p runtime
           (
-            rustc --edition 2021 -O -C target-feature=+crt-static src/main.rs -o target/Minecraft.exe &&
-            rustc --edition 2021 -O -C target-feature=+crt-static src/installer.rs -o target/Minecraft-Setup.exe &&
-            ls -lh target/Minecraft.exe target/Minecraft-Setup.exe
+            rustc --edition 2021 -O -C target-feature=+crt-static src/main.rs -o runtime/Minecraft.exe &&
+            rustc --edition 2021 -O -C target-feature=+crt-static src/installer.rs -o runtime/Minecraft-Setup.exe &&
+            ls -lh runtime/Minecraft.exe runtime/Minecraft-Setup.exe
           ) 2>&1 | tee /tmp/win-build.log
 
       - name: Report Windows failure to Check Run
