@@ -25,7 +25,7 @@ fn normalize_key(s: &str) -> String {
 
 pub fn resolve_item_or_block(raw: &str) -> Option<u16> {
     if let Ok(id) = raw.parse::<u16>() {
-        if id <= 366 {
+        if id <= 375 {
             return Some(id);
         }
     }
@@ -85,15 +85,20 @@ pub fn resolve_item_or_block(raw: &str) -> Option<u16> {
         "potion" | "healing_potion" | "potion_of_healing" => return Some(items::POTION_HEAL),
         "fire_resistance_potion" => return Some(items::POTION_FIRE),
         "swiftness_potion" | "speed_potion" => return Some(items::POTION_SPEED),
+        "diamond_block" | "block_of_diamond" => return Some(world::DIAMOND_BLOCK),
+        "iron_block" | "block_of_iron" => return Some(world::IRON_BLOCK),
+        "gold_block" | "block_of_gold" => return Some(world::GOLD_BLOCK),
+        "emerald_block" | "block_of_emerald" => return Some(world::EMERALD_BLOCK),
+        "lapis_block" | "lapis_lazuli_block" => return Some(world::LAPIS_BLOCK),
         _ => {}
     }
-    for id in 1..=366u16 {
+    for id in 1..=375u16 {
         let nm = normalize_key(items::name(id));
         if nm == q {
             return Some(id);
         }
     }
-    for id in 1..=366u16 {
+    for id in 1..=375u16 {
         let nm = normalize_key(items::name(id));
         if nm.contains(&q) {
             return Some(id);
@@ -136,6 +141,11 @@ pub fn resolve_mob(raw: &str) -> Option<MobKind> {
         "ender_dragon" | "dragon" => Some(MobKind::EnderDragon),
         "iron_golem" | "golem" => Some(MobKind::IronGolem),
         "snow_golem" | "snowman" => Some(MobKind::SnowGolem),
+        "wither" => Some(MobKind::Wither),
+        "squid" => Some(MobKind::Squid),
+        "fox" => Some(MobKind::Fox),
+        "bee" => Some(MobKind::Bee),
+        "phantom" => Some(MobKind::Phantom),
         _ => None,
     }
 }
@@ -211,9 +221,9 @@ pub fn autocomplete(input: &str) -> Option<String> {
         .into_iter()
         .find(|s| s.to_ascii_lowercase().starts_with(&ql)),
         "/summon" => [
-            "cow", "sheep", "pig", "chicken", "wolf", "villager",
-            "zombie", "skeleton", "creeper", "spider", "enderman",
-            "slime", "blaze", "ghast", "wither_skeleton", "piglin",
+            "cow", "sheep", "pig", "chicken", "wolf", "fox", "bee", "squid", "villager",
+            "zombie", "skeleton", "creeper", "spider", "phantom", "enderman",
+            "slime", "blaze", "ghast", "wither_skeleton", "wither", "piglin",
             "zombified_piglin", "polar_bear", "parrot", "ender_dragon", "iron_golem", "snow_golem", "tnt",
         ]
         .into_iter()
@@ -240,7 +250,7 @@ pub fn autocomplete(input: &str) -> Option<String> {
         .find(|s| s.starts_with(&ql)),
         "/give" | "/setblock" | "/fill" => {
             if parts.len() >= 2 && !ql.is_empty() {
-                for id in 1..=366u16 {
+                for id in 1..=375u16 {
                     let nm = normalize_key(items::name(id));
                     if nm.starts_with(&ql) {
                         let base = if ends_space {
@@ -587,6 +597,9 @@ pub fn execute<P: Platform>(game: &mut Game<P>, cmd: &str) -> bool {
                 ) {
                     if (1..world::WORLD_H as i32).contains(&y) {
                         game.world.set(x, y, z, b);
+                        if b == world::BEACON {
+                            game.beacons.insert((game.world.dim.idx() as u8, x, y, z));
+                        }
                         game.redstone_dirty = true;
                         game.notify_fluid_neighbors(x, y, z);
                         game.push_chat(&format!("Set block at {}, {}, {} to {}", x, y, z, world::block_name(b)));

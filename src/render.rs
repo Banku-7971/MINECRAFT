@@ -311,7 +311,7 @@ impl Textures {
             world::DOOR | world::DOOR_OPEN => 85,
             world::LADDER => 91,
             world::GLASS => 13,
-            world::TORCH | world::CAMPFIRE => 14,
+            world::TORCH | world::SOUL_TORCH | world::CAMPFIRE => 14,
             world::BEDROCK => 15,
             world::COAL_ORE => 16,
             world::IRON_ORE => 17,
@@ -411,6 +411,7 @@ impl Textures {
             world::NETHER_WART => 104,
             world::BUTTON => 0,
             world::IRON_DOOR | world::IRON_DOOR_OPEN => 83,
+            world::JUKEBOX => 12,
             _ => 0,
         }
     }
@@ -730,7 +731,7 @@ fn is_model_block(b: u16) -> bool {
     matches!(
         b,
         world::ANVIL | world::ENCHANTING | world::STAIRS | world::SLAB | world::FENCE
-            | world::TORCH | world::REDSTONE_TORCH | world::BREWING_STAND | world::LANTERN
+            | world::TORCH | world::SOUL_TORCH | world::REDSTONE_TORCH | world::BREWING_STAND | world::LANTERN
             | world::HOPPER | world::PRESSURE_PLATE | world::CAKE | world::FARMLAND
             | world::DOOR | world::DOOR_OPEN | world::IRON_DOOR | world::IRON_DOOR_OPEN
             | world::BUTTON | world::SNOW_LAYER | world::BED | world::CHEST | world::SIGN
@@ -790,7 +791,7 @@ fn hit_model_boxes(
                 boxes[nb] = [10.0*p, 6.0*p, 7.0*p, 1.0, 9.0*p, 9.0*p]; nb += 1;
             }
         }
-        world::TORCH | world::REDSTONE_TORCH => {
+        world::TORCH | world::SOUL_TORCH | world::REDSTONE_TORCH => {
             boxes[0] = [7.0*p, 0.0, 7.0*p, 9.0*p, 10.0*p, 9.0*p]; nb = 1;
         }
         world::BREWING_STAND => {
@@ -949,6 +950,15 @@ fn shade_voxel(
         } else if ny != 0 && ny < 0 || (ny == 0 && v > 0.78) {
             t = [152, 114, 70, 255]; // oak frame & legs
         }
+    } else if b == world::JUKEBOX {
+        if ny > 0 && u > 0.25 && u < 0.75 && v > 0.44 && v < 0.56 {
+            t = [22, 22, 26, 255]; // record slot
+        } else {
+            t = [(t[0] as f32 * 0.65) as u8, (t[1] as f32 * 0.50) as u8, (t[2] as f32 * 0.44) as u8, 255];
+        }
+    } else if b == world::SOUL_TORCH && v < 0.35 {
+        let flick = ((tick / 4) % 2) as u8 * 25;
+        t = [80 + flick, 225, 255, 255];
     }
     let fl = face_light(nx, ny, nz, day);
     let ao_v = if apply_ao { ao_smooth(cache, bx, by, bz, nx, ny, nz, u, v) } else { 0.94 };
@@ -1221,11 +1231,12 @@ fn trace_ray(
                             trans_dist = t;
                             has_trans = true;
                         } else if b == world::LAVA || b == world::END_PORTAL {
+                            let pulse = 1.08 + ((tick as f32 * 0.09 + u * 8.0).sin() * 0.12);
                             let fog = (1.0 - (-t * fog_rate).exp()).min(0.85);
                             hit_rgb = [
-                                tpx[0] as f32 * 1.15 * shader.warm_torch.min(1.3) * (1.0 - fog) + sky[0] * fog,
-                                tpx[1] as f32 * 1.15 * (1.0 - fog) + sky[1] * fog,
-                                tpx[2] as f32 * 1.15 * (1.0 - fog) + sky[2] * fog,
+                                tpx[0] as f32 * pulse * shader.warm_torch.min(1.3) * (1.0 - fog) + sky[0] * fog,
+                                tpx[1] as f32 * pulse * (1.0 - fog) + sky[1] * fog,
+                                tpx[2] as f32 * pulse * (1.0 - fog) + sky[2] * fog,
                             ];
                             hit_dist = t;
                             break;
@@ -1308,7 +1319,10 @@ fn trace_ray(
             hit_rgb = [255.0, 246.0, 185.0];
         }
         if -sun_y > -0.1 && (dx + sun_x).abs() < 0.048 && (dy + sun_y).abs() < 0.048 && (dz + sun_z).abs() < 0.048 {
-            hit_rgb = [225.0, 230.0, 242.0];
+            let phase = (tick / 2400) % 4;
+            if phase != 2 || (dx + sun_x) > 0.0 {
+                hit_rgb = [228.0, 234.0, 246.0];
+            }
         }
         if day < 0.35 && dy > 0.05 {
             let st = th((dx * 220.0) as i32, (dz * 220.0 + dy * 140.0) as i32, 91);
@@ -1662,6 +1676,32 @@ fn face_pixel(face: FaceArt, u: f32, v: f32, base: [u8; 3], alt: [u8; 3]) -> [u8
             if y == 6 && x >= 2 && x <= 5 { return [32, 22, 16]; }
             base
         }
+        FaceArt::Wither => {
+            if y == 3 && (x == 1 || x == 2 || x == 5 || x == 6) { return alt; }
+            if y == 5 && x >= 2 && x <= 5 { return [150, 195, 255]; }
+            base
+        }
+        FaceArt::Squid => {
+            if y == 4 && (x == 1 || x == 6) { return [230, 236, 250]; }
+            if y == 4 && (x == 2 || x == 5) { return [18, 22, 36]; }
+            base
+        }
+        FaceArt::Fox => {
+            if y >= 5 && (x <= 1 || x >= 6) { return [242, 238, 230]; }
+            if y == 3 && (x == 1 || x == 6) { return [22, 20, 24]; }
+            if y == 6 && x >= 3 && x <= 4 { return [22, 20, 24]; }
+            base
+        }
+        FaceArt::Bee => {
+            if y == 3 && (x == 1 || x == 6) { return [22, 24, 30]; }
+            if y == 2 && (x == 1 || x == 6) { return [130, 215, 250]; }
+            if (y == 1 || y == 5) && x >= 1 && x <= 6 { return alt; }
+            base
+        }
+        FaceArt::Phantom => {
+            if y == 3 && (x == 1 || x == 2 || x == 5 || x == 6) { return alt; }
+            base
+        }
         FaceArt::None => base,
     }
 }
@@ -1928,6 +1968,34 @@ pub fn draw_particle_3d(
     }
 }
 
+pub fn draw_beacon_beam(fb: &mut Framebuffer, cam: &Cam, bx: f32, by: f32, bz: f32, tick: u32) {
+    let pulse = 0.85 + (tick as f32 * 0.14).sin() * 0.15;
+    for step in 1..=28 {
+        let wy = by + step as f32 * 1.4;
+        let (sx, sy, dist) = match project(cam, bx, wy, bz, fb) { Some(v) => v, None => continue };
+        if dist > 72.0 { continue; }
+        let half_w = ((0.22 / dist * focal_len(fb, cam)).round() as i32).clamp(1, 8);
+        let seg_h = ((1.5 / dist * focal_len(fb, cam)).ceil() as i32).clamp(2, 24);
+        let top = sy as i32 - seg_h / 2;
+        for py in 0..seg_h {
+            let iy = top + py;
+            if iy < 0 || iy >= fb.h as i32 { continue; }
+            for px in -half_w..=half_w {
+                let ix = sx as i32 + px;
+                if ix < 0 || ix >= fb.w as i32 { continue; }
+                if dist >= fb.depth[iy as usize * fb.w + ix as usize] { continue; }
+                let core = px.abs() <= half_w / 2;
+                let (r, g, b) = if core {
+                    ((215.0 * pulse).min(255.0) as u8, (248.0 * pulse).min(255.0) as u8, 255)
+                } else {
+                    (90, (220.0 * pulse).min(255.0) as u8, 255)
+                };
+                fb.set(ix, iy, r, g, b, 210);
+            }
+        }
+    }
+}
+
 // ===================== Item & 3D Isometric Block Icons =====================
 
 pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
@@ -1939,17 +2007,31 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     if item >= 332 && item <= 345 {
         return atlas.sample_item((90 + (item - 332)) as usize, x, y);
     }
-    if item == crate::items::SPAWN_IRON_GOLEM || item == crate::items::SPAWN_SNOW_GOLEM {
+    if (crate::items::SPAWN_IRON_GOLEM..=crate::items::SPAWN_PHANTOM).contains(&item) {
         let mut c = atlas.sample_item(66, x, y);
         if c[3] > 20 {
             let spot = ((x + y * 3) % 5) == 0;
-            if item == crate::items::SPAWN_IRON_GOLEM {
-                c = if spot { [86, 138, 64, c[3]] } else { [214, 214, 218, c[3]] };
-            } else {
-                c = if spot { [224, 118, 28, c[3]] } else { [240, 248, 255, c[3]] };
-            }
+            c = match item {
+                crate::items::SPAWN_IRON_GOLEM => if spot { [86, 138, 64, c[3]] } else { [214, 214, 218, c[3]] },
+                crate::items::SPAWN_SNOW_GOLEM => if spot { [224, 118, 28, c[3]] } else { [240, 248, 255, c[3]] },
+                crate::items::SPAWN_WITHER => if spot { [120, 180, 255, c[3]] } else { [34, 34, 42, c[3]] },
+                crate::items::SPAWN_SQUID => if spot { [22, 34, 68, c[3]] } else { [54, 76, 128, c[3]] },
+                crate::items::SPAWN_FOX => if spot { [246, 242, 234, c[3]] } else { [220, 108, 34, c[3]] },
+                crate::items::SPAWN_BEE => if spot { [36, 30, 26, c[3]] } else { [244, 198, 42, c[3]] },
+                _ => if spot { [112, 248, 86, c[3]] } else { [66, 78, 126, c[3]] },
+            };
         }
         return c;
+    }
+    if item == crate::items::MUSIC_DISC_CAT || item == crate::items::MUSIC_DISC_PIGSTEP {
+        let dx = x as i32 - 8;
+        let dy = y as i32 - 8;
+        let d2 = dx * dx + dy * dy;
+        if d2 > 42 || d2 < 2 { return [0, 0, 0, 0]; }
+        if d2 <= 8 {
+            return if item == crate::items::MUSIC_DISC_CAT { [74, 214, 96, 255] } else { [238, 182, 54, 255] };
+        }
+        return if d2 % 4 == 0 { [48, 48, 56, 255] } else { [22, 22, 26, 255] };
     }
     if item >= 346 && item <= 366 {
         let idx = match item {
@@ -1986,6 +2068,7 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     }
     let flat_idx = match item {
         world::TORCH => Some(76),
+        world::SOUL_TORCH => Some(76),
         world::REDSTONE_TORCH => Some(77),
         world::REDSTONE_DUST => Some(78),
         world::DOOR => Some(79),
@@ -2009,6 +2092,9 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     };
     if let Some(idx) = flat_idx {
         let mut c = atlas.sample_item(idx, x, y);
+        if item == world::SOUL_TORCH && c[3] > 20 && y < 7 {
+            c = [85, 225, 255, c[3]];
+        }
         if item == world::IRON_DOOR && c[3] > 20 {
             let v = ((c[0] as u16 + c[1] as u16 + c[2] as u16) / 3).max(160).min(235) as u8;
             c = [v, v, v + 8, c[3]];
@@ -2030,7 +2116,7 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
 fn is_flat_block_icon(item: u16) -> bool {
     matches!(
         item,
-        world::TORCH | world::REDSTONE_TORCH | world::REDSTONE_DUST | world::LEVER
+        world::TORCH | world::SOUL_TORCH | world::REDSTONE_TORCH | world::REDSTONE_DUST | world::LEVER
             | world::PRESSURE_PLATE | world::BUTTON | world::FLOWER_RED | world::FLOWER_YELLOW
             | world::TALL_GRASS | world::WHEAT | world::RAIL | world::SIGN | world::DOOR | world::IRON_DOOR
             | world::BED | world::BROWN_MUSHROOM | world::RED_MUSHROOM | world::SAPLING
@@ -2284,6 +2370,56 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
     }
 }
 
+pub fn draw_minimap(fb: &mut Framebuffer, world: &mut World, px: f32, pz: f32, yaw: f32) {
+    let map_sz = 56i32;
+    let x0 = W as i32 - map_sz - 10;
+    let y0 = 10i32;
+    // Parchment map frame
+    fb.rect(x0 - 4, y0 - 4, map_sz + 8, map_sz + 8, [206, 184, 136, 235]);
+    fb.frame(x0 - 4, y0 - 4, map_sz + 8, map_sz + 8, [104, 78, 44, 255]);
+    fb.frame(x0 - 1, y0 - 1, map_sz + 2, map_sz + 2, [142, 114, 72, 255]);
+    let cx = px.floor() as i32;
+    let cz = pz.floor() as i32;
+    let step = 2i32;
+    for my in 0..map_sz {
+        for mx in 0..map_sz {
+            let wx = cx + (mx - map_sz / 2) * step;
+            let wz = cz + (my - map_sz / 2) * step;
+            let h = world.highest_ground(wx, wz);
+            let top = world.get(wx, h, wz);
+            let col = if h < world::SEA || top == world::WATER {
+                [56, 104, 198]
+            } else if top == world::SAND || top == world::RED_SAND {
+                [218, 202, 142]
+            } else if top == world::SNOW || top == world::ICE {
+                [232, 240, 248]
+            } else if top == world::LAVA {
+                [236, 98, 24]
+            } else if top == world::LEAVES || top == world::SPRUCE_LEAVES || top == world::JUNGLE_LEAVES {
+                [54, 118, 42]
+            } else if top == world::STONE || top == world::COBBLE || top == world::END_STONE {
+                [132, 132, 138]
+            } else {
+                match world.biome(wx, wz) {
+                    Biome::Desert | Biome::Badlands => [216, 196, 138],
+                    Biome::Snowy => [226, 236, 244],
+                    Biome::Swamp => [74, 104, 64],
+                    Biome::Jungle => [68, 152, 46],
+                    _ => [92, 152, 64],
+                }
+            };
+            let shade = if ((wx + wz) & 3) == 0 { 0.92 } else { 1.0 };
+            fb.set(x0 + mx, y0 + my, (col[0] as f32 * shade) as u8, (col[1] as f32 * shade) as u8, (col[2] as f32 * shade) as u8, 245);
+        }
+    }
+    let pmx = x0 + map_sz / 2;
+    let pmy = y0 + map_sz / 2;
+    fb.rect(pmx - 1, pmy - 1, 3, 3, [255, 255, 255, 255]);
+    let dir_x = (yaw.sin() * 3.0).round() as i32;
+    let dir_y = (-yaw.cos() * 3.0).round() as i32;
+    fb.set(pmx + dir_x, pmy + dir_y, 240, 42, 42, 255);
+}
+
 pub fn draw_hud(
     fb: &mut Framebuffer,
     hot: &[u16; 9],
@@ -2306,6 +2442,8 @@ pub fn draw_hud(
     biome: Biome,
     dim: Dimension,
     dragon_hp: Option<f32>,
+    wither_hp: Option<f32>,
+    beacon_active: bool,
     pos: (f32, f32, f32),
     fps: u32,
     camera: u8,
@@ -2387,7 +2525,7 @@ pub fn draw_hud(
             fb.frame(10, H as i32 - 58, 34, 48, [190, 196, 205, 255]);
             text_shadow(fb, 14, H as i32 - 38, "BLK", [255, 255, 255, 255], 1);
         }
-        if potion_fire > 0.0 || potion_speed > 0.0 {
+        if potion_fire > 0.0 || potion_speed > 0.0 || beacon_active {
             let mut py = 32;
             if potion_fire > 0.0 {
                 text_shadow(fb, 8, py, &format!("FIRE RES {:02}s", potion_fire as i32), [255, 165, 65, 255], 1);
@@ -2395,6 +2533,10 @@ pub fn draw_hud(
             }
             if potion_speed > 0.0 {
                 text_shadow(fb, 8, py, &format!("SPEED {:02}s", potion_speed as i32), [110, 220, 255, 255], 1);
+                py += 10;
+            }
+            if beacon_active {
+                text_shadow(fb, 8, py, "BEACON: HASTE + STR", [110, 245, 235, 255], 1);
             }
         }
         if burn > 0.0 {
@@ -2419,6 +2561,13 @@ pub fn draw_hud(
         fb.rect(bx, 37, bw, 5, [34, 18, 42, 230]);
         let fill = ((hp / 200.0).clamp(0.0, 1.0) * bw as f32) as i32;
         fb.rect(bx, 37, fill, 5, [198, 56, 224, 255]);
+    } else if let Some(whp) = wither_hp {
+        let bw = 180;
+        let bx = W as i32 / 2 - bw / 2;
+        text_shadow(fb, W as i32 / 2 - 18, 28, "Wither", [218, 185, 255, 255], 1);
+        fb.rect(bx, 37, bw, 5, [28, 18, 38, 230]);
+        let fill = ((whp / 300.0).clamp(0.0, 1.0) * bw as f32) as i32;
+        fb.rect(bx, 37, fill, 5, [155, 85, 240, 255]);
     }
 
     if message_timer > 0.0 {
