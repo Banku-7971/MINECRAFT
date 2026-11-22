@@ -292,6 +292,7 @@ function playWebSfx(id) {
     case 36: playTone(152 * p, 0.34, 0.08, 'sawtooth', 132 * p, 0, 620); break; // Villager hmm
     case 37: playNoise(0.06, 0.09, 900 * p, 'lowpass'); playTone(280 * p, 0.14, 0.10, 'sawtooth', 140 * p, 0, 880); break; // Wolf bark
     case 38: playTone(195 * p, 0.28, 0.05, 'sawtooth', 210 * p, 0, 740); break; // Bee buzz
+    case 39: playTone(54 * p, 0.65, 0.14, 'sawtooth', 42 * p, 0, 280); playTone(235 * p, 0.22, 0.05, 'sine', 120 * p, 0.05, 500); break; // Warden sonic pulse
     default: playNoise(0.06, 0.06, 750); break;
   }
 }
@@ -658,7 +659,7 @@ function canvasPoint(e) {
 function drawFrame() {
   if (!wasm || !imageData) return;
   const len = wasm.game_frame_len();
-  if (len !== 480 * 270 * 4) return;
+  if (len !== 960 * 540 * 4) return;
   const ptr = wasm.game_frame_ptr();
   if (!ptr) return;
   const pixels = new Uint8ClampedArray(wasm.memory.buffer, ptr, len);
@@ -841,7 +842,7 @@ async function boot() {
 
     const { instance } = await WebAssembly.instantiate(bytes, imports);
     wasm = instance.exports;
-    imageData = ctx.createImageData(480, 270);
+    imageData = ctx.createImageData(960, 540);
 
     setStatus('Starting engine...');
     wasm.game_init();

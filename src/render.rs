@@ -7,6 +7,8 @@ use std::sync::{OnceLock, RwLock, RwLockReadGuard};
 
 pub const W: usize = 480;
 pub const H: usize = 270;
+pub const OUT_W: usize = 960;
+pub const OUT_H: usize = 540;
 #[allow(dead_code)]
 pub const RW: usize = 480;
 #[allow(dead_code)]
@@ -49,7 +51,7 @@ impl ShaderConfig {
     }
 
     pub fn preset(idx: usize) -> Self {
-        match idx % 5 {
+        match idx % 6 {
             1 => Self {
                 name: String::from("BSL WARM"),
                 sun_shadows: true,
@@ -97,6 +99,18 @@ impl ShaderConfig {
                 fog_density: 1.75,
                 sky_warmth: 0.10,
                 tonemap_aces: false,
+            },
+            5 => Self {
+                name: String::from("HORIZON HDR"),
+                sun_shadows: true,
+                water_reflect: true,
+                warm_torch: 1.42,
+                saturation: 1.18,
+                contrast: 1.09,
+                brightness: 1.05,
+                fog_density: 1.10,
+                sky_warmth: 0.14,
+                tonemap_aces: true,
             },
             _ => Self::vanilla(),
         }
@@ -466,18 +480,57 @@ impl Framebuffer {
     pub fn clear(&mut self) {
         for d in self.depth.iter_mut() { *d = f32::INFINITY; }
     }
+    pub fn clear_transparent(&mut self) {
+        self.rgba.fill(0);
+        self.clear();
+    }
     #[inline]
     pub fn set(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8, a: u8) {
-        if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 { return; }
+        if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 || a == 0 { return; }
         let i = (y as usize * self.w + x as usize) * 4;
         if a == 255 {
             self.rgba[i] = r; self.rgba[i + 1] = g; self.rgba[i + 2] = b; self.rgba[i + 3] = 255;
         } else {
-            let t = a as f32 / 255.0;
-            self.rgba[i] = (self.rgba[i] as f32 * (1.0 - t) + r as f32 * t) as u8;
-            self.rgba[i + 1] = (self.rgba[i + 1] as f32 * (1.0 - t) + g as f32 * t) as u8;
-            self.rgba[i + 2] = (self.rgba[i + 2] as f32 * (1.0 - t) + b as f32 * t) as u8;
-            self.rgba[i + 3] = 255;
+            let da = self.rgba[i + 3];
+            if da == 0 {
+                self.rgba[i] = r; self.rgba[i + 1] = g; self.rgba[i + 2] = b; self.rgba[i + 3] = a;
+            } else if da == 255 {
+                let t = a as f32 / 255.0;
+                self.rgba[i] = (self.rgba[i] as f32 * (1.0 - t) + r as f32 * t) as u8;
+                self.rgba[i + 1] = (self.rgba[i + 1] as f32 * (1.0 - t) + g as f32 * t) as u8;
+                self.rgba[i + 2] = (self.rgba[i + 2] as f32 * (1.0 - t) + b as f32 * t) as u8;
+                self.rgba[i + 3] = 255;
+            } else {
+                let sa = a as f32 / 255.0;
+                let daf = da as f32 / 255.0;
+                let oa = sa + daf * (1.0 - sa);
+                let inv = 1.0 / oa.max(1e-5);
+                self.rgba[i] = ((r as f32 * sa + self.rgba[i] as f32 * daf * (1.0 - sa)) * inv) as u8;
+                self.rgba[i + 1] = ((g as f32 * sa + self.rgba[i + 1] as f32 * daf * (1.0 - sa)) * inv) as u8;
+                self.rgba[i + 2] = ((b as f32 * sa + self.rgba[i + 2] as f32 * daf * (1.0 - sa)) * inv) as u8;
+                self.rgba[i + 3] = (oa * 255.0).clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    /// Horizon-style soft edge vignette on the output framebuffer.
+    pub fn apply_vignette(&mut self, strength: f32) {
+        if strength <= 0.0 { return; }
+        let w = self.w as f32;
+        let h = self.h as f32;
+        for y in 0..self.h {
+            let ny = (y as f32 + 0.5) / h * 2.0 - 1.0;
+            let ny2 = ny * ny;
+            for x in 0..self.w {
+                let nx = (x as f32 + 0.5) / w * 2.0 - 1.0;
+                let r2 = (nx * nx * 0.65 + ny2 * 0.85).min(1.4);
+                let v = (1.0 - r2 * strength).clamp(0.62, 1.0);
+                if v < 0.995 {
+                    let i = (y * self.w + x) * 4;
+                    self.rgba[i] = (self.rgba[i] as f32 * v) as u8;
+                    self.rgba[i + 1] = (self.rgba[i + 1] as f32 * v) as u8;
+                    self.rgba[i + 2] = (self.rgba[i + 2] as f32 * v) as u8;
+                }
+            }
         }
     }
     pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: [u8; 4]) {
@@ -590,7 +643,7 @@ fn day_factor(time: f32) -> f32 {
     (sun * 2.2 + 0.35).clamp(0.0, 1.0)
 }
 
-fn sky_color(dim: Dimension, dir_y: f32, time: f32, x: i32, y: i32) -> [f32; 3] {
+fn sky_color(dim: Dimension, dir_x: f32, dir_y: f32, dir_z: f32, time: f32, x: i32, y: i32) -> [f32; 3] {
     match dim {
         Dimension::Nether => {
             let t = (dir_y * 0.5 + 0.5).clamp(0.0, 1.0);
@@ -604,24 +657,33 @@ fn sky_color(dim: Dimension, dir_y: f32, time: f32, x: i32, y: i32) -> [f32; 3] 
             c
         }
         Dimension::Overworld => {
-            let sun = (time * 2.0 * PI).sin();
+            let sun_x = (time * 2.0 * PI).cos();
+            let sun_y = (time * 2.0 * PI).sin();
+            let sun_z = 0.24f32;
+            let sun_len = (sun_x * sun_x + sun_y * sun_y + sun_z * sun_z).sqrt();
+            let sun_dot = ((dir_x * sun_x + dir_y * sun_y + dir_z * sun_z) / sun_len).clamp(-1.0, 1.0);
             let day = day_factor(time);
-            let horizon = 0.22 + sun.abs() * 0.10;
+            let horizon = 0.22 + sun_y.abs() * 0.10;
             let t = ((dir_y * 0.5 + 0.5) * (1.0 - horizon) + horizon).clamp(0.0, 1.0);
             let night_top = [8.0, 14.0, 36.0];
             let night_bot = [22.0, 26.0, 56.0];
-            let day_top = [110.0, 162.0, 252.0];
-            let day_bot = [188.0, 222.0, 255.0];
-            let dusk = [240.0, 138.0, 88.0];
-            let dusk_amt = (1.0 - sun.abs() * 3.0).clamp(0.0, 1.0) * 0.78;
+            let day_top = [98.0, 156.0, 250.0];
+            let day_bot = [184.0, 220.0, 255.0];
+            let dusk = [246.0, 132.0, 74.0];
+            let dusk_amt = (1.0 - sun_y.abs() * 3.0).clamp(0.0, 1.0);
+            let dir_warm = ((sun_dot * 0.5 + 0.5).powf(2.0)) * dusk_amt * (1.0 - dir_y.abs().min(1.0));
+            let corona = (sun_dot.max(0.0)).powf(12.0) * day * 0.28;
             let mut c = [0.0; 3];
             for i in 0..3 {
                 let mut v = night_bot[i] + (night_top[i] - night_bot[i]) * t;
                 let dv = day_bot[i] + (day_top[i] - day_bot[i]) * t;
                 v = v + (dv - v) * day;
-                v = v * (1.0 - dusk_amt) + dusk[i] * dusk_amt * (1.0 - dir_y.abs().min(1.0)) * 0.72;
+                v = v * (1.0 - dir_warm * 0.72) + dusk[i] * dir_warm * 0.85;
                 c[i] = v;
             }
+            c[0] = (c[0] + corona * 255.0).min(255.0);
+            c[1] = (c[1] + corona * 228.0).min(255.0);
+            c[2] = (c[2] + corona * 165.0).min(255.0);
             if day < 0.2 && dir_y > 0.02 && th(x, y, 91) % 900 == 0 {
                 c = [235.0, 235.0, 220.0];
             }
@@ -994,6 +1056,17 @@ fn shade_voxel(
     }
     if b == world::LAMP && cache.is_lit(bx, by, bz) {
         lr = 1.48 * shader.warm_torch; lg = 1.38 * shader.warm_torch; lb = 1.15;
+    }
+    // Underwater sunlight caustics on submerged blocks
+    if shader.water_reflect && day > 0.18 && cache.get(bx, by + 1, bz) == world::WATER {
+        let phase = tick as f32 * 0.09;
+        let wx = bx as f32 + u;
+        let wz = bz as f32 + v;
+        let caust = (((wx * 4.2 + phase).sin() * (wz * 4.2 - phase * 0.85).cos()) + 1.0) * 0.5;
+        let shimmer = caust.powf(3.0) * 0.34 * day;
+        lr += shimmer * 0.55;
+        lg += shimmer * 0.95;
+        lb += shimmer * 1.15;
     }
     ([t[0] as f32 * lr, t[1] as f32 * lg, t[2] as f32 * lb], t[3])
 }
@@ -1436,7 +1509,7 @@ pub fn render_world(
                 let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
                 let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
                 dx *= inv_len; dy *= inv_len; dz *= inv_len;
-                let sky = sky_color(dim, dy, time, px as i32, py as i32);
+                let sky = sky_color(dim, dx, dy, dz, time, px as i32, py as i32);
                 let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader, dyn_light);
                 let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                 let pi = py * w + px;
@@ -1472,7 +1545,7 @@ pub fn render_world(
                             let mut dz = cam.fz + cam.rz * nx + cam.uz * ny * scale;
                             let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
                             dx *= inv_len; dy *= inv_len; dz *= inv_len;
-                            let sky = sky_color(dim, dy, time, px as i32, py as i32);
+                            let sky = sky_color(dim, dx, dy, dz, time, px as i32, py as i32);
                             let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader, dyn_light);
                             let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                             let pi = local_y * w + px;
@@ -1700,6 +1773,33 @@ fn face_pixel(face: FaceArt, u: f32, v: f32, base: [u8; 3], alt: [u8; 3]) -> [u8
         }
         FaceArt::Phantom => {
             if y == 3 && (x == 1 || x == 2 || x == 5 || x == 6) { return alt; }
+            base
+        }
+        FaceArt::Panda => {
+            if (y == 2 || y == 3) && (x == 1 || x == 2 || x == 5 || x == 6) { return [22, 22, 26]; }
+            if y == 3 && (x == 2 || x == 5) { return [240, 240, 244]; }
+            if y == 5 && (x == 3 || x == 4) { return [26, 26, 30]; }
+            base
+        }
+        FaceArt::Allay => {
+            if (y == 3 || y == 4) && (x == 2 || x == 5) { return alt; }
+            base
+        }
+        FaceArt::WanderingTrader => {
+            if y <= 1 || x == 0 || x == 7 { return base; }
+            if y == 2 && x >= 1 && x <= 6 { return alt; }
+            if y == 3 && (x == 2 || x == 5) { return [48, 128, 72]; }
+            [188, 134, 102]
+        }
+        FaceArt::Guardian => {
+            if y >= 2 && y <= 5 && x >= 2 && x <= 5 { return [244, 240, 232]; }
+            if (y == 3 || y == 4) && (x == 3 || x == 4) { return alt; }
+            if y == 0 || y == 7 { return alt; }
+            base
+        }
+        FaceArt::Warden => {
+            if y == 5 && x >= 2 && x <= 5 { return alt; }
+            if y == 2 && (x == 1 || x == 6) { return [14, 34, 42]; }
             base
         }
         FaceArt::None => base,
@@ -2007,7 +2107,9 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
     if item >= 332 && item <= 345 {
         return atlas.sample_item((90 + (item - 332)) as usize, x, y);
     }
-    if (crate::items::SPAWN_IRON_GOLEM..=crate::items::SPAWN_PHANTOM).contains(&item) {
+    if (crate::items::SPAWN_IRON_GOLEM..=crate::items::SPAWN_PHANTOM).contains(&item)
+        || (crate::items::SPAWN_PANDA..=crate::items::SPAWN_WARDEN).contains(&item)
+    {
         let mut c = atlas.sample_item(66, x, y);
         if c[3] > 20 {
             let spot = ((x + y * 3) % 5) == 0;
@@ -2018,6 +2120,11 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
                 crate::items::SPAWN_SQUID => if spot { [22, 34, 68, c[3]] } else { [54, 76, 128, c[3]] },
                 crate::items::SPAWN_FOX => if spot { [246, 242, 234, c[3]] } else { [220, 108, 34, c[3]] },
                 crate::items::SPAWN_BEE => if spot { [36, 30, 26, c[3]] } else { [244, 198, 42, c[3]] },
+                crate::items::SPAWN_PANDA => if spot { [24, 24, 28, c[3]] } else { [238, 238, 236, c[3]] },
+                crate::items::SPAWN_ALLAY => if spot { [220, 250, 255, c[3]] } else { [70, 214, 244, c[3]] },
+                crate::items::SPAWN_WANDERING_TRADER => if spot { [224, 186, 62, c[3]] } else { [48, 86, 158, c[3]] },
+                crate::items::SPAWN_GUARDIAN => if spot { [228, 128, 58, c[3]] } else { [74, 152, 140, c[3]] },
+                crate::items::SPAWN_WARDEN => if spot { [56, 224, 212, c[3]] } else { [22, 54, 64, c[3]] },
                 _ => if spot { [112, 248, 86, c[3]] } else { [66, 78, 126, c[3]] },
             };
         }
@@ -2454,6 +2561,7 @@ pub fn draw_hud(
     dim: Dimension,
     dragon_hp: Option<f32>,
     wither_hp: Option<f32>,
+    warden_hp: Option<f32>,
     beacon_active: bool,
     pos: (f32, f32, f32),
     fps: u32,
@@ -2579,6 +2687,13 @@ pub fn draw_hud(
         fb.rect(bx, 37, bw, 5, [28, 18, 38, 230]);
         let fill = ((whp / 300.0).clamp(0.0, 1.0) * bw as f32) as i32;
         fb.rect(bx, 37, fill, 5, [155, 85, 240, 255]);
+    } else if let Some(wdhp) = warden_hp {
+        let bw = 180;
+        let bx = W as i32 / 2 - bw / 2;
+        text_shadow(fb, W as i32 / 2 - 18, 28, "Warden", [120, 245, 235, 255], 1);
+        fb.rect(bx, 37, bw, 5, [12, 28, 34, 230]);
+        let fill = ((wdhp / 500.0).clamp(0.0, 1.0) * bw as f32) as i32;
+        fb.rect(bx, 37, fill, 5, [52, 218, 206, 255]);
     }
 
     if message_timer > 0.0 {
@@ -2603,6 +2718,49 @@ pub fn upscale(src: &Framebuffer, dst: &mut Framebuffer) {
             let di = (y * dst.w + x) * 4;
             dst.rgba[di..di + 4].copy_from_slice(&src.rgba[si..si + 4]);
             dst.depth[y * dst.w + x] = src.depth[sy * src.w + sx];
+        }
+    }
+}
+
+/// Composite 480x270 logical UI framebuffer cleanly onto the 960x540 HD output buffer.
+pub fn composite_ui_2x(ui: &Framebuffer, out: &mut Framebuffer) {
+    let sx_scale = (out.w / ui.w.max(1)).max(1);
+    let sy_scale = (out.h / ui.h.max(1)).max(1);
+    for uy in 0..ui.h {
+        for ux in 0..ui.w {
+            let si = (uy * ui.w + ux) * 4;
+            let a = ui.rgba[si + 3];
+            if a == 0 { continue; }
+            let r = ui.rgba[si];
+            let g = ui.rgba[si + 1];
+            let b = ui.rgba[si + 2];
+            let oy0 = uy * sy_scale;
+            let ox0 = ux * sx_scale;
+            if a == 255 {
+                for dy in 0..sy_scale {
+                    let row = (oy0 + dy) * out.w;
+                    for dx in 0..sx_scale {
+                        let di = (row + ox0 + dx) * 4;
+                        out.rgba[di] = r;
+                        out.rgba[di + 1] = g;
+                        out.rgba[di + 2] = b;
+                        out.rgba[di + 3] = 255;
+                    }
+                }
+            } else {
+                let t = a as i32;
+                let inv = 255 - t;
+                for dy in 0..sy_scale {
+                    let row = (oy0 + dy) * out.w;
+                    for dx in 0..sx_scale {
+                        let di = (row + ox0 + dx) * 4;
+                        out.rgba[di] = ((out.rgba[di] as i32 * inv + r as i32 * t) / 255) as u8;
+                        out.rgba[di + 1] = ((out.rgba[di + 1] as i32 * inv + g as i32 * t) / 255) as u8;
+                        out.rgba[di + 2] = ((out.rgba[di + 2] as i32 * inv + b as i32 * t) / 255) as u8;
+                        out.rgba[di + 3] = 255;
+                    }
+                }
+            }
         }
     }
 }
@@ -3318,10 +3476,16 @@ pub fn draw_options_screen(
     panel(fb, px, py, pw, ph);
     text(fb, px + 10, py + 8, "OPTIONS", [60, 60, 60, 255], 1);
     let cam_name = match camera { 1 => "THIRD PERSON", 2 => "DISTANT", _ => "FIRST PERSON" };
+    let res_label = match scale {
+        0 => "960x540 (ULTRA HD)",
+        1 => "640x360 (HD)",
+        2 => "480x270 (STD)",
+        _ => "320x180 (FAST)",
+    };
     let items = [
         format!("SOUND: {}", if sound { "ON" } else { "OFF" }),
         format!("MUSIC: {}", if music { "ON" } else { "OFF" }),
-        format!("PIXEL SCALE: {}x", scale),
+        format!("3D RES: {}", res_label),
         format!("CAMERA (F5/C): {}", cam_name),
         format!("SHADER: {}", shader_name),
         format!("RELOAD PACKS ({} LOADED)", pack_count),

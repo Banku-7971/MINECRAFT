@@ -498,7 +498,7 @@ impl Win32 {
         Win32 {
             hwnd,
             state,
-            bgra: vec![0u8; W * H * 4],
+            bgra: vec![0u8; crate::render::OUT_W * crate::render::OUT_H * 4],
             freq: freq.max(1) as f64,
             start_qpc,
             cursor_visible: true,
@@ -610,7 +610,7 @@ impl Platform for Win32 {
     }
 
     fn present(&mut self, fb: &mut Framebuffer) {
-        let px_count = (fb.w * fb.h).min(W * H);
+        let px_count = (fb.w * fb.h).min(self.bgra.len() / 4);
         for i in 0..px_count {
             let s = i * 4;
             self.bgra[s] = fb.rgba[s + 2];

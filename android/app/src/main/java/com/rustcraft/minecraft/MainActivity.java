@@ -171,8 +171,10 @@ public class MainActivity extends Activity {
     }
 
     private static class GameView extends SurfaceView implements Runnable, SurfaceHolder.Callback {
-        private static final int FB_W = 480;
-        private static final int FB_H = 270;
+        private static final int FB_W = 960;
+        private static final int FB_H = 540;
+        private static final int UI_W = 480;
+        private static final int UI_H = 270;
 
         // Win32/Game VK constants
         private static final int VK_SHIFT = 0x10;
@@ -420,11 +422,11 @@ public class MainActivity extends Activity {
         }
 
         private int toFbX(float sx) {
-            return Math.max(0, Math.min(FB_W - 1, Math.round((sx - dstRect.left) * FB_W / Math.max(1f, dstRect.width()))));
+            return Math.max(0, Math.min(UI_W - 1, Math.round((sx - dstRect.left) * UI_W / Math.max(1f, dstRect.width()))));
         }
 
         private int toFbY(float sy) {
-            return Math.max(0, Math.min(FB_H - 1, Math.round((sy - dstRect.top) * FB_H / Math.max(1f, dstRect.height()))));
+            return Math.max(0, Math.min(UI_H - 1, Math.round((sy - dstRect.top) * UI_H / Math.max(1f, dstRect.height()))));
         }
 
         private boolean tryTapHotbar(float sx, float sy) {
