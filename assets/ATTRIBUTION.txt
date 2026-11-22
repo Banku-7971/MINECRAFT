@@ -1,9 +1,16 @@
-Block and item 16x16 pixel textures packed into assets/textures.bin are sourced from:
-1. Reworkbench (16x16 Minecraft Resource Pack) by Pharador / AntoineThebaud (CC-BY-4.0)
-   https://github.com/AntoineThebaud/Reworkbench
-2. Pixel Perfection Legacy by XSSheep & Nova Wostra
-   https://github.com/minetest-texture-packs/Pixel-Perfection-Legacy
+# Third-Party Open-Source Assets Attribution
 
-All built-in sound effects, mob voices, jukebox tracks ("Meadow Promenade", "Basalt Bounce"),
-and dimension soundtracks (Overworld "Sunlight & Moss", Nether "Ember Choir", End "Astral Drift")
-are 100% original procedural synthesis written in Rust (src/sound.rs) and WebAudio (web/game.js).
+## Block & Item Textures (`assets/textures.bin`)
+- **Pixel Perfection Legacy** (and compatible open-source voxel texture packs) — CC0 / CC-BY-SA 4.0.
+
+## Sound Effects & Music (`assets/sounds.bin` & `web/sounds/`)
+- **Minetest Game (`luanti-org/minetest_game`)** — CC-BY-SA 3.0 / CC0
+  - Footsteps (grass, stone, wood, sand, water), block placement & digging, furnace active, door open, player damage, TNT gunpowder & explosion, metal shield block.
+- **VoxeLibre (`VoxeLibre/VoxeLibre`)** — GPL-3.0 / CC-BY-SA 4.0 / CC0
+  - Mob sounds (Cow, Sheep, Pig, Chicken, Zombie, Skeleton, Spider, Enderman, Villager, Wolf, Wither, Totem, Eerie/Warden), redstone button & piston, amethyst beacon chime, noteblock chime/pickup, player falling land, water splash.
+- **Music Tracks (`VoxeLibre` `mcl_music`)**:
+  - Overworld: *"Calmed Cube"* by **Dark Reaven Music** (CC-BY-SA 3.0)
+  - Nether: *"Deep Mining"* by **Dark Reaven Music** (CC-BY-SA 3.0)
+  - The End: *"Calmed Cube in Space"* by **Dark Reaven Music** (CC-BY-SA 3.0)
+  - Jukebox Disc 1: *"0dd BL0ck"* by **Jester** (CC-BY-SA 4.0)
+  - Jukebox Disc 2: *"Cube Beat"* by **Dark Reaven Music** (CC-BY-SA 3.0)

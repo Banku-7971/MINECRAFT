@@ -17,8 +17,8 @@ mod commands;
 
 pub const HOT: usize = 9;
 pub const STORE: usize = 27;
-const DEFAULT_BLOCK_REACH: f32 = 4.5;
-const DEFAULT_ENTITY_REACH: f32 = 3.0;
+const DEFAULT_BLOCK_REACH: f32 = 5.0;
+const DEFAULT_ENTITY_REACH: f32 = 3.5;
 
 static CUSTOM_SAVE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
@@ -141,7 +141,7 @@ pub struct Vehicle {
 }
 
 #[derive(PartialEq, Clone, Copy)]
-pub enum Screen { Title, Multiplayer, Options, Playing }
+pub enum Screen { Title, SelectWorld, Loading, Multiplayer, Options, Playing }
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum Ui { None, Inventory, Creative, Furnace, Chest, Enchant, Anvil, Brewing, Trade, Death, Chat, Pause }
@@ -202,7 +202,7 @@ pub struct Game<P: Platform> {
     fps_timer: f64,
     last_frame: f64,
     spawn: (f32, f32, f32),
-    remote: HashMap<u32, (f32, f32, f32, f32, f32)>,
+    remote: HashMap<u32, (f32, f32, f32, f32, f32, f32)>,
     net_timer: f64,
     sound_on: bool,
     music_on: bool,
@@ -279,6 +279,15 @@ pub struct Game<P: Platform> {
     beacons: HashSet<(u8, i32, i32, i32)>,
     jukeboxes: HashMap<(u8, i32, i32, i32), u16>,
     beacon_buff: bool,
+    fov_base: f32,
+    hide_hud: bool,
+    auto_jump: bool,
+    world_name: String,
+    selected_world: usize,
+    worlds_list: Vec<(String, String)>,
+    load_timer: f32,
+    load_label: String,
+    trade_prof: usize,
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -319,7 +328,7 @@ fn block_drop(b: u16, tick: u32) -> Stack {
         }
         WHEAT => Stack::new(WHEAT, 2),
         NETHER_WART => Stack::new(NETHER_WART, 2),
-        TALL_GRASS => if tick % 8 == 0 { Stack::new(WHEAT, 1) } else { Stack::EMPTY },
+        TALL_GRASS => if tick % 8 == 0 { Stack::new(WHEAT, 1) } else if tick % 5 == 0 { Stack::new(items::WHEAT_SEEDS, 1) } else if tick % 11 == 0 { Stack::new(items::BAMBOO, 1) } else { Stack::EMPTY },
         ICE | GLASS => Stack::EMPTY,
         DOOR_OPEN => Stack::new(DOOR, 1),
         IRON_DOOR_OPEN => Stack::new(IRON_DOOR, 1),
@@ -351,9 +360,9 @@ fn scene_dims(scale: i32) -> (usize, usize) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-const DEFAULT_PIXEL_SCALE: i32 = 0;
+const DEFAULT_PIXEL_SCALE: i32 = 2;
 #[cfg(target_arch = "wasm32")]
-const DEFAULT_PIXEL_SCALE: i32 = 1;
+const DEFAULT_PIXEL_SCALE: i32 = 2;
 
 impl<P: Platform> Game<P> {
     pub fn new(plat: P) -> Self {
@@ -513,7 +522,20 @@ impl<P: Platform> Game<P> {
             beacons: HashSet::new(),
             jukeboxes: HashMap::new(),
             beacon_buff: false,
+            fov_base: 75.0,
+            hide_hud: false,
+            auto_jump: false,
+            world_name: String::from("New World"),
+            selected_world: 0,
+            worlds_list: Vec::new(),
+            load_timer: 0.0,
+            load_label: String::from("Loading terrain..."),
+            trade_prof: 0,
         };
+        game.refresh_worlds_list();
+        if let Some((first_name, _)) = game.worlds_list.first().cloned() {
+            game.world_name = first_name;
+        }
         game.load_world();
         game.plat.set_dimension(game.world.dim.idx() as u8);
         #[cfg(not(target_arch = "wasm32"))]
@@ -618,6 +640,8 @@ impl<P: Platform> Game<P> {
             Screen::Title => {
                 self.draw_title();
             }
+            Screen::SelectWorld => self.draw_select_world(),
+            Screen::Loading => self.draw_loading(dt as f32),
             Screen::Multiplayer => self.draw_multiplayer(),
             Screen::Options => self.draw_options(),
             Screen::Playing => {
@@ -693,10 +717,11 @@ impl<P: Platform> Game<P> {
                 }
                 Event::MouseDown(b) => {
                     match self.screen {
-                        Screen::Title | Screen::Multiplayer | Screen::Options => {
+                        Screen::Title | Screen::SelectWorld | Screen::Multiplayer | Screen::Options => {
                             self.plat.play(Sfx::Click);
                             self.click_menu();
                         }
+                        Screen::Loading => {}
                         Screen::Playing => {
                             match self.ui {
                                 Ui::Inventory | Ui::Furnace => self.click_inventory(b == 1),
@@ -786,6 +811,19 @@ impl<P: Platform> Game<P> {
             Screen::Title => {
                 if code == VK_RETURN { self.start_singleplayer(); }
             }
+            Screen::SelectWorld => {
+                if code == VK_ESCAPE { self.screen = Screen::Title; }
+                else if code == VK_UP && self.selected_world > 0 { self.selected_world -= 1; }
+                else if code == VK_DOWN && self.selected_world + 1 < self.worlds_list.len() { self.selected_world += 1; }
+                else if code == VK_RETURN {
+                    if let Some((wname, _)) = self.worlds_list.get(self.selected_world).cloned() {
+                        self.world_name = wname;
+                        self.load_world();
+                    }
+                    self.start_singleplayer();
+                }
+            }
+            Screen::Loading => {}
             Screen::Options => {
                 if code == VK_ESCAPE { if self.return_to_pause { self.return_to_pause = false; self.screen = Screen::Playing; self.ui = Ui::Pause; } else { self.screen = Screen::Title; } }
             }
@@ -914,6 +952,12 @@ impl<P: Platform> Game<P> {
                         self.plat.set_capture(false);
                         self.plat.set_cursor(true);
                     }
+                    VK_F1 => {
+                        self.hide_hud = !self.hide_hud;
+                    }
+                    VK_F2 => {
+                        self.take_screenshot();
+                    }
                     VK_F3 => {
                         self.show_debug = !self.show_debug;
                     }
@@ -921,10 +965,16 @@ impl<P: Platform> Game<P> {
                         let next = self.mode.next();
                         self.set_mode(next);
                     }
-                    VK_F5 | VK_C => {
+                    VK_F5 => {
                         self.camera = (self.camera + 1) % 3;
                         self.message = format!("Camera: {}", ["First person", "Third person", "Third person front"][self.camera as usize]);
                         self.msg_timer = 2.0;
+                    }
+                    VK_F11 => {
+                        self.plat.toggle_fullscreen();
+                    }
+                    VK_B => {
+                        self.pick_block();
                     }
                     VK_SPACE => {
                         if self.riding.is_some() {
@@ -1054,17 +1104,26 @@ impl<P: Platform> Game<P> {
     }
 
     fn start_singleplayer(&mut self) {
+        self.load_timer = 0.0;
+        self.load_label = format!("Loading \"{}\"...", self.world_name);
+        self.screen = Screen::Loading;
+        self.ui = Ui::None;
+        self.plat.set_capture(false);
+        self.plat.set_cursor(false);
+        self.set_mode(self.mode);
+    }
+
+    fn finish_loading(&mut self) {
         self.screen = Screen::Playing;
         self.ui = Ui::None;
         self.plat.set_capture(true);
         self.plat.set_cursor(false);
         self.plat.play(Sfx::LevelUp);
-        self.set_mode(self.mode);
         if self.loaded_save {
-            self.message = format!("Loaded world in {}", self.world.dim.name());
+            self.message = format!("Loaded \"{}\" in {}", self.world_name, self.world.dim.name());
             self.msg_timer = 3.5;
         } else if self.mode == GameMode::Survival {
-            self.message = String::from("Punch trees for wood! E inventory, F4 mode");
+            self.message = String::from("Punch trees for wood! E inventory, F5 cam, C zoom");
             self.msg_timer = 6.0;
         }
     }
@@ -1157,6 +1216,18 @@ impl<P: Platform> Game<P> {
                 let bx = (render::W as i32 - 200) / 2;
                 (0..5).map(|i| (bx, 108 + i as i32 * 25, 200, 21)).collect()
             }
+            Screen::SelectWorld => {
+                let mut rects = vec![
+                    (46, 200, 188, 22),
+                    (246, 200, 188, 22),
+                    (46, 228, 188, 22),
+                    (246, 228, 188, 22),
+                ];
+                for i in 0..6 {
+                    rects.push((46, 32 + i * 26, render::W as i32 - 92, 24));
+                }
+                rects
+            }
             Screen::Multiplayer => {
                 let (px, py) = (50, 20);
                 vec![
@@ -1167,10 +1238,18 @@ impl<P: Platform> Game<P> {
                 ]
             }
             Screen::Options => {
-                let (px, py, pw) = (64, 14, 352);
-                (0..7).map(|i| (px + 54, py + 26 + i * 26, pw - 108, 22)).collect()
+                let (px, py) = (32, 10);
+                let mut rects = Vec::new();
+                for i in 0..8 {
+                    let col = i % 2;
+                    let row = i / 2;
+                    rects.push((px + 14 + col * 198, py + 24 + row * 28, 190, 22));
+                }
+                rects.push((px + 14, py + 144, 388, 22));
+                rects.push((px + 108, py + 210, 200, 22));
+                rects
             }
-            Screen::Playing => Vec::new(),
+            Screen::Loading | Screen::Playing => Vec::new(),
         }
     }
 
@@ -1182,31 +1261,67 @@ impl<P: Platform> Game<P> {
                 self.menu_hover = i;
                 match self.screen {
                     Screen::Title => match i {
-                        0 => self.start_singleplayer(),
+                        0 => {
+                            self.refresh_worlds_list();
+                            self.screen = Screen::SelectWorld;
+                        }
                         1 => { self.mode = self.mode.next(); }
                         2 => { self.screen = Screen::Multiplayer; }
                         3 => { self.screen = Screen::Options; }
                         _ => self.plat.request_quit(),
                     },
+                    Screen::SelectWorld => match i {
+                        0 => {
+                            if let Some((wname, _)) = self.worlds_list.get(self.selected_world).cloned() {
+                                self.world_name = wname;
+                                self.load_world();
+                            }
+                            self.start_singleplayer();
+                        }
+                        1 => self.create_new_world(),
+                        2 => self.delete_selected_world(),
+                        3 => { self.screen = Screen::Title; }
+                        4..=9 => {
+                            let row = i - 4;
+                            if row < self.worlds_list.len() {
+                                self.selected_world = row;
+                            }
+                        }
+                        _ => {}
+                    },
                     Screen::Multiplayer => match i {
                         0 => self.join_game(),
                         1 => self.host_game(),
-                        2 => self.join_game(),
+                        2 => {
+                            self.net_addr = String::from("127.0.0.1");
+                            self.join_game();
+                        }
                         _ => { self.screen = Screen::Title; }
                     },
                     Screen::Options => match i {
-                        0 => { self.sound_on = !self.sound_on; self.audio.sound_on = self.sound_on; self.plat.set_sound(self.sound_on); }
-                        1 => { self.music_on = !self.music_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on); }
-                        2 => { self.pixel_scale = (self.pixel_scale + 1) % 4; let (sw, sh) = scene_dims(self.pixel_scale); self.scene = Framebuffer::new(sw, sh); }
-                        3 => { self.camera = (self.camera + 1) % 3; }
-                        4 => { packs::cycle_shader_preset(); }
-                        5 => {
+                        0 => {
+                            self.fov_base = match self.fov_base as i32 {
+                                70..=74 => 75.0,
+                                75..=84 => 85.0,
+                                85..=94 => 95.0,
+                                95..=104 => 105.0,
+                                _ => 70.0,
+                            };
+                        }
+                        1 => { self.difficulty = (self.difficulty + 1) % 4; }
+                        2 => { self.music_on = !self.music_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on); }
+                        3 => { self.sound_on = !self.sound_on; self.audio.sound_on = self.sound_on; self.plat.set_sound(self.sound_on); }
+                        4 => { self.pixel_scale = (self.pixel_scale + 1) % 4; let (sw, sh) = scene_dims(self.pixel_scale); self.scene = Framebuffer::new(sw, sh); }
+                        5 => { self.camera = (self.camera + 1) % 3; }
+                        6 => { self.auto_jump = !self.auto_jump; }
+                        7 => { packs::cycle_shader_preset(); }
+                        8 => {
                             #[cfg(not(target_arch = "wasm32"))]
                             self.reload_native_packs();
                         }
                         _ => { if self.return_to_pause { self.return_to_pause = false; self.screen = Screen::Playing; self.ui = Ui::Pause; } else { self.screen = Screen::Title; } }
                     },
-                    Screen::Playing => {}
+                    Screen::Loading | Screen::Playing => {}
                 }
                 return;
             }
@@ -1215,18 +1330,24 @@ impl<P: Platform> Game<P> {
 
     fn click_pause(&mut self) {
         let (mx, my) = (self.mouse_x, self.mouse_y);
-        let bx = (render::W as i32 - 210) / 2;
-        for i in 0..5 {
-            let (x, y, w, h) = (bx, 76 + i as i32 * 26, 210, 20);
+        let bx = (render::W as i32 - 204) / 2;
+        for i in 0..6 {
+            let (x, y, w, h) = (bx, 60 + i as i32 * 25, 204, 20);
             if mx >= x && mx < x + w && my >= y && my < y + h {
                 match i {
                     0 => self.resume(),
-                    1 => { let next = self.mode.next(); self.set_mode(next); }
-                    2 => {
+                    1 => {
+                        self.save_world();
+                        self.message = format!("Saved world \"{}\"", self.world_name);
+                        self.msg_timer = 2.5;
+                        self.resume();
+                    }
+                    2 => { let next = self.mode.next(); self.set_mode(next); }
+                    3 => {
                         self.sound_on = !self.sound_on; self.audio.sound_on = self.sound_on; self.plat.set_sound(self.sound_on);
                         self.music_on = self.sound_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on);
                     }
-                    3 => { self.return_to_pause = true; self.screen = Screen::Options; }
+                    4 => { self.return_to_pause = true; self.screen = Screen::Options; }
                     _ => {
                         self.save_world();
                         self.net.close();
@@ -1659,22 +1780,76 @@ impl<P: Platform> Game<P> {
         }
     }
 
-    fn villager_trades() -> [(u16, u32, u16, u32); 5] {
-        [
-            (items::EMERALD, 1, items::BREAD, 6),
-            (items::EMERALD, 1, items::ARROW, 16),
-            (items::EMERALD, 3, items::GOLDEN_APPLE, 1),
-            (items::EMERALD, 4, items::ENCHANTED_BOOK, 1),
-            (items::EMERALD, 5, items::EYE_OF_ENDER, 1),
-        ]
+    fn villager_prof_name(prof: usize) -> &'static str {
+        match prof {
+            0 => "Farmer",
+            1 => "Librarian",
+            2 => "Armorer",
+            3 => "Cleric",
+            4 => "Fletcher",
+            _ => "Wandering Trader",
+        }
+    }
+
+    fn villager_trades(prof: usize) -> [(u16, u32, u16, u32); 6] {
+        match prof {
+            0 => [ // Farmer
+                (world::WHEAT, 20, items::EMERALD, 1),
+                (items::CARROT, 16, items::EMERALD, 1),
+                (items::EMERALD, 1, items::BREAD, 6),
+                (items::EMERALD, 1, items::PUMPKIN_PIE, 4),
+                (items::EMERALD, 3, items::GOLDEN_CARROT, 3),
+                (items::EMERALD, 3, items::GOLDEN_APPLE, 1),
+            ],
+            1 => [ // Librarian
+                (items::PAPER, 24, items::EMERALD, 1),
+                (items::BOOK, 4, items::EMERALD, 1),
+                (items::EMERALD, 1, world::BOOKSHELF, 1),
+                (items::EMERALD, 4, items::ENCHANTED_BOOK, 1),
+                (items::EMERALD, 2, items::COMPASS, 1),
+                (items::EMERALD, 4, items::CLOCK, 1),
+            ],
+            2 => [ // Armorer / Weaponsmith
+                (items::COAL, 15, items::EMERALD, 1),
+                (items::IRON_INGOT, 4, items::EMERALD, 1),
+                (items::EMERALD, 3, items::IRON_SWORD, 1),
+                (items::EMERALD, 5, items::IRON_CHESTPLATE, 1),
+                (items::EMERALD, 12, items::DIAMOND_PICK, 1),
+                (items::EMERALD, 14, items::DIAMOND_SWORD, 1),
+            ],
+            3 => [ // Cleric
+                (items::ROTTEN_FLESH, 24, items::EMERALD, 1),
+                (items::GOLD_INGOT, 3, items::EMERALD, 1),
+                (items::EMERALD, 1, items::LAPIS_LAZULI, 2),
+                (items::EMERALD, 3, items::XP_BOTTLE, 3),
+                (items::EMERALD, 4, items::ENDER_PEARL, 1),
+                (items::EMERALD, 6, items::EYE_OF_ENDER, 1),
+            ],
+            4 => [ // Fletcher
+                (items::STICK, 32, items::EMERALD, 1),
+                (items::STRING, 14, items::EMERALD, 1),
+                (items::EMERALD, 1, items::ARROW, 16),
+                (items::EMERALD, 2, items::BOW, 1),
+                (items::EMERALD, 4, items::SHIELD, 1),
+                (items::EMERALD, 5, items::POTION_SPEED, 1),
+            ],
+            _ => [ // Wandering Trader
+                (items::EMERALD, 1, world::SAPLING, 2),
+                (items::EMERALD, 2, items::AMETHYST, 2),
+                (items::EMERALD, 3, items::WATER_BUCKET, 1),
+                (items::EMERALD, 4, items::GOLDEN_APPLE, 1),
+                (items::EMERALD, 5, items::POTION_HEAL, 1),
+                (items::EMERALD, 6, items::EYE_OF_ENDER, 1),
+            ],
+        }
     }
 
     fn click_trade(&mut self) {
         let (mx, my) = (self.mouse_x, self.mouse_y);
-        let trades = Self::villager_trades();
+        let trades = Self::villager_trades(self.trade_prof);
         for (i, &(cost_id, cost_n, out_id, out_n)) in trades.iter().enumerate() {
-            let by = 30 + i as i32 * 30;
-            if mx >= 82 && mx < 398 && my >= by && my < by + 26 {
+            let by = 26 + i as i32 * 28;
+            if mx >= 72 && mx < 408 && my >= by && my < by + 24 {
                 let have: u32 = self.player.hot.iter().chain(self.player.store.iter())
                     .filter(|s| s.id == cost_id).map(|s| s.count).sum();
                 if have >= cost_n {
@@ -1967,10 +2142,13 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 items::NETHERITE_SWORD => 8.0,
                 items::DIAMOND_SWORD => 7.0,
                 items::IRON_SWORD => 6.0,
-                items::WOOD_SWORD => 4.0,
+                items::STONE_SWORD => 5.0,
+                items::WOOD_SWORD | items::GOLD_SWORD => 4.0,
+                items::NETHERITE_AXE => 7.0,
                 items::DIAMOND_AXE => 6.0,
                 items::IRON_AXE => 5.0,
-                items::WOOD_AXE => 3.5,
+                items::STONE_AXE => 4.5,
+                items::WOOD_AXE | items::GOLD_AXE => 3.5,
                 _ => 1.0 + items::tool_tier(held_id) as f32 * 0.6,
             } + ench * 1.5 + str_bonus;
             if is_crit { dmg *= 1.5; }
@@ -2170,7 +2348,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let pcol = render::block_particle_color(b);
         self.world.set(x, y, z, world::AIR);
         self.spawn_particle_burst(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5, pcol, 12, 2.6, 12.0);
-        self.net.send(format!("BLOCK|{}|{}|{}|0", x, y, z));
+        self.net.send(format!("BLOCK|{}|{}|{}|{}|0", self.world.dim.idx(), x, y, z));
         self.plat.play(Sfx::Break);
         if harvest_ok {
             let mut drop = block_drop(b, self.tick);
@@ -2211,7 +2389,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
 
     fn try_use(&mut self, from_click: bool) {
         if self.place_cd > 0.0 { return; }
-        self.place_cd = 0.20;
+        self.place_cd = 0.16;
         let (dx, dy, dz) = self.look_dir();
         let (ex, ey, ez) = self.eye();
         let b_reach = self.block_reach();
@@ -2278,12 +2456,17 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
                 if cx * cx + cy * cy + cz * cz >= 0.85 * 0.85 { continue; }
                 if m.kind == MobKind::Villager || m.kind == MobKind::WanderingTrader {
+                    self.trade_prof = if m.kind == MobKind::WanderingTrader {
+                        5
+                    } else {
+                        (m.x.abs() as usize * 7 + m.z.abs() as usize * 13) % 5
+                    };
                     self.ui = Ui::Trade;
                     self.mouse_right = false;
                     self.mouse_left = false;
                     self.plat.set_capture(false);
                     self.plat.set_cursor(true);
-                    self.plat.play(Sfx::Click);
+                    self.plat.play(Sfx::Villager);
                     return;
                 }
                 if m.kind == MobKind::Wolf {
@@ -2805,7 +2988,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
             self.swing_timer = 0.20;
             self.world.set(px, py, pz, held.id);
-            self.net.send(format!("BLOCK|{}|{}|{}|{}", px, py, pz, held.id));
+            self.net.send(format!("BLOCK|{}|{}|{}|{}|{}", self.world.dim.idx(), px, py, pz, held.id));
             if self.mode == GameMode::Survival {
                 let s = &mut self.player.hot[self.player.selected];
                 s.count -= 1;
@@ -3143,8 +3326,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                             self.world.set(x, y, z, world::AIR);
                             self.tnt_primed.push((x as f32 + 0.5, y as f32, z as f32 + 0.5, 0.35));
                         } else if b != world::AIR && b != world::BEDROCK && b != world::OBSIDIAN {
-                            self.world.set(x, y, z, world::AIR);
-                            self.net.send(format!("BLOCK|{}|{}|{}|0", x, y, z));
+        self.world.set(x, y, z, world::AIR);
+        self.net.send(format!("BLOCK|{}|{}|{}|{}|0", self.world.dim.idx(), x, y, z));
                             self.furnaces.remove(&(x, y, z));
                             self.levers.remove(&(x, y, z));
                             self.redstone_sources.remove(&(x, y, z));
@@ -3226,20 +3409,28 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         for e in self.net.poll() {
             match e {
                 NetEvent::Status(s) => { self.net_status = s.clone(); self.push_chat(&s); }
+                NetEvent::Connected => {
+                    self.net.connected = true;
+                    self.message = String::from("Connected to multiplayer world!");
+                    self.msg_timer = 3.0;
+                }
+                NetEvent::ClientJoined(cid) => {
+                    self.net.send_to(cid, format!("SEED|{}|{:.4}|{}", world::seed(), self.time, self.world.dim.idx()));
+                    for (d, bx, by, bz, bid) in self.world.all_edits().into_iter().take(2000) {
+                        self.net.send_to(cid, format!("BLOCK|{}|{}|{}|{}|{}", d, bx, by, bz, bid));
+                    }
+                }
                 NetEvent::Error(s) => { self.message = s; self.msg_timer = 5.0; }
-                NetEvent::Closed => { self.push_chat("Disconnected"); }
+                NetEvent::Closed => { self.net.connected = false; self.push_chat("Disconnected"); }
                 NetEvent::Line(line) => self.net_line(&line),
             }
         }
-        if self.net.connected && self.net_timer > 0.1 {
+        if self.net.connected && self.net_timer > 0.08 {
             self.net_timer = 0.0;
             self.net.send(format!(
                 "POS|{:.2}|{:.2}|{:.2}|{:.3}|{:.3}",
                 self.player.x, self.player.y, self.player.z, self.player.yaw, self.player.pitch
             ));
-        }
-        for (_, p) in self.remote.iter_mut() {
-            p.4 = (p.4 + dt * 0.6) % 6.283;
         }
 
         let ui_open = matches!(
@@ -3326,19 +3517,19 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.swimming = in_water && sprinting;
 
                 let mut speed = if self.flying {
-                    if sprinting { 11.0 } else { 7.8 }
+                    if sprinting { 16.0 } else { 10.8 }
                 } else if self.elytra_gliding {
                     14.0
                 } else if self.swimming {
                     5.4
                 } else if in_water {
-                    2.9
+                    2.6
                 } else if sneaking {
-                    2.0
+                    1.35
                 } else if sprinting {
-                    6.2
+                    5.65
                 } else {
-                    4.3
+                    4.32
                 };
                 if self.potion_speed > 0.0 || self.beacon_buff { speed *= 1.32; }
                 speed *= self.speed_mul;
@@ -3356,22 +3547,30 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 let vz = (-cy * fwd + sy * strafe) * speed + self.player_kb_vz;
 
                 let nx = self.player.x + vx * dt;
-                if !collides(&mut self.world, nx, self.player.y, self.player.z) {
+                let bx_hit = collides(&mut self.world, nx, self.player.y, self.player.z);
+                if !bx_hit {
                     if self.flying || in_water || !sneaking || !self.player.on_ground || collides(&mut self.world, nx, self.player.y - 0.6, self.player.z) {
                         self.player.x = nx;
                     }
                 }
                 let nz = self.player.z + vz * dt;
-                if !collides(&mut self.world, self.player.x, self.player.y, nz) {
+                let bz_hit = collides(&mut self.world, self.player.x, self.player.y, nz);
+                if !bz_hit {
                     if self.flying || in_water || !sneaking || !self.player.on_ground || collides(&mut self.world, self.player.x, self.player.y - 0.6, nz) {
                         self.player.z = nz;
                     }
                 }
+                if self.auto_jump && self.player.on_ground && !sneaking && (bx_hit || bz_hit)
+                    && !collides(&mut self.world, nx, self.player.y + 1.05, nz)
+                {
+                    self.player.vy = 9.0;
+                    self.player.on_ground = false;
+                }
                 if self.flying {
                     self.fall_y = self.player.y;
                     let mut vy = 0.0f32;
-                    if self.keys.contains(&plat::VK_SPACE) { vy += 6.8; }
-                    if sneaking { vy -= 6.8; }
+                    if self.keys.contains(&plat::VK_SPACE) { vy += 7.5; }
+                    if sneaking { vy -= 7.5; }
                     self.player.vy = vy;
                 } else if on_climbable {
                     self.fall_y = self.player.y;
@@ -3395,11 +3594,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     }
                 } else {
                     if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
-                        self.player.vy = if self.potion_jump > 0.0 { 11.2 } else { 8.4 };
+                        self.player.vy = if self.potion_jump > 0.0 { 11.8 } else { 9.0 };
                         self.player.on_ground = false;
                         self.plat.play(Sfx::Jump);
                     }
-                    self.player.vy -= (if in_cobweb { 4.0 } else { 22.0 }) * dt;
+                    self.player.vy -= (if in_cobweb { 5.0 } else { 32.0 }) * dt;
                 }
                 let ny = self.player.y + self.player.vy * dt;
                 if collides(&mut self.world, self.player.x, ny, self.player.z) {
@@ -3409,7 +3608,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                         if self.flying {
                             self.flying = false;
                         } else if !self.player.on_ground && !in_water && !on_climbable {
-                            if pre_vy < -5.8 {
+                            if pre_vy < -11.5 {
                                 self.plat.play(Sfx::Land);
                             }
                             if self.mode == GameMode::Survival && self.rule_fall_damage {
@@ -3430,8 +3629,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     if self.player.y > self.fall_y { self.fall_y = self.player.y; }
                 }
                 let move_mag = (vx * vx + vz * vz).sqrt();
-                if move_mag > 0.1 {
-                    self.player_walk += move_mag * dt * 2.2;
+                if move_mag > 0.1 && (self.player.on_ground || in_water || self.flying) {
+                    self.player_walk += move_mag * dt * 1.9;
                 }
                 if move_mag > 0.1 && (self.player.on_ground || in_water) && !sneaking && !self.flying {
                     self.audio_timer += dt as f64;
@@ -3523,8 +3722,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let mut creeper_blasts: Vec<(f32, f32, f32)> = Vec::new();
         let mut dragon_killed = false;
         let mut xp_from_mobs = 0u32;
+        let held_item = self.player.held().id;
         for m in self.mobs.iter_mut() {
-            m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace, self.mode != GameMode::Survival);
+            m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace, self.mode != GameMode::Survival, held_item);
             if matches!(m.kind, MobKind::Skeleton | MobKind::Ghast | MobKind::Blaze | MobKind::EnderDragon | MobKind::Wither | MobKind::Warden | MobKind::Guardian)
                 && self.mode == GameMode::Survival && self.grace <= 0.0 && m.ranged_cd <= 0.0
             {
@@ -4120,13 +4320,59 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     fn net_line(&mut self, line: &str) {
         let parts: Vec<&str> = line.split('|').collect();
         match parts.first().copied() {
+            Some("RPOS") if parts.len() >= 7 => {
+                if let (Ok(id), Ok(x), Ok(y), Ok(z), Ok(yaw), Ok(pitch)) = (
+                    parts[1].parse::<u32>(), parts[2].parse::<f32>(), parts[3].parse::<f32>(),
+                    parts[4].parse::<f32>(), parts[5].parse::<f32>(), parts[6].parse::<f32>(),
+                ) {
+                    let prev = self.remote.get(&id).copied();
+                    let dist = prev.map_or(0.0, |(ox, _, oz, _, _, _)| ((x - ox).powi(2) + (z - oz).powi(2)).sqrt());
+                    let walk = prev.map_or(0.0, |p| p.5) + dist * 2.2;
+                    self.remote.insert(id, (x, y, z, yaw, pitch, walk));
+                }
+            }
             Some("POS") if parts.len() >= 6 => {
                 if let (Ok(x), Ok(y), Ok(z), Ok(yaw), Ok(pitch)) = (
                     parts[1].parse::<f32>(), parts[2].parse::<f32>(), parts[3].parse::<f32>(),
                     parts[4].parse::<f32>(), parts[5].parse::<f32>(),
                 ) {
                     let id = parts.get(6).and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                    self.remote.insert(id, (x, y, z, yaw, pitch));
+                    let prev = self.remote.get(&id).copied();
+                    let dist = prev.map_or(0.0, |(ox, _, oz, _, _, _)| ((x - ox).powi(2) + (z - oz).powi(2)).sqrt());
+                    let walk = prev.map_or(0.0, |p| p.5) + dist * 2.2;
+                    self.remote.insert(id, (x, y, z, yaw, pitch, walk));
+                }
+            }
+            Some("RLEAVE") if parts.len() >= 2 => {
+                if let Ok(id) = parts[1].parse::<u32>() {
+                    self.remote.remove(&id);
+                }
+            }
+            Some("SEED") if parts.len() >= 4 => {
+                if let (Ok(seed), Ok(time), Ok(dim_idx)) = (
+                    parts[1].parse::<i32>(), parts[2].parse::<f32>(), parts[3].parse::<u8>(),
+                ) {
+                    if seed != world::seed() {
+                        self.world.reseed(seed);
+                        self.spawn.1 = self.world.highest_ground(self.spawn.0 as i32, self.spawn.2 as i32) as f32 + 0.2;
+                        self.player.x = self.spawn.0;
+                        self.player.y = self.spawn.1;
+                        self.player.z = self.spawn.2;
+                    }
+                    self.time = time;
+                    let d = Dimension::from_idx(dim_idx);
+                    self.world.set_dim(d);
+                    self.plat.set_dimension(dim_idx);
+                }
+            }
+            Some("BLOCK") if parts.len() >= 6 => {
+                if let (Ok(dim_idx), Ok(x), Ok(y), Ok(z), Ok(id)) = (
+                    parts[1].parse::<u8>(), parts[2].parse::<i32>(), parts[3].parse::<i32>(),
+                    parts[4].parse::<i32>(), parts[5].parse::<u16>(),
+                ) {
+                    if dim_idx == self.world.dim.idx() as u8 {
+                        self.world.set(x, y, z, id);
+                    }
                 }
             }
             Some("BLOCK") if parts.len() >= 5 => {
@@ -4191,6 +4437,37 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         self.plat.set_cursor(true);
     }
 
+    fn draw_select_world(&mut self) {
+        let hover = self.hover_index();
+        self.out_fb.clear();
+        self.fb.clear_transparent();
+        render::draw_select_world_screen(&mut self.fb, &self.worlds_list, self.selected_world, hover);
+        self.plat.set_capture(false);
+        self.plat.set_cursor(true);
+    }
+
+    fn draw_loading(&mut self, dt: f32) {
+        self.load_timer += dt;
+        let pct = (self.load_timer / 0.55).clamp(0.0, 1.0);
+        // Warm up chunks around player during the Java chunk-grid animation
+        let pcx = (self.player.x.floor() as i32) >> 4;
+        let pcz = (self.player.z.floor() as i32) >> 4;
+        let ring = (pct * 4.0) as i32;
+        for dx in -ring..=ring {
+            for dz in -ring..=ring {
+                let _ = self.world.highest_ground((pcx + dx) * 16, (pcz + dz) * 16);
+            }
+        }
+        self.out_fb.clear();
+        self.fb.clear_transparent();
+        render::draw_loading_screen(&mut self.fb, &self.load_label, pct, self.tick);
+        self.plat.set_capture(false);
+        self.plat.set_cursor(false);
+        if self.load_timer >= 0.55 {
+            self.finish_loading();
+        }
+    }
+
     fn draw_options(&mut self) {
         let hover = self.hover_index();
         let sh = packs::active_shader();
@@ -4203,7 +4480,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         render::upscale(&self.scene, &mut self.out_fb);
         self.out_fb.blur_dim(3, 95);
         self.fb.clear_transparent();
-        render::draw_options_screen(&mut self.fb, self.sound_on, self.music_on, self.pixel_scale, self.camera, &sh.name, packs::pack_count(), hover);
+        render::draw_options_screen(
+            &mut self.fb, self.fov_base, self.sound_on, self.music_on, self.pixel_scale,
+            self.camera, &sh.name, self.difficulty, self.auto_jump, packs::pack_count(), hover,
+        );
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
     }
@@ -4213,8 +4493,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         // camera
         let (fx, fy, fz) = self.look_dir();
         let eye_y = self.eye().1;
-        let zoomed = self.ui == Ui::None && self.keys.contains(&plat::VK_Z);
-        let fov_mul = if zoomed { 0.34 } else if self.sprinting || self.swimming { 1.10 } else { 1.0 };
+        let zoomed = self.ui == Ui::None && (self.keys.contains(&plat::VK_C) || self.keys.contains(&plat::VK_Z));
+        let base_mul = (self.fov_base / 75.0).clamp(0.85, 1.45);
+        let fov_mul = base_mul * if zoomed { 0.34 } else if self.sprinting || self.swimming { 1.10 } else { 1.0 };
         let cam = if self.camera == 0 {
             Cam::with_fov(self.player.yaw, self.player.pitch, self.player.x, eye_y, self.player.z, fov_mul)
         } else if self.camera == 1 {
@@ -4270,19 +4551,24 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         }
         if self.camera != 0 && !is_spectator {
             let steve_yaw = std::f32::consts::PI - self.player.yaw;
-            render::draw_entity_3d(&mut self.scene, &cam, self.player.x, self.player.y, self.player.z, steve_yaw, self.player_walk, day, EntityKind::Steve, 0, true, false);
+            render::draw_entity_3d(
+                &mut self.scene, &cam, self.player.x, self.player.y, self.player.z,
+                steve_yaw, self.player_walk, day, EntityKind::Steve, 0, true, !self.player.on_ground, self.swimming,
+            );
         }
-        for (_, (x, y, z, yaw, _)) in self.remote.iter() {
-            render::draw_entity_3d(&mut self.scene, &cam, *x, *y, *z, *yaw, self.title_t * 2.0, day, EntityKind::Steve, 0, false, false);
+        for (_, (x, y, z, yaw, _, walk)) in self.remote.iter() {
+            let r_yaw = std::f32::consts::PI - *yaw;
+            render::draw_entity_3d(&mut self.scene, &cam, *x, *y, *z, r_yaw, *walk, day, EntityKind::Steve, 0, false, false, false);
         }
         for (mi, m) in self.mobs.iter().enumerate() {
             if is_spectator && self.spectate_mob == Some(mi) { continue; }
             let flash = if m.hurt > 0.05 { 1 } else if m.kind == MobKind::Creeper && m.fuse > 0.0 && (self.tick / 3) % 2 == 0 { 2 } else { 0 };
-            render::draw_entity_3d(&mut self.scene, &cam, m.x, m.y, m.z, m.yaw, m.walk, day, EntityKind::Mob(m.kind), flash, false, !m.on_ground);
+            let air = !m.on_ground && (m.kind != MobKind::Chicken || m.vy.abs() > 0.45);
+            render::draw_entity_3d(&mut self.scene, &cam, m.x, m.y, m.z, m.yaw, m.walk, day, EntityKind::Mob(m.kind), flash, false, air, false);
         }
         for v in self.vehicles.iter() {
             let kind = if v.is_boat { EntityKind::Boat } else { EntityKind::Minecart };
-            render::draw_entity_3d(&mut self.scene, &cam, v.x, v.y, v.z, v.yaw, 0.0, day, kind, 0, false, false);
+            render::draw_entity_3d(&mut self.scene, &cam, v.x, v.y, v.z, v.yaw, 0.0, day, kind, 0, false, false, false);
         }
         for t in self.tnt_primed.iter() {
             let id = if (self.tick / 4) % 2 == 0 { world::SNOW } else { world::TNT };
@@ -4327,7 +4613,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
         }
 
-        if self.ui == Ui::None || self.ui == Ui::Chat {
+        if (self.ui == Ui::None || self.ui == Ui::Chat) && !self.hide_hud {
             if self.camera == 0 && self.mode != GameMode::Spectator {
                 let swing_ph = if self.swing_timer > 0.0 { (1.0 - self.swing_timer / 0.22) * std::f32::consts::PI } else { 0.0 };
                 render::draw_held_item(&mut self.fb, self.player.hot[self.player.selected].id, self.tick, self.player_walk, swing_ph);
@@ -4468,11 +4754,13 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         if self.ui == Ui::Trade {
             let (mx, my) = (self.mouse_x, self.mouse_y);
             let mut hover = None;
-            for i in 0..5 {
-                let by = 30 + i as i32 * 30;
-                if mx >= 82 && mx < 398 && my >= by && my < by + 26 { hover = Some((0, i)); }
+            for i in 0..6 {
+                let by = 26 + i as i32 * 28;
+                if mx >= 72 && mx < 408 && my >= by && my < by + 24 { hover = Some((0, i)); }
             }
-            render::draw_trade_screen(&mut self.fb, &Self::villager_trades(), &self.player.hot, self.tick, hover);
+            let trades = Self::villager_trades(self.trade_prof);
+            let prof_name = Self::villager_prof_name(self.trade_prof);
+            render::draw_trade_screen(&mut self.fb, prof_name, &trades, &self.player.hot, self.tick, hover);
         }
         if self.ui == Ui::Death {
             let (mx, my) = (self.mouse_x, self.mouse_y);
@@ -4484,10 +4772,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         }
         if self.ui == Ui::Pause {
             let (mx, my) = (self.mouse_x, self.mouse_y);
-            let bx = (render::W as i32 - 210) / 2;
+            let bx = (render::W as i32 - 204) / 2;
             let mut hover = usize::MAX;
-            for i in 0..5 {
-                let (x, y, w, h) = (bx, 76 + i as i32 * 26, 210, 20);
+            for i in 0..6 {
+                let (x, y, w, h) = (bx, 60 + i as i32 * 25, 204, 20);
                 if mx >= x && mx < x + w && my >= y && my < y + h { hover = i; }
             }
             render::draw_pause(&mut self.fb, hover, self.mode, self.sound_on, self.music_on);
@@ -4713,18 +5001,142 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         self.save_world();
     }
 
-    fn save_path() -> std::path::PathBuf {
+    fn base_dir() -> std::path::PathBuf {
         if let Some(dir) = CUSTOM_SAVE_DIR.get() {
-            return dir.join("world_save.dat");
+            return dir.clone();
         }
         std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("world_save.dat")))
-            .unwrap_or_else(|| std::path::PathBuf::from("world_save.dat"))
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    }
+
+    fn saves_dir() -> std::path::PathBuf {
+        Self::base_dir().join("saves")
+    }
+
+    fn save_path_for(name: &str) -> std::path::PathBuf {
+        let safe: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+        let safe = if safe.is_empty() { String::from("New_World") } else { safe };
+        Self::saves_dir().join(format!("{}.dat", safe))
+    }
+
+    fn save_path(&self) -> std::path::PathBuf {
+        Self::save_path_for(&self.world_name)
+    }
+
+    fn refresh_worlds_list(&mut self) {
+        self.worlds_list.clear();
+        if cfg!(target_arch = "wasm32") {
+            self.worlds_list.push((self.world_name.clone(), format!("{} ({})", self.mode.name(), self.world.dim.name())));
+            return;
+        }
+        let sdir = Self::saves_dir();
+        let _ = std::fs::create_dir_all(&sdir);
+        // Migrate legacy world_save.dat if present
+        let legacy = Self::base_dir().join("world_save.dat");
+        if legacy.exists() {
+            let dst = Self::save_path_for("New World");
+            if !dst.exists() {
+                let _ = std::fs::rename(&legacy, &dst);
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(&sdir) {
+            for ent in entries.flatten() {
+                let p = ent.path();
+                if p.extension().and_then(|s| s.to_str()) == Some("dat") {
+                    let wname = p.file_stem().and_then(|s| s.to_str()).unwrap_or("World").replace('_', " ");
+                    let kb = std::fs::metadata(&p).map(|m| m.len() / 1024).unwrap_or(0);
+                    let mode_str = std::fs::read(&p).ok().and_then(|b| {
+                        let off = if b.starts_with(b"MCS3") { 8 } else { 4 };
+                        b.get(off).map(|&m| match m { 1 => "Creative", 2 => "Spectator", _ => "Survival" })
+                    }).unwrap_or("Survival");
+                    self.worlds_list.push((wname, format!("{} - {} KB", mode_str, kb.max(1))));
+                }
+            }
+        }
+        self.worlds_list.sort_by(|a, b| a.0.cmp(&b.0));
+        if self.selected_world >= self.worlds_list.len() {
+            self.selected_world = 0;
+        }
+    }
+
+    fn create_new_world(&mut self) {
+        let mut idx = 1usize;
+        let mut candidate = String::from("New World");
+        while self.worlds_list.iter().any(|(n, _)| *n == candidate) {
+            idx += 1;
+            candidate = format!("New World {}", idx);
+        }
+        self.world_name = candidate;
+        let new_seed = (self.tick as i32).wrapping_mul(1103515245).wrapping_add(12345).abs().max(1);
+        self.world = World::new();
+        self.world.reseed(new_seed);
+        let sx = 0.5;
+        let sz = -239.5;
+        let sy = self.world.highest_ground(sx as i32, sz as i32) as f32 + 0.2;
+        self.spawn = (sx, sy, sz);
+        self.player = Player::new(sx, sy, sz);
+        self.mobs.clear();
+        for i in 0..24 {
+            let a = i as f32 * 2.39996;
+            let d = 11.0 + (i % 9) as f32 * 2.6;
+            let x = sx + a.cos() * d;
+            let z = sz + a.sin() * d;
+            let bm = self.world.biome(x as i32, z as i32);
+            let k = entities::biome_mob(bm, self.world.dim, i * 17 + 3, 0.6);
+            let msy = self.world.highest_ground(x.floor() as i32, z.floor() as i32) as f32;
+            if !entities::mob_collides(&mut self.world, x, msy, z, k.radius(), k.height()) {
+                self.mobs.push(Mob::spawn(k, x, msy, z));
+            }
+        }
+        self.chests.clear();
+        self.furnaces.clear();
+        self.levers.clear();
+        self.vehicles.clear();
+        self.dragon_defeated = false;
+        self.loaded_save = false;
+        self.save_world();
+        self.refresh_worlds_list();
+        self.start_singleplayer();
+    }
+
+    fn delete_selected_world(&mut self) {
+        if cfg!(target_arch = "wasm32") { return; }
+        if let Some((wname, _)) = self.worlds_list.get(self.selected_world).cloned() {
+            let _ = std::fs::remove_file(Self::save_path_for(&wname));
+            self.refresh_worlds_list();
+        }
+    }
+
+    fn take_screenshot(&mut self) {
+        if cfg!(target_arch = "wasm32") {
+            self.push_chat("Screenshot saved (use browser capture on Web)");
+            return;
+        }
+        let dir = Self::base_dir().join("screenshots");
+        let _ = std::fs::create_dir_all(&dir);
+        let name = format!("screenshot_{}.ppm", self.tick);
+        let path = dir.join(&name);
+        let w = self.out_fb.w;
+        let h = self.out_fb.h;
+        let mut ppm = format!("P6\n{} {}\n255\n", w, h).into_bytes();
+        ppm.reserve(w * h * 3);
+        for px in self.out_fb.rgba.chunks_exact(4) {
+            ppm.push(px[0]);
+            ppm.push(px[1]);
+            ppm.push(px[2]);
+        }
+        if std::fs::write(&path, ppm).is_ok() {
+            self.push_chat(&format!("Saved screenshot screenshots/{}", name));
+            self.message = format!("Saved screenshot {}", name);
+            self.msg_timer = 2.5;
+        }
     }
 
     fn save_world(&self) {
         if cfg!(target_arch = "wasm32") { return; }
+        let _ = std::fs::create_dir_all(Self::saves_dir());
         let mut out = Vec::with_capacity(4096);
         out.extend_from_slice(b"MCS3");
         out.extend_from_slice(&world::seed().to_le_bytes());
@@ -4806,17 +5218,24 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             out.extend_from_slice(&v.z.to_le_bytes());
             out.extend_from_slice(&v.yaw.to_le_bytes());
         }
-        let _ = std::fs::write(Self::save_path(), out);
+        let _ = std::fs::write(self.save_path(), out);
     }
 
     fn load_world(&mut self) {
         if cfg!(target_arch = "wasm32") { return; }
-        let Ok(data) = std::fs::read(Self::save_path()) else { return; };
+        let Ok(data) = std::fs::read(self.save_path()) else { return; };
         if data.len() < 8 + 44 + 36 * 6 + 4 { return; }
         let is_v3 = &data[0..4] == b"MCS3";
         let is_v2 = is_v3 || &data[0..4] == b"MCS2";
         if !is_v2 && &data[0..4] != b"MCS1" { return; }
         self.loaded_save = true;
+        self.world = World::new();
+        self.chests.clear();
+        self.furnaces.clear();
+        self.levers.clear();
+        self.redstone_sources.clear();
+        self.vehicles.clear();
+        self.player.enchants.clear();
         let mut p = 4usize;
         let read_u8 = |b: &[u8], pos: &mut usize| -> u8 { let v = b[*pos]; *pos += 1; v };
         let read_u16 = |b: &[u8], pos: &mut usize| -> u16 {
@@ -4846,6 +5265,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         };
         let dim = Dimension::from_idx(read_u8(&data, &mut p));
         self.world.set_dim(dim);
+        self.plat.set_dimension(dim.idx() as u8);
         self.dragon_defeated = read_u8(&data, &mut p) != 0;
         self.player.selected = (read_u8(&data, &mut p) as usize).min(HOT - 1);
         self.player.x = read_f32(&data, &mut p);

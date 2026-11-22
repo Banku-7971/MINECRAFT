@@ -272,7 +272,7 @@ impl MobKind {
 pub fn mob_collides(world: &mut World, x: f32, y: f32, z: f32, r: f32, h: f32) -> bool {
     let x0 = (x - r).floor() as i32;
     let x1 = (x + r).floor() as i32;
-    let y0 = (y + 0.08).floor() as i32;
+    let y0 = (y + 0.002).floor() as i32;
     let y1 = (y + h - 0.05).floor() as i32;
     let z0 = (z - r).floor() as i32;
     let z1 = (z + r).floor() as i32;
@@ -306,15 +306,32 @@ pub fn ground_top_at(world: &mut World, x: f32, y_probe: f32, z: f32, r: f32) ->
     best.map(|b| (b + 1) as f32)
 }
 
-pub fn steve_parts(walk: f32) -> Vec<Part3D> {
-    let s = walk.sin() * 0.55;
+pub fn steve_parts(walk: f32, airborne: bool, swimming: bool) -> Vec<Part3D> {
+    if swimming {
+        let kick = (walk * 2.1).sin() * 0.45;
+        let stroke = (walk * 1.4).sin() * 0.75;
+        return vec![
+            Part3D { cx: 0.0, cy: 0.74, cz: 0.56, hx: 0.24, hy: 0.24, hz: 0.24, pivot_y: 0.74, swing: -0.25, col: [218, 172, 134], col_alt: [85, 55, 32], face: FaceArt::Steve },
+            Part3D { cx: 0.0, cy: 0.54, cz: 0.08, hx: 0.24, hy: 0.14, hz: 0.34, pivot_y: 0.54, swing: 0.0, col: [46, 154, 174], col_alt: [36, 128, 148], face: FaceArt::None },
+            Part3D { cx: -0.35, cy: 0.54, cz: 0.52, hx: 0.11, hy: 0.11, hz: 0.34, pivot_y: 0.54, swing: 1.25 + stroke, col: [215, 168, 130], col_alt: [46, 154, 174], face: FaceArt::None },
+            Part3D { cx: 0.35, cy: 0.54, cz: 0.52, hx: 0.11, hy: 0.11, hz: 0.34, pivot_y: 0.54, swing: 1.25 - stroke, col: [215, 168, 130], col_alt: [46, 154, 174], face: FaceArt::None },
+            Part3D { cx: -0.12, cy: 0.52, cz: -0.52, hx: 0.12, hy: 0.12, hz: 0.36, pivot_y: 0.52, swing: 1.35 + kick, col: [56, 62, 142], col_alt: [45, 50, 120], face: FaceArt::None },
+            Part3D { cx: 0.12, cy: 0.52, cz: -0.52, hx: 0.12, hy: 0.12, hz: 0.36, pivot_y: 0.52, swing: 1.35 - kick, col: [56, 62, 142], col_alt: [45, 50, 120], face: FaceArt::None },
+        ];
+    }
+    let (arm_swing, leg_swing) = if airborne {
+        (0.46, 0.38)
+    } else {
+        let s = walk.sin() * 0.62;
+        (s, s)
+    };
     vec![
         Part3D { cx: 0.0, cy: 1.62, cz: 0.0, hx: 0.24, hy: 0.24, hz: 0.24, pivot_y: 1.38, swing: 0.0, col: [218, 172, 134], col_alt: [85, 55, 32], face: FaceArt::Steve },
         Part3D { cx: 0.0, cy: 1.05, cz: 0.0, hx: 0.24, hy: 0.34, hz: 0.13, pivot_y: 1.05, swing: 0.0, col: [46, 154, 174], col_alt: [36, 128, 148], face: FaceArt::None },
-        Part3D { cx: -0.35, cy: 1.05, cz: 0.0, hx: 0.11, hy: 0.34, hz: 0.11, pivot_y: 1.36, swing: -s, col: [215, 168, 130], col_alt: [46, 154, 174], face: FaceArt::None },
-        Part3D { cx: 0.35, cy: 1.05, cz: 0.0, hx: 0.11, hy: 0.34, hz: 0.11, pivot_y: 1.36, swing: s, col: [215, 168, 130], col_alt: [46, 154, 174], face: FaceArt::None },
-        Part3D { cx: -0.12, cy: 0.36, cz: 0.0, hx: 0.12, hy: 0.36, hz: 0.12, pivot_y: 0.72, swing: s, col: [56, 62, 142], col_alt: [45, 50, 120], face: FaceArt::None },
-        Part3D { cx: 0.12, cy: 0.36, cz: 0.0, hx: 0.12, hy: 0.36, hz: 0.12, pivot_y: 0.72, swing: -s, col: [56, 62, 142], col_alt: [45, 50, 120], face: FaceArt::None },
+        Part3D { cx: -0.35, cy: 1.05, cz: 0.0, hx: 0.11, hy: 0.34, hz: 0.11, pivot_y: 1.36, swing: -arm_swing, col: [215, 168, 130], col_alt: [46, 154, 174], face: FaceArt::None },
+        Part3D { cx: 0.35, cy: 1.05, cz: 0.0, hx: 0.11, hy: 0.34, hz: 0.11, pivot_y: 1.36, swing: arm_swing, col: [215, 168, 130], col_alt: [46, 154, 174], face: FaceArt::None },
+        Part3D { cx: -0.12, cy: 0.36, cz: 0.0, hx: 0.12, hy: 0.36, hz: 0.12, pivot_y: 0.72, swing: leg_swing, col: [56, 62, 142], col_alt: [45, 50, 120], face: FaceArt::None },
+        Part3D { cx: 0.12, cy: 0.36, cz: 0.0, hx: 0.12, hy: 0.36, hz: 0.12, pivot_y: 0.72, swing: -leg_swing, col: [56, 62, 142], col_alt: [45, 50, 120], face: FaceArt::None },
     ]
 }
 
@@ -520,8 +537,8 @@ pub fn mob_parts(kind: MobKind, walk: f32, airborne: bool) -> Vec<Part3D> {
                 Part3D { cx: 0.0, cy: 0.54, cz: 0.30, hx: 0.08, hy: 0.04, hz: 0.06, pivot_y: 0.54, swing: 0.0, col: [238, 186, 48], col_alt: [210, 148, 30], face: FaceArt::None },
                 Part3D { cx: 0.0, cy: 0.46, cz: 0.28, hx: 0.04, hy: 0.05, hz: 0.03, pivot_y: 0.46, swing: 0.0, col: [212, 42, 42], col_alt: [176, 30, 30], face: FaceArt::None },
                 Part3D { cx: 0.0, cy: 0.40, cz: -0.02, hx: 0.17, hy: 0.16, hz: 0.22, pivot_y: 0.40, swing: 0.0, col: [236, 236, 232], col_alt: [212, 212, 208], face: FaceArt::None },
-                Part3D { cx: -wx, cy: wy, cz: -0.02, hx: whx, hy: why, hz: 0.15, pivot_y: 0.50, swing: if airborne { flap * 0.45 } else { s * 0.3 }, col: [246, 246, 242], col_alt: [216, 216, 212], face: FaceArt::None },
-                Part3D { cx: wx, cy: wy, cz: -0.02, hx: whx, hy: why, hz: 0.15, pivot_y: 0.50, swing: if airborne { flap * 0.45 } else { -s * 0.3 }, col: [246, 246, 242], col_alt: [216, 216, 212], face: FaceArt::None },
+                Part3D { cx: -wx, cy: wy, cz: -0.02, hx: whx, hy: why, hz: 0.15, pivot_y: 0.50, swing: if airborne { flap * 0.45 } else { 0.0 }, col: [246, 246, 242], col_alt: [216, 216, 212], face: FaceArt::None },
+                Part3D { cx: wx, cy: wy, cz: -0.02, hx: whx, hy: why, hz: 0.15, pivot_y: 0.50, swing: if airborne { flap * 0.45 } else { 0.0 }, col: [246, 246, 242], col_alt: [216, 216, 212], face: FaceArt::None },
                 Part3D { cx: 0.0, cy: 0.50, cz: -0.25, hx: 0.07, hy: 0.09, hz: 0.06, pivot_y: 0.50, swing: 0.0, col: [228, 228, 224], col_alt: [198, 198, 194], face: FaceArt::None },
                 Part3D { cx: -0.09, cy: 0.12, cz: 0.0, hx: 0.04, hy: 0.12, hz: 0.04, pivot_y: 0.24, swing: s, col: [235, 185, 50], col_alt: [200, 150, 35], face: FaceArt::None },
                 Part3D { cx: 0.09, cy: 0.12, cz: 0.0, hx: 0.04, hy: 0.12, hz: 0.04, pivot_y: 0.24, swing: -s, col: [235, 185, 50], col_alt: [200, 150, 35], face: FaceArt::None },
@@ -714,6 +731,19 @@ impl Mob {
         }
     }
 
+    pub fn is_attracted_to(kind: MobKind, held: u16) -> bool {
+        if held == 0 { return false; }
+        match kind {
+            MobKind::Cow | MobKind::Sheep => held == world::WHEAT || held == world::HAY,
+            MobKind::Pig => matches!(held, crate::items::APPLE | crate::items::GOLDEN_APPLE | crate::items::BREAD) || held == crate::items::CARROT || held == crate::items::BEETROOT,
+            MobKind::Chicken => held == world::WHEAT || matches!(held, crate::items::BREAD | crate::items::WHEAT_SEEDS),
+            MobKind::Wolf => matches!(held, crate::items::BONE | crate::items::RAW_BEEF | crate::items::STEAK | crate::items::RAW_PORK | crate::items::COOKED_PORK),
+            MobKind::Bee => matches!(held, world::FLOWER_RED | world::FLOWER_YELLOW),
+            MobKind::Panda => held == crate::items::BAMBOO || held == crate::items::SUGAR,
+            _ => false,
+        }
+    }
+
     pub fn update(
         &mut self,
         world: &mut World,
@@ -725,6 +755,7 @@ impl Mob {
         day: f32,
         grace: f32,
         ignore_player: bool,
+        held_item: u16,
     ) {
         self.timer -= dt;
         self.panic = (self.panic - dt).max(0.0);
@@ -830,36 +861,55 @@ impl Mob {
             }
             if self.panic > 0.0 && !self.kind.hostile() {
                 if self.timer <= 0.0 {
-                    self.timer = 0.45;
+                    self.timer = 1.05;
                     let away = (-dx).atan2(-dz);
-                    let jitter = ((tick as f32 * 1.9 + self.x * 0.7) % 1.1) - 0.55;
+                    let jitter = ((tick as f32 * 0.65 + self.x * 0.4) % 0.8) - 0.4;
                     let ang = away + jitter;
                     let sp = match self.kind {
-                        MobKind::Wolf => 4.8,
-                        MobKind::Cow | MobKind::Pig | MobKind::Sheep => 4.2,
-                        MobKind::Chicken => 3.9,
-                        _ => 4.0,
+                        MobKind::Wolf => 3.4,
+                        MobKind::Cow | MobKind::Pig | MobKind::Sheep => 2.9,
+                        MobKind::Chicken => 2.6,
+                        _ => 2.8,
                     };
                     self.vx = ang.sin() * sp;
                     self.vz = ang.cos() * sp;
                     self.yaw = ang;
                 }
+            } else if !self.kind.hostile() && !ignore_player && Self::is_attracted_to(self.kind, held_item) && dist < 11.0 {
+                // Passive animal follows player holding its corresponding food!
+                let target_yaw = dx.atan2(dz);
+                self.yaw = target_yaw;
+                if dist > 2.2 {
+                    self.vx = dx / dist * 1.85;
+                    self.vz = dz / dist * 1.85;
+                } else {
+                    self.vx = 0.0;
+                    self.vz = 0.0;
+                }
+                self.timer = 0.4;
             } else if hostile_active && dist < 22.0 && dist > 1.0 {
                 let sp = if self.kind == MobKind::Warden { 3.1 } else if matches!(self.kind, MobKind::Spider | MobKind::WitherSkeleton) { 2.9 } else { 2.2 };
                 self.vx = dx / dist * sp;
                 self.vz = dz / dist * sp;
                 self.yaw = dx.atan2(dz);
             } else if self.timer <= 0.0 {
-                self.timer = 1.5 + ((tick as f32 * 0.13) % 2.0);
+                self.timer = 2.0 + ((tick as f32 * 0.13) % 2.4);
                 let ang = ((tick as f32 * 1.618 + self.x * 0.37) % 6.283) - 3.1415;
                 if (tick % 3) == 0 {
                     self.vx = 0.0;
                     self.vz = 0.0;
                 } else {
-                    self.vx = ang.sin() * 1.3;
-                    self.vz = ang.cos() * 1.3;
+                    self.vx = ang.sin() * 1.15;
+                    self.vz = ang.cos() * 1.15;
                     self.yaw = ang;
                 }
+            } else if !self.kind.hostile() && self.vx.abs() < 0.05 && self.vz.abs() < 0.05 && dist < 6.0 {
+                // Idle passive mobs & villagers gently look toward nearby players
+                let target_yaw = dx.atan2(dz);
+                let mut diff = target_yaw - self.yaw;
+                while diff > std::f32::consts::PI { diff -= std::f32::consts::TAU; }
+                while diff < -std::f32::consts::PI { diff += std::f32::consts::TAU; }
+                self.yaw += diff * (dt * 4.5).min(1.0);
             }
         }
 
@@ -874,10 +924,10 @@ impl Mob {
         let move_vz = self.vz + self.kb_vz;
 
         let speed_xz = (move_vx * move_vx + move_vz * move_vz).sqrt();
-        if self.kind == MobKind::Chicken && !self.on_ground {
-            self.walk += dt * 16.0;
+        if self.kind == MobKind::Chicken && !self.on_ground && self.vy < -0.35 {
+            self.walk += dt * 12.0;
         } else if speed_xz > 0.1 && self.on_ground {
-            self.walk += speed_xz * dt * 3.0;
+            self.walk += speed_xz * dt * 1.85;
         }
 
         // If mob somehow ended up inside a solid block, push it up to free space
@@ -926,9 +976,9 @@ impl Mob {
             self.vy = self.vy.max(-2.2);
         }
         let ny = self.y + self.vy * dt;
-        if self.vy <= 0.0 && mob_collides(world, self.x, ny, self.z, r, h) {
-            let snap_y = ground_top_at(world, self.x, ny + 0.08, self.z, r)
-                .unwrap_or_else(|| (ny + 0.08).floor() + 1.0);
+        if self.vy <= 0.0 && mob_collides(world, self.x, ny - 0.01, self.z, r, h) {
+            let snap_y = ground_top_at(world, self.x, ny + 0.02, self.z, r)
+                .unwrap_or_else(|| (ny + 0.02).floor() + 1.0);
             if !mob_collides(world, self.x, snap_y, self.z, r, h) {
                 self.y = snap_y;
             } else {
@@ -1124,12 +1174,12 @@ mod tests {
         let mut max_y = cow.y;
         let mut max_speed = 0.0f32;
         for t in 0..80 {
-            cow.update(&mut world, 4.5, 40.0, 1.0, 0.03, t, 1.0, 0.0, false);
+            cow.update(&mut world, 4.5, 40.0, 1.0, 0.03, t, 1.0, 0.0, false, 0);
             max_y = max_y.max(cow.y);
             let sp = (cow.vx * cow.vx + cow.vz * cow.vz).sqrt();
             max_speed = max_speed.max(sp);
         }
-        assert!(max_speed >= 4.0, "expected panic speed >= 4.0 m/s, got {}", max_speed);
+        assert!(max_speed >= 2.75, "expected panic speed >= 2.75 m/s, got {}", max_speed);
         assert!(max_y > 41.0, "expected cow to jump over 1-block ledge (y > 41.0), got {}", max_y);
         assert!(cow.y >= 40.99 && cow.z >= 5.5, "expected cow to climb onto 1-block step, got y={} z={}", cow.y, cow.z);
     }
@@ -1156,7 +1206,7 @@ mod tests {
         chick.on_ground = false;
         let w0 = chick.walk;
         for t in 0..40 {
-            chick.update(&mut world, 10.0, 25.0, 10.0, 0.03, t, 1.0, 0.0, true);
+            chick.update(&mut world, 10.0, 25.0, 10.0, 0.03, t, 1.0, 0.0, true, 0);
         }
         assert!(chick.vy >= -2.25, "chicken fell too fast: vy={}", chick.vy);
         assert!(chick.walk > w0 + 10.0, "chicken wings did not flap while airborne: walk={}", chick.walk);

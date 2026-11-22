@@ -1,7 +1,7 @@
 //! Multiplayer over TCP. std::net uses Winsock on Windows and BSD sockets on
 //! Linux, so the same code works for both without extra bindings.
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -12,6 +12,8 @@ pub const DEFAULT_PORT: u16 = 25565;
 
 pub enum NetEvent {
     Status(String),
+    Connected,
+    ClientJoined(usize),
     Line(String),
     Error(String),
     Closed,
@@ -19,6 +21,7 @@ pub enum NetEvent {
 
 enum Ctrl {
     Send(String),
+    SendTo(usize, String),
     Stop,
 }
 
@@ -70,6 +73,7 @@ impl Net {
                             let (line_tx, line_rx) = channel::<String>();
                             clients.lock().unwrap().push((id, line_tx));
                             let _ = ev_tx.send(NetEvent::Status(format!("Player {} joined ({})", id, addr)));
+                            let _ = ev_tx.send(NetEvent::ClientJoined(id));
 
                             // writer thread
                             if let Ok(mut w) = stream.try_clone() {
@@ -81,19 +85,34 @@ impl Net {
                                     }
                                 });
                             }
-                            // reader thread
+                            // reader thread: forward to host AND relay to all other clients
                             let ev2 = ev_tx.clone();
                             let clients2 = clients.clone();
                             thread::spawn(move || {
                                 let reader = BufReader::new(stream);
                                 for line in reader.lines() {
                                     match line {
-                                        Ok(l) => { let _ = ev2.send(NetEvent::Line(l)); }
+                                        Ok(l) => {
+                                            let tagged = if let Some(rest) = l.strip_prefix("POS|") {
+                                                format!("RPOS|{}|{}", id, rest)
+                                            } else {
+                                                l.clone()
+                                            };
+                                            let _ = ev2.send(NetEvent::Line(tagged.clone()));
+                                            if let Ok(list) = clients2.lock() {
+                                                for (cid, tx) in list.iter() {
+                                                    if *cid != id {
+                                                        let _ = tx.send(tagged.clone());
+                                                    }
+                                                }
+                                            }
+                                        }
                                         Err(_) => break,
                                     }
                                 }
                                 clients2.lock().unwrap().retain(|(cid, _)| *cid != id);
                                 let _ = ev2.send(NetEvent::Status(format!("Player {} left", id)));
+                                let _ = ev2.send(NetEvent::Line(format!("RLEAVE|{}", id)));
                             });
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -109,20 +128,27 @@ impl Net {
         {
             let clients = clients.clone();
             thread::spawn(move || {
-                let mut out: Vec<String> = Vec::new();
                 loop {
                     match ctrl_rx.recv_timeout(Duration::from_millis(16)) {
-                        Ok(Ctrl::Send(line)) => out.push(line),
+                        Ok(Ctrl::Send(line)) => {
+                            if let Ok(list) = clients.lock() {
+                                for (_, tx) in list.iter() {
+                                    let _ = tx.send(line.clone());
+                                }
+                            }
+                        }
+                        Ok(Ctrl::SendTo(target_id, line)) => {
+                            if let Ok(list) = clients.lock() {
+                                for (cid, tx) in list.iter() {
+                                    if *cid == target_id {
+                                        let _ = tx.send(line.clone());
+                                    }
+                                }
+                            }
+                        }
                         Ok(Ctrl::Stop) => break,
                         Err(_) => {}
                     }
-                    if out.is_empty() { continue; }
-                    let list = clients.lock().unwrap();
-                    for (_, tx) in list.iter() {
-                        for l in out.iter() { let _ = tx.send(l.clone()); }
-                    }
-                    drop(list);
-                    out.clear();
                 }
             });
         }
@@ -134,13 +160,20 @@ impl Net {
         let (ev_tx, ev_rx) = channel();
         let (ctrl_tx, ctrl_rx) = channel::<Ctrl>();
         let stop = Arc::new(AtomicBool::new(false));
-        let target = if addr.trim().contains(':') { addr.trim().to_string() } else { format!("{}:{}", addr.trim(), DEFAULT_PORT) };
+        let raw = addr.trim();
+        let target = if raw.is_empty() {
+            format!("127.0.0.1:{}", DEFAULT_PORT)
+        } else if raw.contains(':') {
+            raw.to_string()
+        } else {
+            format!("{}:{}", raw, DEFAULT_PORT)
+        };
         {
             let ev_tx = ev_tx.clone();
             thread::spawn(move || {
-                let sock_addr = match target.parse() {
-                    Ok(a) => a,
-                    Err(_) => {
+                let sock_addr = match target.to_socket_addrs().ok().and_then(|mut it| it.next()) {
+                    Some(a) => a,
+                    None => {
                         let _ = ev_tx.send(NetEvent::Error(format!("Bad address: {}", target)));
                         return;
                     }
@@ -153,6 +186,7 @@ impl Net {
                     }
                 };
                 let _ = stream.set_nodelay(true);
+                let _ = ev_tx.send(NetEvent::Connected);
                 let _ = ev_tx.send(NetEvent::Status(format!("Connected to {}", target)));
                 let mut writer = match stream.try_clone() {
                     Ok(w) => w,
@@ -160,7 +194,11 @@ impl Net {
                 };
                 let ev_w = ev_tx.clone();
                 thread::spawn(move || {
-                    while let Ok(Ctrl::Send(line)) = ctrl_rx.recv() {
+                    while let Ok(msg) = ctrl_rx.recv() {
+                        let line = match msg {
+                            Ctrl::Send(l) | Ctrl::SendTo(_, l) => l,
+                            Ctrl::Stop => break,
+                        };
                         if writer.write_all(line.as_bytes()).is_err() { break; }
                         if writer.write_all(b"\n").is_err() { break; }
                         let _ = writer.flush();
@@ -182,6 +220,10 @@ impl Net {
 
     pub fn send(&self, line: String) {
         if let Some(c) = &self.ctrl { let _ = c.send(Ctrl::Send(line)); }
+    }
+
+    pub fn send_to(&self, id: usize, line: String) {
+        if let Some(c) = &self.ctrl { let _ = c.send(Ctrl::SendTo(id, line)); }
     }
 
     pub fn poll(&self) -> Vec<NetEvent> {

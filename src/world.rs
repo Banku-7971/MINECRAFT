@@ -1084,7 +1084,7 @@ impl Chunk {
     fn set(&mut self, lx: i32, y: usize, lz: i32, id: u16) { let i = Self::idx(lx, y, lz); self.blocks[i] = id; }
 }
 
-const CACHE_R: i32 = 7;
+const CACHE_R: i32 = 5;
 const CACHE_SIDE: usize = (CACHE_R as usize) * 2 + 1;
 const CACHE_BLOCKS: i32 = CACHE_SIDE as i32 * CHUNK;
 const CHUNK_LEN: usize = CHUNK as usize * WORLD_H * CHUNK as usize;

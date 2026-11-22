@@ -9,6 +9,8 @@ pub const DEFAULT_PORT: u16 = 25565;
 
 pub enum NetEvent {
     Status(String),
+    Connected,
+    ClientJoined(usize),
     Line(String),
     Error(String),
     Closed,
@@ -46,6 +48,8 @@ impl Net {
     }
 
     pub fn send(&self, _line: String) {}
+
+    pub fn send_to(&self, _id: usize, _line: String) {}
 
     pub fn poll(&self) -> Vec<NetEvent> {
         self.pending.borrow_mut().drain(..).collect()

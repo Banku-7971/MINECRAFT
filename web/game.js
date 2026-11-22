@@ -92,7 +92,33 @@ const END_PHRASES = [
   [[146.83, 220.00], 5.2, 2.30, 0.050],
   [[587.33, 739.99], 4.0, 2.50, 0.038],
 ];
-let lastMusicDim = 0;
+let lastMusicDim = -1;
+const realSfxBuffers = new Map();
+const realSfxPending = new Set();
+const realMusicBuffers = new Map();
+const realMusicPending = new Set();
+let activeMusicSource = null;
+let activeMusicDim = -1;
+
+function loadRealSfx(id) {
+  if (!audioCtx || realSfxBuffers.has(id) || realSfxPending.has(id)) return;
+  realSfxPending.add(id);
+  fetch(`sounds/${id}.ogg`)
+    .then(r => (r.ok ? r.arrayBuffer() : null))
+    .then(buf => (buf ? audioCtx.decodeAudioData(buf) : null))
+    .then(decoded => { if (decoded) realSfxBuffers.set(id, decoded); })
+    .catch(() => {});
+}
+
+function loadRealMusic(dim) {
+  if (!audioCtx || realMusicBuffers.has(dim) || realMusicPending.has(dim)) return;
+  realMusicPending.add(dim);
+  fetch(`sounds/music_${dim}.ogg`)
+    .then(r => (r.ok ? r.arrayBuffer() : null))
+    .then(buf => (buf ? audioCtx.decodeAudioData(buf) : null))
+    .then(decoded => { if (decoded) realMusicBuffers.set(dim, decoded); })
+    .catch(() => {});
+}
 
 function createRoomImpulse(ctx, dur = 3.0, decay = 2.6) {
   const len = Math.floor(ctx.sampleRate * dur);
@@ -135,6 +161,9 @@ function ensureAudio() {
     sfxBus.threshold.value = -14;
     sfxBus.ratio.value = 4;
     sfxBus.connect(audioCtx.destination);
+    // Warm up common real recorded SFX + Overworld music immediately
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 15, 28, 29].forEach(loadRealSfx);
+    loadRealMusic(0);
   }
   if (audioCtx.state === 'suspended') {
     audioCtx.resume().catch(() => {});
@@ -273,6 +302,22 @@ function playWebSfx(id) {
     src.start();
     return;
   }
+  if (ctx && ctx.state === 'running') {
+    if (realSfxBuffers.has(id)) {
+      const src = ctx.createBufferSource();
+      src.buffer = realSfxBuffers.get(id);
+      const pitch = (id === 0 || id === 29 || id === 31 || id === 32 || id === 34 || id === 35)
+        ? 1.0 : (0.92 + Math.random() * 0.16);
+      src.playbackRate.value = pitch;
+      const gain = ctx.createGain();
+      gain.gain.value = (id >= 3 && id <= 8) ? 0.36 : id === 0 ? 0.45 : 0.65;
+      src.connect(gain);
+      gain.connect(sfxBus || ctx.destination);
+      src.start();
+      return;
+    }
+    loadRealSfx(id);
+  }
   const p = 0.92 + Math.random() * 0.16; // natural human/Foley pitch variation
   switch (id) {
     case 0: playTone(720 * p, 0.025, 0.045, 'triangle', 540 * p, 0, 1800); break; // UI Click
@@ -337,17 +382,33 @@ function pumpAudio() {
       lastMusicDim = dim;
       musicStep = 0;
       musicNextAt = audioCtx.currentTime + 0.35;
-    }
-    const phrases = dim === 1 ? NETHER_PHRASES : dim === 2 ? END_PHRASES : OVERWORLD_PHRASES;
-    const now = audioCtx.currentTime;
-    if (now >= musicNextAt) {
-      const [notes, hold, pause, vel] = phrases[musicStep % phrases.length];
-      for (let i = 0; i < notes.length; i++) {
-        playFeltPianoNote(notes[i], hold, vel * (i === 0 ? 1.0 : 0.72), i * 0.045);
+      loadRealMusic(dim);
+      if (activeMusicSource && activeMusicDim !== dim) {
+        try { activeMusicSource.stop(); } catch (_) {}
+        activeMusicSource = null;
+        activeMusicDim = -1;
       }
-      musicNextAt = now + pause;
-      musicStep++;
     }
+    if (realMusicBuffers.has(dim)) {
+      if (!activeMusicSource) {
+        const src = audioCtx.createBufferSource();
+        src.buffer = realMusicBuffers.get(dim);
+        src.loop = true;
+        const g = audioCtx.createGain();
+        g.gain.value = 0.34;
+        src.connect(g);
+        g.connect(musicBus || audioCtx.destination);
+        src.start();
+        activeMusicSource = src;
+        activeMusicDim = dim;
+      }
+    } else {
+      loadRealMusic(dim);
+    }
+  } else if (!musicOn && activeMusicSource) {
+    try { activeMusicSource.stop(); } catch (_) {}
+    activeMusicSource = null;
+    activeMusicDim = -1;
   }
 }
 
@@ -360,8 +421,8 @@ const VK = {
   ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17,
   Escape: 27, Space: 32,
   ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
-  KeyA: 65, KeyC: 67, KeyD: 68, KeyE: 69, KeyF: 70, KeyQ: 81, KeyS: 83, KeyT: 84, KeyW: 87, KeyZ: 90,
-  F3: 114, F4: 115, F5: 116,
+  KeyA: 65, KeyB: 66, KeyC: 67, KeyD: 68, KeyE: 69, KeyF: 70, KeyG: 71, KeyQ: 81, KeyS: 83, KeyT: 84, KeyW: 87, KeyZ: 90,
+  F1: 112, F2: 113, F3: 114, F4: 115, F5: 116, F11: 122,
   Slash: 191,
   Digit1: 49, Digit2: 50, Digit3: 51, Digit4: 52, Digit5: 53,
   Digit6: 54, Digit7: 55, Digit8: 56, Digit9: 57,
@@ -370,7 +431,7 @@ const VK = {
 };
 
 const preventDefault = new Set([
-  'Space', 'Tab', 'F3', 'F4', 'F5',
+  'Space', 'Tab', 'F1', 'F2', 'F3', 'F4', 'F5', 'F11',
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
 ]);
 
