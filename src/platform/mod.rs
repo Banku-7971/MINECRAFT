@@ -27,6 +27,7 @@ pub const VK_Q: u32 = 0x51;
 pub const VK_S: u32 = 0x53;
 pub const VK_T: u32 = 0x54;
 pub const VK_W: u32 = 0x57;
+pub const VK_Z: u32 = 0x5A;
 pub const VK_F3: u32 = 0x72;
 pub const VK_F4: u32 = 0x73;
 pub const VK_F5: u32 = 0x74;
@@ -69,16 +70,21 @@ pub trait Platform {
 
 #[cfg(windows)]
 pub mod win32;
-#[cfg(all(not(windows), not(target_arch = "wasm32")))]
+#[cfg(all(not(windows), not(target_arch = "wasm32"), not(target_os = "android")))]
 pub mod harness;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
+#[cfg(target_os = "android")]
+pub mod android;
 
 #[cfg(windows)]
 pub fn create() -> impl Platform { win32::Win32::new("Minecraft") }
 
-#[cfg(all(not(windows), not(target_arch = "wasm32")))]
+#[cfg(all(not(windows), not(target_arch = "wasm32"), not(target_os = "android")))]
 pub fn create() -> impl Platform { harness::Harness::new() }
 
 #[cfg(target_arch = "wasm32")]
 pub fn create() -> impl Platform { web::Web::new() }
+
+#[cfg(target_os = "android")]
+pub fn create() -> impl Platform { android::Android::new() }

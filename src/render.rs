@@ -486,6 +486,54 @@ impl Framebuffer {
         self.rect(x, y, w, 1, c); self.rect(x, y + h - 1, w, 1, c);
         self.rect(x, y, 1, h, c); self.rect(x + w - 1, y, 1, h, c);
     }
+    /// Fast separable box blur + dark scrim for modern Java / Horizon menu backgrounds.
+    pub fn blur_dim(&mut self, radius: i32, dark_alpha: u8) {
+        let w = self.w as i32;
+        let h = self.h as i32;
+        if radius > 0 {
+            let mut tmp = vec![0u8; self.rgba.len()];
+            let span = radius * 2 + 1;
+            // Horizontal pass
+            for y in 0..h {
+                for x in 0..w {
+                    let (mut sr, mut sg, mut sb) = (0i32, 0i32, 0i32);
+                    for dx in -radius..=radius {
+                        let sx = (x + dx).clamp(0, w - 1) as usize;
+                        let idx = (y as usize * self.w + sx) * 4;
+                        sr += self.rgba[idx] as i32;
+                        sg += self.rgba[idx + 1] as i32;
+                        sb += self.rgba[idx + 2] as i32;
+                    }
+                    let di = (y as usize * self.w + x as usize) * 4;
+                    tmp[di] = (sr / span) as u8;
+                    tmp[di + 1] = (sg / span) as u8;
+                    tmp[di + 2] = (sb / span) as u8;
+                    tmp[di + 3] = 255;
+                }
+            }
+            // Vertical pass + dim
+            let mul = 1.0 - dark_alpha as f32 / 255.0;
+            for y in 0..h {
+                for x in 0..w {
+                    let (mut sr, mut sg, mut sb) = (0i32, 0i32, 0i32);
+                    for dy in -radius..=radius {
+                        let sy = (y + dy).clamp(0, h - 1) as usize;
+                        let idx = (sy * self.w + x as usize) * 4;
+                        sr += tmp[idx] as i32;
+                        sg += tmp[idx + 1] as i32;
+                        sb += tmp[idx + 2] as i32;
+                    }
+                    let di = (y as usize * self.w + x as usize) * 4;
+                    self.rgba[di] = ((sr / span) as f32 * mul) as u8;
+                    self.rgba[di + 1] = ((sg / span) as f32 * mul) as u8;
+                    self.rgba[di + 2] = ((sb / span) as f32 * mul) as u8;
+                    self.rgba[di + 3] = 255;
+                }
+            }
+        } else if dark_alpha > 0 {
+            self.rect(0, 0, w, h, [0, 0, 0, dark_alpha]);
+        }
+    }
 }
 
 fn glyph(c: char) -> [u8; 5] {
@@ -610,16 +658,42 @@ fn face_light(nx: i32, ny: i32, nz: i32, day: f32) -> [f32; 3] {
 }
 
 #[inline]
-fn ao_cache(cache: &RenderCache, bx: i32, by: i32, bz: i32, nx: i32, ny: i32, nz: i32) -> f32 {
-    let mut occ = 0;
-    let (ax, ay, az) = if ny != 0 { (1, 0, 0) } else if nx != 0 { (0, 1, 0) } else { (1, 0, 0) };
-    let (cx, cy, cz) = if ny != 0 { (0, 0, 1) } else if nx != 0 { (0, 0, 1) } else { (0, 1, 0) };
-    let sx = bx + nx; let sy = by + ny; let sz = bz + nz;
-    for s in [-1, 1] {
-        if world::is_opaque(cache.get(sx + ax * s, sy + ay * s, sz + az * s)) { occ += 1; }
-        if world::is_opaque(cache.get(sx + cx * s, sy + cy * s, sz + cz * s)) { occ += 1; }
-    }
-    1.0 - (occ as f32) * 0.07
+fn ao_smooth(cache: &RenderCache, bx: i32, by: i32, bz: i32, nx: i32, ny: i32, nz: i32, u: f32, v: f32) -> f32 {
+    // Tangent axes aligned with world::hit_uv(u, v)
+    let (ux, uy, uz, vx, vy, vz) = if nx != 0 {
+        (0, 0, if nx > 0 { -1 } else { 1 }, 0, -1, 0)
+    } else if ny != 0 {
+        (1, 0, 0, 0, 0, 1)
+    } else {
+        (if nz > 0 { 1 } else { -1 }, 0, 0, 0, -1, 0)
+    };
+    let sx = bx + nx;
+    let sy = by + ny;
+    let sz = bz + nz;
+    let corner_ao = |su: i32, sv: i32| -> f32 {
+        let s1 = world::is_opaque(cache.get(sx + ux * su, sy + uy * su, sz + uz * su));
+        let s2 = world::is_opaque(cache.get(sx + vx * sv, sy + vy * sv, sz + vz * sv));
+        let occ = if s1 && s2 {
+            3
+        } else {
+            let c = world::is_opaque(cache.get(
+                sx + ux * su + vx * sv,
+                sy + uy * su + vy * sv,
+                sz + uz * su + vz * sv,
+            ));
+            s1 as usize + s2 as usize + c as usize
+        };
+        [1.00, 0.85, 0.70, 0.54][occ]
+    };
+    let a00 = corner_ao(-1, -1);
+    let a10 = corner_ao(1, -1);
+    let a01 = corner_ao(-1, 1);
+    let a11 = corner_ao(1, 1);
+    let u = u.clamp(0.0, 1.0);
+    let v = v.clamp(0.0, 1.0);
+    let top = a00 + (a10 - a00) * u;
+    let bot = a01 + (a11 - a01) * u;
+    top + (bot - top) * v
 }
 
 #[inline]
@@ -843,13 +917,14 @@ fn shade_voxel(
     tick: u32,
     apply_ao: bool,
     shader: &ShaderConfig,
+    dyn_light: Option<(f32, f32, f32, f32)>,
 ) -> ([f32; 3], u8) {
     let t = tex.sample_face(b, nx, ny, nz, u, v, tick);
     if t[3] == 0 {
         return ([0.0, 0.0, 0.0], 0);
     }
     let fl = face_light(nx, ny, nz, day);
-    let ao_v = if apply_ao { ao_cache(cache, bx, by, bz, nx, ny, nz) } else { 0.94 };
+    let ao_v = if apply_ao { ao_smooth(cache, bx, by, bz, nx, ny, nz, u, v) } else { 0.94 };
     let emit = world::emits_light(b);
     let sky_lv = cache
         .get_sky_light(bx + nx, by + ny, bz + nz)
@@ -859,7 +934,17 @@ fn shade_voxel(
     let mut lr = fl[0] * ao_v * sky_mul;
     let mut lg = fl[1] * ao_v * sky_mul;
     let mut lb = fl[2] * ao_v * sky_mul;
-    let bl = cache.get_light(bx + nx, by + ny, bz + nz).max(cache.get_light(bx, by, bz)) as f32 / 15.0;
+    let mut bl = cache.get_light(bx + nx, by + ny, bz + nz).max(cache.get_light(bx, by, bz)) as f32 / 15.0;
+    if let Some((lx, ly, lz, lstr)) = dyn_light {
+        let sx = bx as f32 + 0.5 + nx as f32 * 0.55;
+        let sy = by as f32 + 0.5 + ny as f32 * 0.55;
+        let sz = bz as f32 + 0.5 + nz as f32 * 0.55;
+        let d2 = (sx - lx) * (sx - lx) + (sy - ly) * (sy - ly) + (sz - lz) * (sz - lz);
+        if d2 < 100.0 {
+            let falloff = (1.0 - d2.sqrt() * 0.10).clamp(0.0, 1.0);
+            bl = bl.max(lstr * falloff * falloff.sqrt());
+        }
+    }
     if bl > 0.0 {
         let warm = bl * 0.98 * shader.warm_torch;
         lr = lr.max(warm * 1.12);
@@ -915,6 +1000,7 @@ fn trace_ray(
     dim: Dimension,
     mining: Option<(i32, i32, i32, u8)>,
     shader: &ShaderConfig,
+    dyn_light: Option<(f32, f32, f32, f32)>,
 ) -> ([u8; 3], f32) {
     let ox = cam.x; let oy = cam.y; let oz = cam.z;
     let mut x = ox.floor() as i32;
@@ -1015,7 +1101,7 @@ fn trace_ray(
                     let mut hit_plant = false;
                     for ci in 0..nc {
                         let (tp, u, v) = cands[ci];
-                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, u, v, day, tick, false, shader);
+                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, u, v, day, tick, false, shader, dyn_light);
                         if a > 25 {
                             let rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
                             let fog = (1.0 - (-tp * fog_rate).exp()).min(0.86);
@@ -1034,7 +1120,7 @@ fn trace_ray(
                     if let Some((tp, mnx, mny, mnz, u, v)) = hit_model_boxes(
                         cache, b, x, y, z, ox, oy, oz, dx, dy, dz, t.max(0.001), t_next, nx, ny, nz,
                     ) {
-                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, mnx, mny, mnz, u, v, day, tick, false, shader);
+                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, mnx, mny, mnz, u, v, day, tick, false, shader, dyn_light);
                         if a > 20 {
                             let rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
                             let fog = (1.0 - (-tp * fog_rate).exp()).min(0.86);
@@ -1054,7 +1140,7 @@ fn trace_ray(
                             let px = ox + dx * tp - x as f32;
                             let pz = oz + dz * tp - z as f32;
                             if (0.0..=1.0).contains(&px) && (0.0..=1.0).contains(&pz) {
-                                let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, px, pz, day, tick, false, shader);
+                                let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, 0, 1, 0, px, pz, day, tick, false, shader, dyn_light);
                                 if a > 25 {
                                     let rgb = apply_crack(tex, rgb0, x, y, z, px, pz, tick, mining);
                                     let fog = (1.0 - (-tp * fog_rate).exp()).min(0.86);
@@ -1121,7 +1207,7 @@ fn trace_ray(
                 } else if is_cutout_cube(b) {
                     if t > 0.001 {
                         let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
-                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true, shader);
+                        let (rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true, shader, dyn_light);
                         if a >= 240 {
                             let rgb = apply_crack(tex, rgb0, x, y, z, u, v, tick, mining);
                             let fog = (1.0 - (-t * fog_rate).exp()).min(0.86);
@@ -1141,13 +1227,13 @@ fn trace_ray(
                     }
                 } else if t > 0.001 {
                     let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
-                    let (mut rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true, shader);
+                    let (mut rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true, shader, dyn_light);
                     if a > 20 {
                         // Gentle anti-Moiré filtering for distant/grazing terrain surfaces
                         if t > 13.0 {
                             let (rgb1, a1) = shade_voxel(
                                 tex, cache, b, x, y, z, nx, ny, nz,
-                                (u + 0.13).fract(), (v + 0.17).fract(), day, tick, true, shader,
+                                (u + 0.13).fract(), (v + 0.17).fract(), day, tick, true, shader, dyn_light,
                             );
                             if a1 > 20 {
                                 let m = ((t - 13.0) / 18.0).clamp(0.0, 0.55);
@@ -1271,6 +1357,7 @@ fn focal_len(fb: &Framebuffer, cam: &Cam) -> f32 {
     fb.h as f32 / (2.0 * cam.fov_scale)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_world(
     fb: &mut Framebuffer,
     tex: &Textures,
@@ -1281,6 +1368,7 @@ pub fn render_world(
     mining: Option<(i32, i32, i32, u8)>,
     shader: &ShaderConfig,
     spectator: bool,
+    dyn_light: Option<(f32, f32, f32, f32)>,
 ) {
     fb.clear();
     let dim = world.dim;
@@ -1308,7 +1396,7 @@ pub fn render_world(
                 let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
                 dx *= inv_len; dy *= inv_len; dz *= inv_len;
                 let sky = sky_color(dim, dy, time, px as i32, py as i32);
-                let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader);
+                let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader, dyn_light);
                 let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                 let pi = py * w + px;
                 fb.depth[pi] = dist * forward_cos;
@@ -1344,7 +1432,7 @@ pub fn render_world(
                             let inv_len = 1.0 / (dx * dx + dy * dy + dz * dz).sqrt();
                             dx *= inv_len; dy *= inv_len; dz *= inv_len;
                             let sky = sky_color(dim, dy, time, px as i32, py as i32);
-                            let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader);
+                            let (rgb, dist) = trace_ray(tex, cache, cam, dx, dy, dz, sky, day, tick, time, underwater, spectator, dim, mining, shader, dyn_light);
                             let forward_cos = (dx * cam.fx + dy * cam.fy + dz * cam.fz).max(0.05);
                             let pi = local_y * w + px;
                             depth_band[pi] = dist * forward_cos;

@@ -14,7 +14,7 @@ path = "src/installer.rs"
 [lib]
 name = "rustcraft"
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [profile.release]
 opt-level = 3

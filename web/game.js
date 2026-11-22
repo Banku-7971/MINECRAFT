@@ -321,7 +321,7 @@ const VK = {
   ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17,
   Escape: 27, Space: 32,
   ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
-  KeyA: 65, KeyC: 67, KeyD: 68, KeyE: 69, KeyF: 70, KeyQ: 81, KeyS: 83, KeyT: 84, KeyW: 87,
+  KeyA: 65, KeyC: 67, KeyD: 68, KeyE: 69, KeyF: 70, KeyQ: 81, KeyS: 83, KeyT: 84, KeyW: 87, KeyZ: 90,
   F3: 114, F4: 115, F5: 116,
   Slash: 191,
   Digit1: 49, Digit2: 50, Digit3: 51, Digit4: 52, Digit5: 53,
