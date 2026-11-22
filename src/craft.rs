@@ -77,12 +77,6 @@ pub fn recipes() -> Vec<Recipe> {
         shaped!(world::FURNACE, 1, [c, c, c; c, 0, c; c, c, c]),
         shaped!(world::CHEST, 1, [p, p, p; p, 0, p; p, p, p]),
         shaped!(world::TORCH, 4, [0, COAL, 0; 0, s, 0; 0, 0, 0]),
-        shaped!(p, 4, [0, world::BIRCH_LOG, 0; 0, 0, 0; 0, 0, 0]),
-        shaped!(p, 4, [0, world::SPRUCE_LOG, 0; 0, 0, 0; 0, 0, 0]),
-        shaped!(p, 4, [0, world::JUNGLE_LOG, 0; 0, 0, 0; 0, 0, 0]),
-        shaped!(p, 4, [0, world::DARK_LOG, 0; 0, 0, 0; 0, 0, 0]),
-        shaped!(p, 4, [0, world::CRIMSON_STEM, 0; 0, 0, 0; 0, 0, 0]),
-        shaped!(p, 4, [0, world::WARPED_STEM, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(BLAZE_POWDER, 2, [0, BLAZE_ROD, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(EYE_OF_ENDER, 1, [ENDER_PEARL, BLAZE_POWDER, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(world::NETHER_BRICKS, 1, [world::NETHERRACK, world::NETHERRACK, 0; world::NETHERRACK, world::NETHERRACK, 0; 0, 0, 0]),
@@ -208,6 +202,13 @@ pub fn recipes() -> Vec<Recipe> {
         shaped!(COMPASS, 1, [0, ir, 0; ir, world::REDSTONE_DUST, ir; 0, ir, 0]),
         shaped!(CLOCK, 1, [0, GOLD_INGOT, 0; GOLD_INGOT, world::REDSTONE_DUST, GOLD_INGOT; 0, GOLD_INGOT, 0]),
         shaped!(world::TNT, 1, [GUNPOWDER, world::SAND, GUNPOWDER; world::SAND, GUNPOWDER, world::SAND; GUNPOWDER, world::SAND, GUNPOWDER]),
+        // --- alternate wood logs -> planks ---
+        shaped!(p, 4, [0, world::BIRCH_LOG, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(p, 4, [0, world::SPRUCE_LOG, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(p, 4, [0, world::JUNGLE_LOG, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(p, 4, [0, world::DARK_LOG, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(p, 4, [0, world::CRIMSON_STEM, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(p, 4, [0, world::WARPED_STEM, 0; 0, 0, 0; 0, 0, 0]),
     ]
 }
 

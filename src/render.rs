@@ -2671,8 +2671,8 @@ fn steve_arm_texel(v_along: f32, u_across: f32, face_id: usize) -> [u8; 4] {
     let tx = (u_across * 4.0).floor() as i32;
     let ty = (v_along * 12.0).floor() as i32;
     let n = (th(tx, ty + face_id as i32 * 13, 91) % 16) as i32 - 8;
-    if v_along > 0.62 {
-        // Cyan shirt sleeve on back 38% of arm
+    if v_along > 0.80 {
+        // Cyan shirt sleeve cuff near shoulder edge
         let r = (46 + n).clamp(24, 72) as u8;
         let g = (156 + n).clamp(110, 185) as u8;
         let b = (176 + n).clamp(130, 205) as u8;
@@ -2691,19 +2691,18 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
     let bob_x = (walk_bob * 0.85).cos() * 0.025;
     let bob_y = (walk_bob * 1.7).sin().abs() * 0.024;
     if item == 0 {
-        // Real 3D perspective-projected Steve arm in classic Minecraft Java bottom-right pose
-        let tx = 0.56 + bob_x - sw * 0.34;
-        let ty = -0.52 - bob_y + (swing * 0.6).sin() * 0.14 - sw * 0.08;
-        let tz = 1.06 - sw * 0.18;
-        let yaw = -0.72 - sw * 0.52;
-        let pitch = 0.52 - sw * 0.58;
-        let roll = 0.22 + sw * 0.26;
-        draw_box_3d_screen(fb, 0.14, 0.14, 0.44, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
-            // Map length along Z axis (v for side/top faces)
+        // Real 3D perspective-projected Steve arm rising diagonally up-left from bottom-right like Java Edition
+        let tx = 0.62 + bob_x - sw * 0.34;
+        let ty = -0.38 - bob_y + (swing * 0.6).sin() * 0.14 - sw * 0.06;
+        let tz = 0.94 - sw * 0.16;
+        let yaw = -0.44 - sw * 0.52;
+        let pitch = 0.78 - sw * 0.56;
+        let roll = 0.44 + sw * 0.24;
+        draw_box_3d_screen(fb, 0.145, 0.145, 0.48, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
             let v_along = match face_id {
                 0 | 1 => v,
                 2 | 3 => u,
-                _ => 0.0, // front fist end is skin
+                _ => 0.0,
             };
             steve_arm_texel(v_along, u, face_id)
         });
@@ -2978,7 +2977,7 @@ pub fn draw_hud(
 
     if message_timer > 0.0 {
         let w = message.len() as i32 * 6 + 10;
-        let my = if mode == GameMode::Spectator { H as i32 - 36 } else { HOT_Y - 30 };
+        let my = if mode == GameMode::Spectator { H as i32 - 36 } else { HOT_Y - 38 };
         fb.rect(W as i32 / 2 - w / 2, my, w, 12, [0, 0, 0, 175]);
         text_shadow(fb, W as i32 / 2 - w / 2 + 5, my + 3, message, [255, 255, 255, 255], 1);
     }
@@ -3522,8 +3521,9 @@ pub fn draw_inventory_screen(
                 if id != 0 { draw_item_icon(fb, sx + 2, sy + 2, id, 14, tick); }
             }
         }
-        fb.rect(338, 148, 8, 2, [110, 110, 114, 255]);
-        fb.rect(344, 146, 2, 6, [110, 110, 114, 255]);
+        fb.rect(336, 148, 8, 2, [110, 110, 114, 255]);
+        fb.rect(342, 146, 2, 6, [110, 110, 114, 255]);
+        fb.rect(344, 147, 2, 4, [110, 110, 114, 255]);
         slot(fb, 350, 138, 20, false);
         draw_item_icon(fb, 352, 140, rec.out, 16, tick);
         let (fx, fy, fw, fh) = recipe_fill_rect();
