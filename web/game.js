@@ -283,6 +283,15 @@ function playWebSfx(id) {
     case 27: playTone(195 * p, 0.28, 0.07, 'sawtooth', 128 * p, 0, 620); playTone(390 * p, 0.24, 0.04, 'sine', 190 * p, 0, 900); break; // Enderman
     case 28: playNoise(0.06, 0.08, 620, 'lowpass'); playTone(132 * p, 0.10, 0.08, 'triangle', 88 * p, 0, 600); break; // Door
     case 29: playFeltPianoNote(659.25, 0.55, 0.06, 0.00); playFeltPianoNote(830.61, 0.55, 0.06, 0.07); playFeltPianoNote(987.77, 0.65, 0.06, 0.14); playFeltPianoNote(1318.51, 0.90, 0.07, 0.21); break; // LevelUp
+    case 30: playNoise(0.05, 0.10, 1400 * p, 'bandpass'); playTone(310 * p, 0.10, 0.10, 'triangle', 160 * p, 0, 1200); break; // Shield block
+    case 31: [523.25, 659.25, 783.99, 1046.5].forEach((f, idx) => playFeltPianoNote(f, 0.65, 0.08, idx * 0.04)); break; // Totem
+    case 32: [261.63, 523.25, 783.99, 1046.5].forEach((f, idx) => playFeltPianoNote(f, 0.90, 0.07, idx * 0.05)); break; // Beacon
+    case 33: playTone(72 * p, 0.65, 0.12, 'sawtooth', 48 * p, 0, 380); playNoise(0.55, 0.12, 420, 'lowpass'); break; // Wither roar
+    case 34: [523.25, 659.25, 783.99, 1046.5, 987.77, 783.99].forEach((f, idx) => playTone(f, 0.22, 0.06, 'triangle', null, idx * 0.18, 2200)); break; // Jukebox Cat
+    case 35: [261.63, 392.0, 440.0, 392.0, 311.13, 392.0].forEach((f, idx) => playTone(f, 0.22, 0.06, 'sawtooth', null, idx * 0.18, 1200)); break; // Jukebox Pigstep
+    case 36: playTone(152 * p, 0.34, 0.08, 'sawtooth', 132 * p, 0, 620); break; // Villager hmm
+    case 37: playNoise(0.06, 0.09, 900 * p, 'lowpass'); playTone(280 * p, 0.14, 0.10, 'sawtooth', 140 * p, 0, 880); break; // Wolf bark
+    case 38: playTone(195 * p, 0.28, 0.05, 'sawtooth', 210 * p, 0, 740); break; // Bee buzz
     default: playNoise(0.06, 0.06, 750); break;
   }
 }

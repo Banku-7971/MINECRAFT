@@ -47,6 +47,9 @@ pub enum Sfx {
     Wither = 33,
     JukeboxCat = 34,
     JukeboxPigstep = 35,
+    Villager = 36,
+    Wolf = 37,
+    Bee = 38,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -128,6 +131,9 @@ impl Audio {
             (Sfx::Wither, synth_growl(68.0, 0.95)),
             (Sfx::JukeboxCat, synth_jukebox(false)),
             (Sfx::JukeboxPigstep, synth_jukebox(true)),
+            (Sfx::Villager, synth_villager()),
+            (Sfx::Wolf, synth_wolf()),
+            (Sfx::Bee, synth_bee()),
         ];
         Audio {
             music_on: true,
@@ -368,36 +374,49 @@ fn synth_blip(freq: f32, dur: f32) -> Vec<i16> {
 fn synth_growl(base: f32, dur: f32) -> Vec<i16> {
     let n = (dur * SAMPLE_RATE as f32) as usize;
     let mut st = 777u32;
+    let mut phase = 0.0f32;
     (0..n).map(|i| {
         let t = i as f32 / SAMPLE_RATE as f32;
         st = st.wrapping_mul(1664525).wrapping_add(1013904223);
         let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
-        let wob = (t * 22.0 * 6.283).sin() * 12.0;
-        let tone = ((base + wob) * t * 6.283).sin();
-        let s = (tone * 0.7 + noise * 0.3) * env(t, 0.03, dur * 0.45) * 0.35;
+        let f = base * (1.0 - 0.22 * t / dur) + (t * 17.0 * 6.283).sin() * 6.0;
+        phase = (phase + f / SAMPLE_RATE as f32).fract();
+        let glottal = phase * 2.0 - 1.0;
+        let formant = (t * 360.0 * 6.283).sin() * 0.45 + (t * 720.0 * 6.283).sin() * 0.20;
+        let s = (glottal * 0.45 + formant * 0.35 + noise * 0.20) * env(t, 0.04, dur * 0.45) * 0.38;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
 
 fn synth_cow() -> Vec<i16> {
-    let n = (0.52 * SAMPLE_RATE as f32) as usize;
+    // Vocal formant "Moooo": glottal sawtooth shaped around 260 Hz & 640 Hz formants
+    let n = (0.68 * SAMPLE_RATE as f32) as usize;
+    let mut phase = 0.0f32;
     (0..n).map(|i| {
         let t = i as f32 / SAMPLE_RATE as f32;
-        let f = 148.0 - (t * 3.0).sin() * 18.0 - t * 25.0;
-        let tone = (t * f * 6.283).sin() * 0.65 + (t * f * 2.0 * 6.283).sin() * 0.25;
-        let s = tone * env(t, 0.05, 0.22) * 0.36;
+        let f = 138.0 - (t * 2.4).sin() * 14.0 - t * 28.0;
+        phase = (phase + f / SAMPLE_RATE as f32).fract();
+        let saw = phase * 2.0 - 1.0;
+        let f1 = (phase * 2.0 * 6.283).sin() * 0.55 + (phase * 3.0 * 6.283).sin() * 0.30;
+        let f2 = (phase * 5.0 * 6.283).sin() * 0.18;
+        let s = (saw * 0.25 + f1 * 0.55 + f2 * 0.20) * env(t, 0.06, 0.28) * 0.44;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
 
 fn synth_sheep() -> Vec<i16> {
-    let n = (0.38 * SAMPLE_RATE as f32) as usize;
+    // Nasal bleat "Meh-eh-eh": glottal pulse with 28 Hz bleat vibrato + upper nasal harmonics
+    let n = (0.46 * SAMPLE_RATE as f32) as usize;
+    let mut phase = 0.0f32;
     (0..n).map(|i| {
         let t = i as f32 / SAMPLE_RATE as f32;
-        let vib = (t * 28.0 * 6.283).sin() * 24.0;
-        let f = 290.0 + vib;
-        let tone = (t * f * 6.283).sin() * 0.6 + (t * f * 2.0 * 6.283).sin() * 0.25;
-        let s = tone * env(t, 0.025, 0.16) * 0.32;
+        let vib = (t * 28.0 * 6.283).sin() * 22.0;
+        let f = 265.0 + vib - t * 35.0;
+        phase = (phase + f / SAMPLE_RATE as f32).fract();
+        let amp_bleat = 0.78 + 0.22 * (t * 28.0 * 6.283).sin();
+        let saw = phase * 2.0 - 1.0;
+        let nasal = (phase * 2.0 * 6.283).sin() * 0.42 + (phase * 4.0 * 6.283).sin() * 0.28;
+        let s = (saw * 0.35 + nasal * 0.65) * amp_bleat * env(t, 0.03, 0.19) * 0.38;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
@@ -424,11 +443,61 @@ fn synth_chicken() -> Vec<i16> {
 }
 
 fn synth_rattle() -> Vec<i16> {
-    let n = (0.20 * SAMPLE_RATE as f32) as usize;
+    // Dry hollow bone clacks (3 crisp woody/calcium transient clicks)
+    let n = (0.28 * SAMPLE_RATE as f32) as usize;
+    let mut out = vec![0i16; n];
+    let mut st = 918273u32;
+    let hits = [(0.00f32, 1320.0f32), (0.075, 1680.0), (0.16, 1180.0)];
+    for &(ht, hf) in &hits {
+        let start = (ht * SAMPLE_RATE as f32) as usize;
+        let len = (0.045 * SAMPLE_RATE as f32) as usize;
+        for j in 0..len {
+            if start + j >= n { break; }
+            let t = j as f32 / SAMPLE_RATE as f32;
+            st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+            let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+            let click = (t * hf * 6.283).sin() * 0.55 + (t * hf * 1.47 * 6.283).sin() * 0.25 + noise * 0.35;
+            let val = click * (-t * 78.0).exp() * 0.42;
+            out[start + j] = (out[start + j] as i32 + (val * 32000.0) as i32).clamp(-32000, 32000) as i16;
+        }
+    }
+    out
+}
+
+fn synth_villager() -> Vec<i16> {
+    // Classic nasal "Hmmm"
+    let n = (0.36 * SAMPLE_RATE as f32) as usize;
+    let mut phase = 0.0f32;
     (0..n).map(|i| {
         let t = i as f32 / SAMPLE_RATE as f32;
-        let pulse = if ((t * 36.0) as i32) % 2 == 0 { 1.0 } else { 0.15 };
-        let s = (t * 620.0 * 6.283).sin() * pulse * env(t, 0.005, 0.07) * 0.30;
+        let f = 152.0 + (t * 8.0).sin() * 12.0 - t * 22.0;
+        phase = (phase + f / SAMPLE_RATE as f32).fract();
+        let s = ((phase * 6.283).sin() * 0.55 + (phase * 2.0 * 6.283).sin() * 0.30 + (phase * 3.0 * 6.283).sin() * 0.15)
+            * env(t, 0.04, 0.15) * 0.36;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_wolf() -> Vec<i16> {
+    // Short punchy bark "Woof!"
+    let n = (0.20 * SAMPLE_RATE as f32) as usize;
+    let mut st = 31337u32;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        st = st.wrapping_mul(1664525).wrapping_add(1013904223);
+        let noise = ((st >> 16) as f32 / 32768.0) - 1.0;
+        let f = 320.0 - t * 900.0;
+        let s = ((t * f.max(130.0) * 6.283).sin() * 0.65 + noise * 0.35) * env(t, 0.008, 0.065) * 0.40;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_bee() -> Vec<i16> {
+    let n = (0.32 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let f = 195.0 + (t * 14.0 * 6.283).sin() * 14.0;
+        let s = ((t * f * 6.283).sin() * 0.55 + (t * f * 2.0 * 6.283).sin() * 0.30) * env(t, 0.03, 0.14) * 0.24;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }

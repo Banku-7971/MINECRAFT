@@ -2350,7 +2350,7 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
         let by = (188.0 + bob_y) as i32;
         draw_item_icon(fb, bx, by, item, 58, tick);
     } else {
-        // Tool / sword / flat item held in hand
+        // Tool / sword / flat item held in hand with 3D voxel extrusion depth
         let bx = (394.0 + bob_x) as i32;
         let by = (182.0 + bob_y) as i32;
         for row in 0..64 {
@@ -2366,7 +2366,18 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
                 fb.rect(px + 22, py, 9, 1, [166, 122, 88, 255]);
             }
         }
-        draw_item_icon(fb, bx + 4, by + 2, item, 42, tick);
+        let sz = 44i32;
+        for depth in (1..=4).rev() {
+            for py in 0..sz {
+                for px in 0..sz {
+                    let c = item_pixel(item, (px as u32 * 16 / sz as u32).min(15), (py as u32 * 16 / sz as u32).min(15), tick);
+                    if c[3] > 20 {
+                        fb.set(bx + 2 + px + depth, by + 2 + py + depth, (c[0] as f32 * 0.56) as u8, (c[1] as f32 * 0.56) as u8, (c[2] as f32 * 0.56) as u8, c[3]);
+                    }
+                }
+            }
+        }
+        draw_item_icon(fb, bx + 2, by + 2, item, sz, tick);
     }
 }
 
