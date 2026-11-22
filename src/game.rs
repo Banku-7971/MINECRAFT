@@ -2371,7 +2371,6 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                         z as f32 + 0.5,
                         drop.id,
                         ang.cos() * spd,
-                        3.4,
                         ang.sin() * spd,
                     ));
                 }

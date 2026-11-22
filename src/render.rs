@@ -3281,7 +3281,6 @@ pub fn inv_craft_result_rect(grid_size: usize) -> (i32, i32, i32, i32) {
 
 fn armor_tint(id: u16) -> Option<[u8; 3]> {
     match id {
-        crate::items::LEATHER_HELMET | crate::items::LEATHER_CHESTPLATE | crate::items::LEATHER_LEGGINGS | crate::items::LEATHER_BOOTS => Some([148, 92, 52]),
         crate::items::IRON_HELMET | crate::items::IRON_CHESTPLATE | crate::items::IRON_LEGGINGS | crate::items::IRON_BOOTS => Some([208, 212, 218]),
         crate::items::GOLD_HELMET | crate::items::GOLD_CHESTPLATE | crate::items::GOLD_LEGGINGS | crate::items::GOLD_BOOTS => Some([245, 210, 62]),
         crate::items::DIAMOND_HELMET | crate::items::DIAMOND_CHESTPLATE | crate::items::DIAMOND_LEGGINGS | crate::items::DIAMOND_BOOTS => Some([88, 225, 232]),
