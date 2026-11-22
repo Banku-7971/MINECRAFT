@@ -693,18 +693,97 @@ fn sky_color(dim: Dimension, dir_x: f32, dir_y: f32, dir_z: f32, time: f32, x: i
 }
 
 #[inline]
-fn cloud_color(cam: &Cam, dx: f32, dy: f32, dz: f32, time: f32, day: f32) -> Option<[f32; 3]> {
-    if dy <= 0.03 { return None; }
-    let t = (108.0 - cam.y) / dy;
-    if t <= 0.0 || t > 260.0 { return None; }
-    let wx = ((cam.x + dx * t) / 14.0 + time * 14.0).floor() as i32;
-    let wz = ((cam.z + dz * t) / 14.0).floor() as i32;
-    let h = th(wx / 2, wz / 2, 777) % 11;
-    if h < 3 {
-        let edge = (wx & 1) == 0 || (wz & 1) == 0;
-        let v = if edge { 196.0 + day * 50.0 } else { 216.0 + day * 39.0 };
-        Some([v.min(255.0), (v + 1.0).min(255.0), (v + 6.0).min(255.0)])
-    } else { None }
+fn cloud_cell_solid(cx: i32, cz: i32) -> bool {
+    let macro_h = th(cx.div_euclid(2), cz.div_euclid(2), 777) % 11;
+    if macro_h >= 3 {
+        return false;
+    }
+    th(cx, cz, 779) % 7 != 0
+}
+
+#[inline]
+fn cloud_color_3d(cam: &Cam, dx: f32, dy: f32, dz: f32, time: f32, day: f32) -> Option<([f32; 3], f32, f32)> {
+    const Y_BOT: f32 = 108.0;
+    const Y_TOP: f32 = 112.0;
+    const CELL: f32 = 12.0;
+    const MAX_T: f32 = 260.0;
+
+    let (t0, t1, enter_ny) = if cam.y < Y_BOT {
+        if dy <= 0.005 { return None; }
+        ((Y_BOT - cam.y) / dy, (Y_TOP - cam.y) / dy, -1)
+    } else if cam.y > Y_TOP {
+        if dy >= -0.005 { return None; }
+        ((Y_TOP - cam.y) / dy, (Y_BOT - cam.y) / dy, 1)
+    } else {
+        let exit_t = if dy > 0.001 {
+            (Y_TOP - cam.y) / dy
+        } else if dy < -0.001 {
+            (Y_BOT - cam.y) / dy
+        } else {
+            MAX_T
+        };
+        (0.0, exit_t, 0)
+    };
+    if t0 > MAX_T || t1 <= 0.0 { return None; }
+    let t_end = t1.min(MAX_T);
+
+    let drift_x = time * 196.0;
+    let t_start = t0 + 0.002;
+    let sx = cam.x + drift_x + dx * t_start;
+    let sz = cam.z + dz * t_start;
+    let mut cx = (sx / CELL).floor() as i32;
+    let mut cz = (sz / CELL).floor() as i32;
+
+    if enter_ny != 0 && cloud_cell_solid(cx, cz) {
+        let shade = if enter_ny > 0 { 1.00 } else { 0.78 };
+        let base = 204.0 + day * 51.0;
+        let dist_fade = (1.0 - (t_start / MAX_T).powf(2.2)).clamp(0.0, 1.0);
+        let alpha = (0.58 + day * 0.34) * dist_fade;
+        if alpha <= 0.01 { return None; }
+        return Some(([base * shade, (base + 1.0) * shade, (base + 6.0) * shade], t_start, alpha));
+    }
+
+    let step_x = if dx >= 0.0 { 1 } else { -1 };
+    let step_z = if dz >= 0.0 { 1 } else { -1 };
+    let dtx = if dx.abs() > 1e-6 { CELL / dx.abs() } else { 1e9 };
+    let dtz = if dz.abs() > 1e-6 { CELL / dz.abs() } else { 1e9 };
+    let mut tmx = if dx.abs() > 1e-6 {
+        let border = if step_x > 0 { (cx + 1) as f32 * CELL } else { cx as f32 * CELL };
+        t_start + (border - sx) / dx
+    } else {
+        1e9
+    };
+    let mut tmz = if dz.abs() > 1e-6 {
+        let border = if step_z > 0 { (cz + 1) as f32 * CELL } else { cz as f32 * CELL };
+        t_start + (border - sz) / dz
+    } else {
+        1e9
+    };
+
+    for _ in 0..28 {
+        let (t_hit, shade) = if tmx < tmz {
+            let t_h = tmx;
+            tmx += dtx;
+            cx += step_x;
+            (t_h, 0.85)
+        } else {
+            let t_h = tmz;
+            tmz += dtz;
+            cz += step_z;
+            (t_h, 0.90)
+        };
+        if t_hit > t_end {
+            break;
+        }
+        if cloud_cell_solid(cx, cz) {
+            let base = 204.0 + day * 51.0;
+            let dist_fade = (1.0 - (t_hit / MAX_T).powf(2.2)).clamp(0.0, 1.0);
+            let alpha = (0.58 + day * 0.34) * dist_fade;
+            if alpha <= 0.01 { return None; }
+            return Some(([base * shade, (base + 1.0) * shade, (base + 6.0) * shade], t_hit, alpha));
+        }
+    }
+    None
 }
 
 #[inline]
@@ -1141,26 +1220,14 @@ fn trace_ray(
 
     let mut hit_rgb = sky;
     let mut hit_dist = f32::INFINITY;
-    let max_dist = 76.0f32;
-    let fog_rate = (if dim == Dimension::Nether { 0.016 } else { 0.009 }) * shader.fog_density;
+    let max_dist = 104.0f32;
+    let fog_rate = (if dim == Dimension::Nether { 0.015 } else { 0.0085 }) * shader.fog_density;
     let ang = time * 2.0 * PI;
     let (mut sun_x, mut sun_y, mut sun_z) = (ang.cos(), ang.sin(), 0.22f32);
     let sun_l = (sun_x * sun_x + sun_y * sun_y + sun_z * sun_z).sqrt();
     sun_x /= sun_l; sun_y /= sun_l; sun_z /= sun_l;
 
-    // Precompute cloud color for Overworld sky fallback
-    if dim == Dimension::Overworld {
-        if let Some(cc) = cloud_color(cam, dx, dy, dz, time, day) {
-            let fade = 0.50 + day * 0.42;
-            hit_rgb = [
-                hit_rgb[0] * (1.0 - fade) + cc[0] * fade,
-                hit_rgb[1] * (1.0 - fade) + cc[1] * fade,
-                hit_rgb[2] * (1.0 - fade) + cc[2] * fade,
-            ];
-        }
-    }
-
-    for _ in 0..220 {
+    for _ in 0..290 {
         let t_next = tmx.min(tmy).min(tmz);
         let mut step_b = world::AIR;
         if y >= 0 && y < world::WORLD_H as i32 {
@@ -1404,6 +1471,25 @@ fn trace_ray(
                 hit_rgb[0] = (hit_rgb[0] + 180.0 * br).min(255.0);
                 hit_rgb[1] = (hit_rgb[1] + 190.0 * br).min(255.0);
                 hit_rgb[2] = (hit_rgb[2] + 220.0 * br).min(255.0);
+            }
+        }
+    }
+
+    if !hit_dist.is_infinite() && hit_dist > 74.0 {
+        let edge_fog = ((hit_dist - 74.0) / 30.0).clamp(0.0, 1.0);
+        let ef = edge_fog * edge_fog;
+        hit_rgb[0] = hit_rgb[0] * (1.0 - ef) + sky[0] * ef;
+        hit_rgb[1] = hit_rgb[1] * (1.0 - ef) + sky[1] * ef;
+        hit_rgb[2] = hit_rgb[2] * (1.0 - ef) + sky[2] * ef;
+    }
+
+    if dim == Dimension::Overworld && spec_exited {
+        if let Some((cc, ct, ca)) = cloud_color_3d(cam, dx, dy, dz, time, day) {
+            if ct < hit_dist {
+                hit_rgb[0] = hit_rgb[0] * (1.0 - ca) + cc[0] * ca;
+                hit_rgb[1] = hit_rgb[1] * (1.0 - ca) + cc[1] * ca;
+                hit_rgb[2] = hit_rgb[2] * (1.0 - ca) + cc[2] * ca;
+                hit_dist = hit_dist.min(ct);
             }
         }
     }
@@ -2452,10 +2538,23 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
             }
         }
     } else if item < 256 && !is_flat_block_icon(item) {
-        // Classic Minecraft big isometric held block in the bottom-right foreground
-        let bx = (398.0 + bob_x) as i32;
-        let by = (188.0 + bob_y) as i32;
-        draw_item_icon(fb, bx, by, item, 58, tick);
+        // Classic Minecraft chunky 3D held block + Steve forearm gripping from bottom-right
+        let bx = (382.0 + bob_x) as i32;
+        let by = (176.0 + bob_y) as i32;
+        for row in 0..64 {
+            let slant = ((row as f32) * 0.50) as i32;
+            let px = bx + 36 + slant;
+            let py = by + 34 + row;
+            if py >= H as i32 { break; }
+            if row > 42 {
+                fb.rect(px - 1, py, 26, 1, [44, 134, 152, 255]);
+                fb.rect(px + 25, py, 11, 1, [30, 98, 114, 255]);
+            } else {
+                fb.rect(px, py, 24, 1, [214, 166, 126, 255]);
+                fb.rect(px + 24, py, 10, 1, [166, 122, 88, 255]);
+            }
+        }
+        draw_item_icon(fb, bx, by, item, 72, tick);
     } else {
         // Tool / sword / flat item held in hand with 3D voxel extrusion depth
         let bx = (394.0 + bob_x) as i32;

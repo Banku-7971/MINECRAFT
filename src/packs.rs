@@ -511,7 +511,7 @@ pub fn scan_packs_dir(dir: &std::path::Path) -> Vec<LoadedPackInfo> {
         .filter(|p| {
             p.extension()
                 .and_then(|s| s.to_str())
-                .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "zip" | "mrpack" | "json"))
+                .map(|ext| matches!(ext.to_ascii_lowercase().as_str(), "zip" | "mrpack" | "json" | "jar"))
                 .unwrap_or(false)
         })
         .collect();
@@ -528,6 +528,59 @@ pub fn scan_packs_dir(dir: &std::path::Path) -> Vec<LoadedPackInfo> {
         }
     }
     loaded
+}
+
+/// Auto-detect official Minecraft: Java Edition `.jar` in `%APPDATA%\.minecraft\versions` (Windows)
+/// or `$HOME/.minecraft/versions` (Linux/macOS), mirroring `horizon-prepare`'s resource discovery.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn scan_minecraft_java_jar() -> Option<LoadedPackInfo> {
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        roots.push(std::path::PathBuf::from(appdata).join(".minecraft").join("versions"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(std::path::PathBuf::from(&home).join(".minecraft").join("versions"));
+        roots.push(
+            std::path::PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("minecraft")
+                .join("versions"),
+        );
+    }
+
+    let mut candidates: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
+    for root in roots {
+        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+        for entry in rd.flatten() {
+            let vdir = entry.path();
+            if !vdir.is_dir() { continue; }
+            if let Some(vname) = vdir.file_name().and_then(|s| s.to_str()) {
+                let jar = vdir.join(format!("{vname}.jar"));
+                if jar.is_file() {
+                    let mtime = std::fs::metadata(&jar)
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    candidates.push((mtime, jar));
+                }
+            }
+        }
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, jar_path) in candidates {
+        if let Ok(bytes) = std::fs::read(&jar_path) {
+            let name = jar_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("minecraft.jar");
+            if let Ok(info) = load_pack_bytes(name, &bytes) {
+                if info.textures_replaced > 0 {
+                    return Some(info);
+                }
+            }
+        }
+    }
+    None
 }
 
 // =========================================================================
@@ -1267,7 +1320,7 @@ pub fn read_zip_entries(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
             }
             let name = String::from_utf8_lossy(&data[p + 46..p + 46 + name_len]).into_owned();
             p += 46 + name_len + extra_len + cmt_len;
-            if name.ends_with('/') {
+            if name.ends_with('/') || name.ends_with(".class") || name.starts_with("META-INF/") {
                 continue;
             }
             if lfh_off + 30 <= data.len() && &data[lfh_off..lfh_off + 4] == b"PK\x03\x04" {
