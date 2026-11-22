@@ -328,7 +328,7 @@ fn block_drop(b: u16, tick: u32) -> Stack {
         }
         WHEAT => Stack::new(WHEAT, 2),
         NETHER_WART => Stack::new(NETHER_WART, 2),
-        TALL_GRASS => if tick % 8 == 0 { Stack::new(WHEAT, 1) } else { Stack::EMPTY },
+        TALL_GRASS => if tick % 8 == 0 { Stack::new(WHEAT, 1) } else if tick % 5 == 0 { Stack::new(items::WHEAT_SEEDS, 1) } else if tick % 11 == 0 { Stack::new(items::BAMBOO, 1) } else { Stack::EMPTY },
         ICE | GLASS => Stack::EMPTY,
         DOOR_OPEN => Stack::new(DOOR, 1),
         IRON_DOOR_OPEN => Stack::new(IRON_DOOR, 1),

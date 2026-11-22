@@ -734,12 +734,12 @@ impl Mob {
     pub fn is_attracted_to(kind: MobKind, held: u16) -> bool {
         if held == 0 { return false; }
         match kind {
-            MobKind::Cow | MobKind::Sheep => held == crate::items::WHEAT || held == world::WHEAT,
+            MobKind::Cow | MobKind::Sheep => held == world::WHEAT || held == world::HAY,
             MobKind::Pig => matches!(held, crate::items::APPLE | crate::items::GOLDEN_APPLE | crate::items::BREAD) || held == crate::items::CARROT || held == crate::items::BEETROOT,
-            MobKind::Chicken => matches!(held, crate::items::WHEAT | crate::items::BREAD) || held == world::WHEAT || held == crate::items::WHEAT_SEEDS,
+            MobKind::Chicken => held == world::WHEAT || matches!(held, crate::items::BREAD | crate::items::WHEAT_SEEDS),
             MobKind::Wolf => matches!(held, crate::items::BONE | crate::items::RAW_BEEF | crate::items::STEAK | crate::items::RAW_PORK | crate::items::COOKED_PORK),
             MobKind::Bee => matches!(held, world::FLOWER_RED | world::FLOWER_YELLOW),
-            MobKind::Panda => held == world::SUGAR_CANE || held == crate::items::BAMBOO,
+            MobKind::Panda => held == crate::items::BAMBOO || held == crate::items::SUGAR,
             _ => false,
         }
     }
@@ -1174,7 +1174,7 @@ mod tests {
         let mut max_y = cow.y;
         let mut max_speed = 0.0f32;
         for t in 0..80 {
-            cow.update(&mut world, 4.5, 40.0, 1.0, 0.03, t, 1.0, 0.0, false);
+            cow.update(&mut world, 4.5, 40.0, 1.0, 0.03, t, 1.0, 0.0, false, 0);
             max_y = max_y.max(cow.y);
             let sp = (cow.vx * cow.vx + cow.vz * cow.vz).sqrt();
             max_speed = max_speed.max(sp);
@@ -1206,7 +1206,7 @@ mod tests {
         chick.on_ground = false;
         let w0 = chick.walk;
         for t in 0..40 {
-            chick.update(&mut world, 10.0, 25.0, 10.0, 0.03, t, 1.0, 0.0, true);
+            chick.update(&mut world, 10.0, 25.0, 10.0, 0.03, t, 1.0, 0.0, true, 0);
         }
         assert!(chick.vy >= -2.25, "chicken fell too fast: vy={}", chick.vy);
         assert!(chick.walk > w0 + 10.0, "chicken wings did not flap while airborne: walk={}", chick.walk);
