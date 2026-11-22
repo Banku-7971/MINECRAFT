@@ -274,6 +274,7 @@ pub struct Game<P: Platform> {
     spectate_mob: Option<usize>,
     swimming: bool,
     spawned_villages: HashSet<(i32, i32)>,
+    particles: Vec<entities::Particle>,
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -501,6 +502,7 @@ impl<P: Platform> Game<P> {
             spectate_mob: None,
             swimming: false,
             spawned_villages: HashSet::new(),
+            particles: Vec::with_capacity(128),
         };
         game.load_world();
         #[cfg(not(target_arch = "wasm32"))]
@@ -965,6 +967,55 @@ impl<P: Platform> Game<P> {
 
     fn handle_command(&mut self, cmd: &str) -> bool {
         commands::execute(self, cmd)
+    }
+
+    pub fn spawn_particle_burst(&mut self, x: f32, y: f32, z: f32, color: [u8; 3], count: usize, speed: f32, gravity: f32) {
+        for i in 0..count {
+            if self.particles.len() >= 260 {
+                self.particles.remove(0);
+            }
+            let h = self.tick.wrapping_mul(1664525).wrapping_add(i as u32 * 2654435761);
+            let a = (h & 0xFF) as f32 / 255.0 * std::f32::consts::TAU;
+            let b = ((h >> 8) & 0xFF) as f32 / 255.0 * 2.0 - 1.0;
+            let sp = speed * (0.4 + ((h >> 16) & 0xFF) as f32 / 255.0 * 0.7);
+            let shade = 0.82 + ((h >> 24) & 0x3F) as f32 / 63.0 * 0.28;
+            self.particles.push(entities::Particle {
+                x: x + a.cos() * 0.14,
+                y: y + b * 0.14,
+                z: z + a.sin() * 0.14,
+                vx: a.cos() * sp,
+                vy: (b.abs() * 0.7 + 0.35) * sp,
+                vz: a.sin() * sp,
+                life: 0.38 + ((h >> 4) & 0x3F) as f32 / 63.0 * 0.34,
+                size: 0.08 + ((h >> 12) & 0x1F) as f32 / 31.0 * 0.06,
+                color: [
+                    (color[0] as f32 * shade).min(255.0) as u8,
+                    (color[1] as f32 * shade).min(255.0) as u8,
+                    (color[2] as f32 * shade).min(255.0) as u8,
+                ],
+                gravity,
+            });
+        }
+    }
+
+    pub fn reseed_world(&mut self, seed: i32) {
+        self.world.set_dim(Dimension::Overworld);
+        self.world.reseed(seed);
+        let sy = self.world.highest_ground(0, -240) as f32 + 0.2;
+        self.player.x = 0.5;
+        self.player.y = sy;
+        self.player.z = -239.5;
+        self.player.vy = 0.0;
+        self.spawn = (0.5, sy, -239.5);
+        self.fall_y = sy;
+        self.mobs.clear();
+        self.drops.clear();
+        self.particles.clear();
+        self.chests.clear();
+        self.furnaces.clear();
+        self.levers.clear();
+        self.redstone_sources.clear();
+        self.spawned_villages.clear();
     }
 
     fn start_singleplayer(&mut self) {
@@ -1870,7 +1921,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             let held_id = self.player.held().id;
             let ench = self.player.enchants.get(&held_id).copied().unwrap_or(0) as f32;
             let str_bonus = if self.potion_strength > 0.0 { 3.0 } else { 0.0 };
-            let dmg = match held_id {
+            let is_crit = !self.player.on_ground && self.player.vy < -0.5 && !self.swimming;
+            let mut dmg = match held_id {
                 items::NETHERITE_SWORD => 8.0,
                 items::DIAMOND_SWORD => 7.0,
                 items::IRON_SWORD => 6.0,
@@ -1880,8 +1932,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 items::WOOD_AXE => 3.5,
                 _ => 1.0 + items::tool_tier(held_id) as f32 * 0.6,
             } + ench * 1.5 + str_bonus;
+            if is_crit { dmg *= 1.5; }
             self.mobs[i].hp -= dmg;
             self.mobs[i].hurt = 0.45;
+            let (mxp, myp, mzp) = (self.mobs[i].x, self.mobs[i].y + 0.8, self.mobs[i].z);
+            self.spawn_particle_burst(mxp, myp, mzp, if is_crit { [255, 215, 70] } else { [215, 48, 48] }, if is_crit { 10 } else { 6 }, 2.4, 7.0);
             let kdx = self.mobs[i].x - self.player.x;
             let kdz = self.mobs[i].z - self.player.z;
             let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
@@ -2054,6 +2109,15 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             self.damage_held_tool();
             self.break_block(h.x, h.y, h.z, has_pick);
         } else {
+            if self.tick % 5 == 0 {
+                let col = render::block_particle_color(h.block);
+                self.spawn_particle_burst(
+                    h.x as f32 + 0.5 + h.nx as f32 * 0.55,
+                    h.y as f32 + 0.5 + h.ny as f32 * 0.55,
+                    h.z as f32 + 0.5 + h.nz as f32 * 0.55,
+                    col, 2, 1.4, 9.0,
+                );
+            }
             self.mining = Some((pos, prog));
         }
     }
@@ -2061,7 +2125,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     fn break_block(&mut self, x: i32, y: i32, z: i32, harvest_ok: bool) {
         let b = self.world.get(x, y, z);
         if b == world::AIR || b == world::BEDROCK { return; }
+        let pcol = render::block_particle_color(b);
         self.world.set(x, y, z, world::AIR);
+        self.spawn_particle_burst(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5, pcol, 12, 2.6, 12.0);
         self.net.send(format!("BLOCK|{}|{}|{}|0", x, y, z));
         self.plat.play(Sfx::Break);
         if harvest_ok {
@@ -2942,6 +3008,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
 
     fn explode(&mut self, cx: f32, cy: f32, cz: f32, radius: f32) {
         self.plat.play(Sfx::Explode);
+        self.spawn_particle_burst(cx, cy + 0.6, cz, [255, 165, 55], 14, 5.2, 1.5);
+        self.spawn_particle_burst(cx, cy + 0.8, cz, [165, 165, 172], 14, 3.6, -1.2);
         let r = radius.ceil() as i32;
         let r2 = radius * radius;
         let (ix, iy, iz) = (cx.floor() as i32, cy.floor() as i32, cz.floor() as i32);
@@ -3822,6 +3890,56 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 }
             }
         }
+        // Update 3D particles & emit subtle ambient Torch / Campfire / Portal sparks nearby
+        let mut pi = 0;
+        while pi < self.particles.len() {
+            let mut p = self.particles[pi];
+            if p.update(&mut self.world, dt) {
+                self.particles[pi] = p;
+                pi += 1;
+            } else {
+                self.particles.swap_remove(pi);
+            }
+        }
+        if self.tick % 4 == 0 && self.particles.len() < 220 {
+            for k in 0..6 {
+                let h = self.tick.wrapping_mul(2654435761).wrapping_add(k * 7919);
+                let sx = px + ((h & 15) as i32 - 8);
+                let sy = (py + (((h >> 4) & 7) as i32 - 3)).clamp(1, world::WORLD_H as i32 - 2);
+                let sz = pz + (((h >> 8) & 15) as i32 - 8);
+                let nb = self.world.get(sx, sy, sz);
+                if nb == world::TORCH || nb == world::CAMPFIRE || nb == world::SPAWNER {
+                    self.particles.push(entities::Particle {
+                        x: sx as f32 + 0.5,
+                        y: sy as f32 + if nb == world::TORCH { 0.68 } else { 0.45 },
+                        z: sz as f32 + 0.5,
+                        vx: (((h >> 12) & 15) as f32 - 7.5) * 0.04,
+                        vy: 0.65 + ((h >> 16) & 7) as f32 * 0.08,
+                        vz: (((h >> 20) & 15) as f32 - 7.5) * 0.04,
+                        life: 0.45,
+                        size: if nb == world::CAMPFIRE { 0.11 } else { 0.08 },
+                        color: if k % 3 == 0 { [135, 135, 140] } else { [255, 175, 55] },
+                        gravity: -0.35,
+                    });
+                } else if nb == world::NETHER_PORTAL {
+                    self.particles.push(entities::Particle {
+                        x: sx as f32 + 0.5,
+                        y: sy as f32 + 0.5,
+                        z: sz as f32 + 0.5,
+                        vx: (((h >> 12) & 15) as f32 - 7.5) * 0.08,
+                        vy: (((h >> 16) & 15) as f32 - 7.5) * 0.08,
+                        vz: (((h >> 20) & 15) as f32 - 7.5) * 0.08,
+                        life: 0.65,
+                        size: 0.09,
+                        color: [185, 70, 245],
+                        gravity: 0.0,
+                    });
+                }
+            }
+            if self.swimming && self.tick % 8 == 0 {
+                self.spawn_particle_burst(self.player.x, self.player.y + 0.8, self.player.z, [105, 185, 255], 3, 1.4, 6.0);
+            }
+        }
         // Auto-save every 20 seconds
         self.save_timer += dt;
         if self.save_timer >= 20.0 {
@@ -3954,7 +4072,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let held_str = hand_light_str(self.player.hot[self.player.selected].id)
             .max(hand_light_str(self.player.offhand.id));
         let dyn_light = if held_str > 0.0 && !is_spectator {
-            Some((self.player.x, eye_y - 0.15, self.player.z, held_str))
+            let flicker = 1.0 + (self.tick as f32 * 0.21).sin() * 0.04;
+            Some((self.player.x, eye_y - 0.15, self.player.z, (held_str * flicker).min(1.0)))
         } else {
             None
         };
@@ -3994,6 +4113,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         for &(mx, my, mz, _, _, _, is_fb) in self.mob_projectiles.iter() {
             let id = if is_fb { items::BLAZE_ROD } else { items::ARROW };
             render::draw_drop_sprite(&mut self.scene, &cam, mx, my, mz, id, self.tick, day);
+        }
+        for p in self.particles.iter() {
+            render::draw_particle_3d(&mut self.scene, &cam, p.x, p.y, p.z, p.size, p.color, day);
         }
         render::upscale(&self.scene, &mut self.fb);
 
@@ -4402,7 +4524,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     fn save_world(&self) {
         if cfg!(target_arch = "wasm32") { return; }
         let mut out = Vec::with_capacity(4096);
-        out.extend_from_slice(b"MCS2");
+        out.extend_from_slice(b"MCS3");
+        out.extend_from_slice(&world::seed().to_le_bytes());
         out.push(match self.mode {
             GameMode::Survival => 0,
             GameMode::Creative => 1,
@@ -4488,7 +4611,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         if cfg!(target_arch = "wasm32") { return; }
         let Ok(data) = std::fs::read(Self::save_path()) else { return; };
         if data.len() < 8 + 44 + 36 * 6 + 4 { return; }
-        let is_v2 = &data[0..4] == b"MCS2";
+        let is_v3 = &data[0..4] == b"MCS3";
+        let is_v2 = is_v3 || &data[0..4] == b"MCS2";
         if !is_v2 && &data[0..4] != b"MCS1" { return; }
         self.loaded_save = true;
         let mut p = 4usize;
@@ -4505,6 +4629,13 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let read_f32 = |b: &[u8], pos: &mut usize| -> f32 {
             let v = f32::from_le_bytes([b[*pos], b[*pos + 1], b[*pos + 2], b[*pos + 3]]); *pos += 4; v
         };
+
+        if is_v3 {
+            let s = read_i32(&data, &mut p);
+            if s != world::seed() {
+                self.world.reseed(s);
+            }
+        }
 
         self.mode = match read_u8(&data, &mut p) {
             1 => GameMode::Creative,

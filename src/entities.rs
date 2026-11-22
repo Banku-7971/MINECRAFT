@@ -877,6 +877,47 @@ impl Drop {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct Particle {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub vz: f32,
+    pub life: f32,
+    pub size: f32,
+    pub color: [u8; 3],
+    pub gravity: f32,
+}
+
+impl Particle {
+    pub fn update(&mut self, world: &mut World, dt: f32) -> bool {
+        self.life -= dt;
+        if self.life <= 0.0 {
+            return false;
+        }
+        self.vy -= self.gravity * dt;
+        let nx = self.x + self.vx * dt;
+        let ny = self.y + self.vy * dt;
+        let nz = self.z + self.vz * dt;
+        if self.gravity > 0.0
+            && self.vy < 0.0
+            && world::is_solid(world.get(nx.floor() as i32, ny.floor() as i32, nz.floor() as i32))
+        {
+            self.y = ny.floor() + 1.02;
+            self.vy = -self.vy * 0.25;
+            self.vx *= 0.55;
+            self.vz *= 0.55;
+        } else {
+            self.x = nx;
+            self.y = ny;
+            self.z = nz;
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

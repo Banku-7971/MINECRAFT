@@ -1,6 +1,19 @@
 // Multi-dimension procedural voxel world: Overworld, The Nether, The End,
 // biomes, caves, ores, trees, villages, fortresses, ruined portals, strongholds, and RenderCache.
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicI32, Ordering};
+
+static WORLD_SEED: AtomicI32 = AtomicI32::new(0);
+
+#[allow(dead_code)]
+pub fn seed() -> i32 {
+    WORLD_SEED.load(Ordering::Relaxed)
+}
+
+#[allow(dead_code)]
+pub fn set_seed(s: i32) {
+    WORLD_SEED.store(s, Ordering::Relaxed);
+}
 
 pub const WORLD_H: usize = 96;
 pub const CHUNK: i32 = 16;
@@ -172,7 +185,8 @@ impl Dimension {
 pub struct BPos(pub i32, pub i32, pub i32);
 
 fn hash2(x: i32, z: i32) -> u32 {
-    let mut h = (x as u32).wrapping_mul(0x9e3779b1) ^ (z as u32).wrapping_mul(0x85ebca6b);
+    let s = (WORLD_SEED.load(Ordering::Relaxed) as u32).wrapping_mul(0x9e3779b1);
+    let mut h = ((x as u32).wrapping_mul(0x9e3779b1) ^ (z as u32).wrapping_mul(0x85ebca6b)).wrapping_add(s);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2c1b3c6d);
     h ^= h >> 12;
@@ -765,6 +779,7 @@ pub fn is_opaque(id: u16) -> bool {
             GLASS | LEAVES | SPRUCE_LEAVES | JUNGLE_LEAVES | BIRCH_LEAVES | DARK_LEAVES | ICE
                 | BEACON | BREWING_STAND | SPAWNER | FENCE | ANVIL | ENCHANTING | HOPPER
                 | SLAB | STAIRS | DOOR | IRON_DOOR | LADDER | CAMPFIRE | LANTERN | CAKE
+                | BED | CHEST | SIGN
         )
 }
 
@@ -1313,6 +1328,14 @@ impl World {
             self.dim = dim;
             self.cache.valid = false;
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn reseed(&mut self, s: i32) {
+        set_seed(s);
+        self.dims = [DimState::new(), DimState::new(), DimState::new()];
+        self.lit.clear();
+        self.cache.valid = false;
     }
 
     pub fn biome(&self, x: i32, z: i32) -> Biome {
