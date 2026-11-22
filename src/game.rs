@@ -526,6 +526,13 @@ impl<P: Platform> Game<P> {
     fn reload_native_packs(&mut self) {
         packs::reset_all_packs();
         let mut count = 0usize;
+        if let Some(info) = packs::scan_minecraft_java_jar() {
+            count += 1;
+            self.push_chat(&format!(
+                "Auto-loaded Minecraft Java assets [{}]: {} ({} textures)",
+                info.name, info.description, info.textures_replaced
+            ));
+        }
         for dir_name in ["packs", "runtime/packs"] {
             let p = std::path::Path::new(dir_name);
             if p.is_dir() {
@@ -536,7 +543,7 @@ impl<P: Platform> Game<P> {
             }
         }
         if count > 0 {
-            self.message = format!("Loaded {} pack(s) from packs/", count);
+            self.message = format!("Loaded {} pack(s)", count);
             self.msg_timer = 4.0;
         }
     }
