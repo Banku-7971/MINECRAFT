@@ -1,0 +1,52 @@
+name: CI Build & Test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  wasm-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run library unit tests
+        run: cargo test --lib
+
+      - name: Build WebAssembly bundle
+        run: node scripts/build-web.mjs && node scripts/verify-web-build.mjs
+
+      - name: Upload built rustcraft.wasm
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustcraft-wasm
+          path: web/rustcraft.wasm
+
+  windows-check:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run native tests
+        run: cargo test
+
+      - name: Build Windows executables
+        shell: bash
+        run: |
+          mkdir -p target
+          rustc --edition 2021 -O -C target-feature=+crt-static src/main.rs -o target/Minecraft.exe
+          rustc --edition 2021 -O -C target-feature=+crt-static src/installer.rs -o target/Minecraft-Setup.exe
+          ls -lh target/Minecraft.exe target/Minecraft-Setup.exe

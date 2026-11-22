@@ -1220,14 +1220,14 @@ fn trace_ray(
 
     let mut hit_rgb = sky;
     let mut hit_dist = f32::INFINITY;
-    let max_dist = 104.0f32;
+    let max_dist = 76.0f32;
     let fog_rate = (if dim == Dimension::Nether { 0.015 } else { 0.0085 }) * shader.fog_density;
     let ang = time * 2.0 * PI;
     let (mut sun_x, mut sun_y, mut sun_z) = (ang.cos(), ang.sin(), 0.22f32);
     let sun_l = (sun_x * sun_x + sun_y * sun_y + sun_z * sun_z).sqrt();
     sun_x /= sun_l; sun_y /= sun_l; sun_z /= sun_l;
 
-    for _ in 0..290 {
+    for _ in 0..210 {
         let t_next = tmx.min(tmy).min(tmz);
         let mut step_b = world::AIR;
         if y >= 0 && y < world::WORLD_H as i32 {
@@ -1407,20 +1407,7 @@ fn trace_ray(
                     let (u, v) = world::hit_uv(ox, oy, oz, dx, dy, dz, t, nx, ny, nz);
                     let (mut rgb0, a) = shade_voxel(tex, cache, b, x, y, z, nx, ny, nz, u, v, day, tick, true, shader, dyn_light);
                     if a > 20 {
-                        // Gentle anti-Moiré filtering for distant/grazing terrain surfaces
-                        if t > 13.0 {
-                            let (rgb1, a1) = shade_voxel(
-                                tex, cache, b, x, y, z, nx, ny, nz,
-                                (u + 0.13).fract(), (v + 0.17).fract(), day, tick, true, shader, dyn_light,
-                            );
-                            if a1 > 20 {
-                                let m = ((t - 13.0) / 18.0).clamp(0.0, 0.55);
-                                rgb0[0] = rgb0[0] * (1.0 - m) + rgb1[0] * m;
-                                rgb0[1] = rgb0[1] * (1.0 - m) + rgb1[1] * m;
-                                rgb0[2] = rgb0[2] * (1.0 - m) + rgb1[2] * m;
-                            }
-                        }
-                        if shader.sun_shadows && dim == Dimension::Overworld && day > 0.25 && t < 38.0 {
+                        if shader.sun_shadows && dim == Dimension::Overworld && day > 0.25 && t < 34.0 {
                             let sh = sun_shadow(
                                 cache,
                                 ox + dx * t + nx as f32 * 0.04,
@@ -1475,15 +1462,15 @@ fn trace_ray(
         }
     }
 
-    if !hit_dist.is_infinite() && hit_dist > 74.0 {
-        let edge_fog = ((hit_dist - 74.0) / 30.0).clamp(0.0, 1.0);
+    if !hit_dist.is_infinite() && hit_dist > 56.0 {
+        let edge_fog = ((hit_dist - 56.0) / 20.0).clamp(0.0, 1.0);
         let ef = edge_fog * edge_fog;
         hit_rgb[0] = hit_rgb[0] * (1.0 - ef) + sky[0] * ef;
         hit_rgb[1] = hit_rgb[1] * (1.0 - ef) + sky[1] * ef;
         hit_rgb[2] = hit_rgb[2] * (1.0 - ef) + sky[2] * ef;
     }
 
-    if dim == Dimension::Overworld && spec_exited {
+    if dim == Dimension::Overworld && spec_exited && (hit_dist.is_infinite() || cam.y >= 106.0 || hit_dist > 40.0) {
         if let Some((cc, ct, ca)) = cloud_color_3d(cam, dx, dy, dz, time, day) {
             if ct < hit_dist {
                 hit_rgb[0] = hit_rgb[0] * (1.0 - ca) + cc[0] * ca;
@@ -1959,6 +1946,9 @@ fn raster_tri(
                     part.col_alt
                 } else if part.face == FaceArt::Sheep && (((u * 5.0) as i32 ^ (v * 5.0) as i32) & 1 == 0) {
                     part.col_alt
+                } else if part.col_alt == [46, 154, 174] && v < 0.36 {
+                    // Steve's iconic cyan short-sleeve cuffs on arms
+                    part.col_alt
                 } else if v > 0.78 && part.pivot_y > 0.2 && part.pivot_y < 0.75 {
                     part.col_alt
                 } else {
@@ -1997,6 +1987,7 @@ pub fn draw_entity_3d(
     flash: u8,
     front_always: bool,
     airborne: bool,
+    swimming: bool,
 ) {
     let (_, _, dist) = match project(cam, wx, wy + 0.8, wz, fb) {
         Some(v) => v,
@@ -2026,7 +2017,7 @@ pub fn draw_entity_3d(
     }
 
     let parts = match kind {
-        EntityKind::Steve => entities::steve_parts(walk),
+        EntityKind::Steve => entities::steve_parts(walk, airborne, swimming),
         EntityKind::Mob(m) => entities::mob_parts(m, walk, airborne),
         EntityKind::Boat => entities::vehicle_parts(true),
         EntityKind::Minecart => entities::vehicle_parts(false),
@@ -2225,6 +2216,60 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
             return if item == crate::items::MUSIC_DISC_CAT { [74, 214, 96, 255] } else { [238, 182, 54, 255] };
         }
         return if d2 % 4 == 0 { [48, 48, 56, 255] } else { [22, 22, 26, 255] };
+    }
+    if (crate::items::STONE_SWORD..=crate::items::POTION_JUMP).contains(&item) {
+        let (base_id, tint): (u16, Option<[u8; 3]>) = match item {
+            crate::items::STONE_SWORD => (crate::items::IRON_SWORD, Some([152, 152, 156])),
+            crate::items::STONE_AXE => (crate::items::IRON_AXE, Some([152, 152, 156])),
+            crate::items::STONE_SHOVEL => (crate::items::IRON_SHOVEL, Some([152, 152, 156])),
+            crate::items::DIAMOND_SHOVEL => (crate::items::IRON_SHOVEL, Some([86, 228, 224])),
+            crate::items::GOLD_PICK => (crate::items::IRON_PICK, Some([246, 212, 62])),
+            crate::items::GOLD_SWORD => (crate::items::IRON_SWORD, Some([246, 212, 62])),
+            crate::items::GOLD_AXE => (crate::items::IRON_AXE, Some([246, 212, 62])),
+            crate::items::GOLD_SHOVEL => (crate::items::IRON_SHOVEL, Some([246, 212, 62])),
+            crate::items::GOLD_HOE => (crate::items::IRON_HOE, Some([246, 212, 62])),
+            crate::items::GOLD_HELMET => (crate::items::IRON_HELMET, Some([246, 212, 62])),
+            crate::items::GOLD_CHESTPLATE => (crate::items::IRON_CHESTPLATE, Some([246, 212, 62])),
+            crate::items::GOLD_LEGGINGS => (crate::items::IRON_LEGGINGS, Some([246, 212, 62])),
+            crate::items::GOLD_BOOTS => (crate::items::IRON_BOOTS, Some([246, 212, 62])),
+            crate::items::NETHERITE_AXE => (crate::items::DIAMOND_AXE, Some([74, 66, 74])),
+            crate::items::NETHERITE_SHOVEL => (crate::items::IRON_SHOVEL, Some([74, 66, 74])),
+            crate::items::NETHERITE_HOE => (crate::items::DIAMOND_HOE, Some([74, 66, 74])),
+            crate::items::WHEAT_SEEDS => (world::WHEAT, Some([148, 198, 72])),
+            crate::items::BEETROOT => (crate::items::CARROT, Some([188, 42, 64])),
+            crate::items::BAKED_POTATO => (crate::items::BREAD, Some([216, 166, 84])),
+            crate::items::PUMPKIN_PIE => (crate::items::COOKIE, Some([224, 134, 48])),
+            crate::items::GOLDEN_CARROT => (crate::items::CARROT, Some([246, 210, 62])),
+            crate::items::PAPER => (crate::items::MAP, Some([238, 238, 232])),
+            crate::items::BOOK => (crate::items::ENCHANTED_BOOK, Some([158, 92, 52])),
+            crate::items::SUGAR => (crate::items::BONE_MEAL, Some([248, 248, 250])),
+            crate::items::BAMBOO => (crate::items::STICK, Some([112, 188, 62])),
+            crate::items::FISHING_ROD => (crate::items::BOW, Some([168, 128, 84])),
+            crate::items::SPYGLASS => (crate::items::BLAZE_ROD, Some([192, 138, 64])),
+            crate::items::POTION_STRENGTH => (crate::items::POTION_HEAL, Some([178, 42, 42])),
+            crate::items::POTION_REGEN => (crate::items::POTION_HEAL, Some([228, 102, 178])),
+            crate::items::POTION_JUMP => (crate::items::POTION_HEAL, Some([118, 236, 92])),
+            _ => (crate::items::STICK, None),
+        };
+        let mut c = item_pixel(base_id, x, y, tick);
+        if c[3] > 20 {
+            if let Some(t) = tint {
+                // Keep wooden stick handles brown on tools while tinting the metal/head
+                let is_handle = matches!(
+                    item,
+                    crate::items::STONE_SWORD | crate::items::STONE_AXE | crate::items::STONE_SHOVEL
+                    | crate::items::DIAMOND_SHOVEL | crate::items::GOLD_PICK | crate::items::GOLD_SWORD
+                    | crate::items::GOLD_AXE | crate::items::GOLD_SHOVEL | crate::items::GOLD_HOE
+                    | crate::items::NETHERITE_AXE | crate::items::NETHERITE_SHOVEL | crate::items::NETHERITE_HOE
+                ) && c[0] > c[2] + 25 && c[1] < 130 && (x + (15 - y)) < 14;
+                if !is_handle {
+                    c[0] = ((c[0] as u16 * t[0] as u16) / 210).min(255) as u8;
+                    c[1] = ((c[1] as u16 * t[1] as u16) / 210).min(255) as u8;
+                    c[2] = ((c[2] as u16 * t[2] as u16) / 210).min(255) as u8;
+                }
+            }
+        }
+        return c;
     }
     if item >= 346 && item <= 366 {
         let idx = match item {
@@ -2512,68 +2557,68 @@ pub const HOT_Y: i32 = 238;
 pub fn hotbar_x(i: usize) -> i32 { W as i32 / 2 - (9 * (SLOT + 2)) / 2 + i as i32 * (SLOT + 2) }
 
 pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32, swing: f32) {
-    let bob_x = (walk_bob * 0.8).cos() * 3.5 - swing.sin() * 18.0;
-    let bob_y = (walk_bob * 1.6).sin().abs() * 3.5 + swing.sin() * 12.0;
+    let bob_x = (walk_bob * 0.8).cos() * 3.5 - swing.sin() * 20.0;
+    let bob_y = (walk_bob * 1.6).sin().abs() * 3.5 + swing.sin() * 14.0;
     if item == 0 {
-        // Authentic chunky 3D-perspective Steve arm emerging from bottom-right
-        let bx = (388.0 + bob_x) as i32;
-        let by = (178.0 + bob_y) as i32;
-        for row in 0..96 {
-            let slant = ((row as f32) * 0.56) as i32;
+        // Thick, bold Minecraft 1st-person POV Steve arm emerging from bottom-right
+        let bx = (362.0 + bob_x) as i32;
+        let by = (154.0 + bob_y) as i32;
+        for row in 0..124 {
+            let slant = ((row as f32) * 0.50) as i32;
             let px = bx + slant;
             let py = by + row;
             if py >= H as i32 { break; }
-            if row > 64 {
+            if row > 78 {
                 // Cyan shirt sleeve cuff
-                fb.rect(px - 2, py, 34, 1, [44, 134, 152, 255]);
-                fb.rect(px + 32, py, 14, 1, [30, 98, 114, 255]);
+                fb.rect(px - 2, py, 48, 1, [46, 154, 174, 255]);
+                fb.rect(px + 46, py, 20, 1, [32, 110, 128, 255]);
             } else {
-                // Forearm skin front + right shaded face + subtle top rim
-                fb.rect(px, py, 32, 1, [216, 168, 128, 255]);
-                fb.rect(px + 32, py, 13, 1, [166, 122, 88, 255]);
-                if row < 5 {
-                    fb.rect(px, py, 32, 1, [234, 190, 152, 255]);
-                    fb.rect(px + 32, py, 13, 1, [188, 144, 108, 255]);
+                // Thick forearm skin front + shaded side + top highlight
+                fb.rect(px, py, 46, 1, [218, 170, 130, 255]);
+                fb.rect(px + 46, py, 19, 1, [168, 124, 90, 255]);
+                if row < 7 {
+                    fb.rect(px, py, 46, 1, [236, 194, 156, 255]);
+                    fb.rect(px + 46, py, 19, 1, [192, 148, 112, 255]);
                 }
             }
         }
     } else if item < 256 && !is_flat_block_icon(item) {
-        // Classic Minecraft chunky 3D held block + Steve forearm gripping from bottom-right
-        let bx = (382.0 + bob_x) as i32;
-        let by = (176.0 + bob_y) as i32;
-        for row in 0..64 {
-            let slant = ((row as f32) * 0.50) as i32;
-            let px = bx + 36 + slant;
+        // Larger chunky Minecraft 3D held block + thick Steve forearm gripping from bottom-right
+        let bx = (362.0 + bob_x) as i32;
+        let by = (152.0 + bob_y) as i32;
+        for row in 0..84 {
+            let slant = ((row as f32) * 0.46) as i32;
+            let px = bx + 44 + slant;
+            let py = by + 40 + row;
+            if py >= H as i32 { break; }
+            if row > 54 {
+                fb.rect(px - 2, py, 34, 1, [46, 154, 174, 255]);
+                fb.rect(px + 32, py, 15, 1, [32, 110, 128, 255]);
+            } else {
+                fb.rect(px, py, 32, 1, [216, 168, 128, 255]);
+                fb.rect(px + 32, py, 14, 1, [168, 124, 90, 255]);
+            }
+        }
+        draw_item_icon(fb, bx, by, item, 88, tick);
+    } else {
+        // Larger 3D extruded tool / sword / item held in thick Steve hand
+        let bx = (376.0 + bob_x) as i32;
+        let by = (162.0 + bob_y) as i32;
+        for row in 0..80 {
+            let slant = ((row as f32) * 0.45) as i32;
+            let px = bx + 32 + slant;
             let py = by + 34 + row;
             if py >= H as i32 { break; }
-            if row > 42 {
-                fb.rect(px - 1, py, 26, 1, [44, 134, 152, 255]);
-                fb.rect(px + 25, py, 11, 1, [30, 98, 114, 255]);
+            if row > 52 {
+                fb.rect(px - 2, py, 32, 1, [46, 154, 174, 255]);
+                fb.rect(px + 30, py, 14, 1, [32, 110, 128, 255]);
             } else {
-                fb.rect(px, py, 24, 1, [214, 166, 126, 255]);
-                fb.rect(px + 24, py, 10, 1, [166, 122, 88, 255]);
+                fb.rect(px, py, 30, 1, [216, 168, 128, 255]);
+                fb.rect(px + 30, py, 13, 1, [168, 124, 90, 255]);
             }
         }
-        draw_item_icon(fb, bx, by, item, 72, tick);
-    } else {
-        // Tool / sword / flat item held in hand with 3D voxel extrusion depth
-        let bx = (394.0 + bob_x) as i32;
-        let by = (182.0 + bob_y) as i32;
-        for row in 0..64 {
-            let slant = ((row as f32) * 0.48) as i32;
-            let px = bx + 28 + slant;
-            let py = by + 28 + row;
-            if py >= H as i32 { break; }
-            if row > 42 {
-                fb.rect(px - 1, py, 24, 1, [44, 134, 152, 255]);
-                fb.rect(px + 23, py, 10, 1, [30, 98, 114, 255]);
-            } else {
-                fb.rect(px, py, 22, 1, [214, 166, 126, 255]);
-                fb.rect(px + 22, py, 9, 1, [166, 122, 88, 255]);
-            }
-        }
-        let sz = 44i32;
-        for depth in (1..=4).rev() {
+        let sz = 58i32;
+        for depth in (1..=5).rev() {
             for py in 0..sz {
                 for px in 0..sz {
                     let c = item_pixel(item, (px as u32 * 16 / sz as u32).min(15), (py as u32 * 16 / sz as u32).min(15), tick);
@@ -3529,71 +3574,170 @@ pub fn draw_chat(fb: &mut Framebuffer, lines: &[(String, f32)], input: Option<&s
 }
 
 pub fn draw_pause(fb: &mut Framebuffer, hover: usize, mode: GameMode, sound: bool, music: bool) {
-    fb.rect(0, 0, W as i32, H as i32, [15, 20, 35, 165]);
+    fb.rect(0, 0, W as i32, H as i32, [10, 14, 24, 172]);
     let names = [
-        String::from("BACK TO GAME"),
-        format!("GAME MODE: {}", mode.name()),
-        format!("SOUND: {}  MUSIC: {}", if sound { "ON" } else { "OFF" }, if music { "ON" } else { "OFF" }),
-        String::from("OPTIONS"),
-        String::from("SAVE AND QUIT"),
+        String::from("Back to Game"),
+        String::from("Save World"),
+        format!("Game Mode: {}", mode.name()),
+        format!("Sounds: {}   Music: {}", if sound { "ON" } else { "OFF" }, if music { "ON" } else { "OFF" }),
+        String::from("Options..."),
+        String::from("Save and Quit to Title"),
     ];
-    text_shadow(fb, (W as i32 - 108) / 2, 36, "GAME MENU", [255, 255, 255, 255], 2);
-    let bw = 210; let bx = (W as i32 - bw) / 2;
-    for (i, n) in names.iter().enumerate() { button(fb, bx, 76 + i as i32 * 26, bw, 20, n, hover == i); }
+    let title = "Game Menu";
+    text_shadow(fb, (W as i32 - title.len() as i32 * 12) / 2, 24, title, [255, 255, 255, 255], 2);
+    let bw = 204; let bx = (W as i32 - bw) / 2;
+    for (i, n) in names.iter().enumerate() { button(fb, bx, 60 + i as i32 * 25, bw, 20, n, hover == i); }
 }
 
 pub fn draw_multiplayer_screen(fb: &mut Framebuffer, addr: &str, status: &str, hover: usize, hosting: bool) {
     fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
     let (px, py, pw, ph) = (50, 20, 380, 230);
     panel(fb, px, py, pw, ph);
-    text(fb, px + 10, py + 8, "PLAY MULTIPLAYER", [60, 60, 60, 255], 1);
-    text(fb, px + 10, py + 34, "SERVER ADDRESS", [60, 60, 60, 255], 1);
-    fb.rect(px + 10, py + 46, pw - 20, 18, [40, 40, 40, 255]);
-    text(fb, px + 14, py + 51, &format!("{}_", addr), [235, 235, 235, 255], 1);
-    text(fb, px + 10, py + 74, status, [70, 70, 110, 255], 1);
-    button(fb, px + 10, py + 96, 170, 22, "JOIN SERVER", hover == 0);
-    button(fb, px + 200, py + 96, 170, 22, if hosting { "HOSTING..." } else { "OPEN TO LAN" }, hover == 1);
-    button(fb, px + 10, py + 128, 170, 22, "DIRECT CONNECT", hover == 2);
-    button(fb, px + 200, py + 128, 170, 22, "BACK", hover == 3);
-    text(fb, px + 10, py + 168, "Host a game, then type your friend's IP on their", [60, 60, 60, 255], 1);
-    text(fb, px + 10, py + 180, "machine and press JOIN SERVER. Port 25565.", [60, 60, 60, 255], 1);
-    text(fb, px + 10, py + 200, "Chat with T. Players and block edits sync live.", [60, 60, 60, 255], 1);
+    text(fb, px + 10, py + 8, "Play Multiplayer", [60, 60, 60, 255], 1);
+    text(fb, px + 10, py + 34, "Server Address (host:port)", [60, 60, 60, 255], 1);
+    fb.rect(px + 10, py + 46, pw - 20, 18, [22, 22, 22, 255]);
+    fb.frame(px + 10, py + 46, pw - 20, 18, [160, 160, 160, 255]);
+    text(fb, px + 14, py + 51, &format!("{}_", addr), [240, 240, 240, 255], 1);
+    text(fb, px + 10, py + 74, status, [40, 80, 140, 255], 1);
+    button(fb, px + 10, py + 96, 170, 22, "Join Server", hover == 0);
+    button(fb, px + 200, py + 96, 170, 22, if hosting { "Hosting on 25565..." } else { "Open to LAN" }, hover == 1);
+    button(fb, px + 10, py + 128, 170, 22, "Direct Connect (127.0.0.1)", hover == 2);
+    button(fb, px + 200, py + 128, 170, 22, "Cancel", hover == 3);
+    text(fb, px + 10, py + 166, "Host clicks Open to LAN (TCP port 25565).", [60, 60, 60, 255], 1);
+    text(fb, px + 10, py + 180, "Friends enter Host IP:25565 and click Join Server.", [60, 60, 60, 255], 1);
+    text(fb, px + 10, py + 196, "Seed, time, players, & block edits sync automatically!", [60, 60, 60, 255], 1);
+}
+
+pub fn draw_select_world_screen(
+    fb: &mut Framebuffer,
+    worlds: &[(String, String)],
+    selected: usize,
+    hover: usize,
+) {
+    // Classic Java dirt background
+    let atlas = Textures::atlas();
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            let c = atlas.sample_kind(TexKind::Dirt, ((x / 2) % 16) as f32 / 16.0, ((y / 2) % 16) as f32 / 16.0, 0, false);
+            fb.set(x, y, c[0] / 3, c[1] / 3, c[2] / 3, 255);
+        }
+    }
+    let title = "Select World";
+    text_shadow(fb, (W as i32 - title.len() as i32 * 6) / 2, 12, title, [255, 255, 255, 255], 1);
+    fb.rect(40, 26, W as i32 - 80, 166, [0, 0, 0, 150]);
+    fb.frame(40, 26, W as i32 - 80, 166, [85, 85, 90, 255]);
+    if worlds.is_empty() {
+        text_shadow(fb, 150, 96, "No saved worlds yet! Create New World below.", [190, 190, 190, 255], 1);
+    } else {
+        for (i, (wname, meta)) in worlds.iter().take(6).enumerate() {
+            let y = 32 + i as i32 * 26;
+            let is_sel = i == selected;
+            let hv = hover == 10 + i;
+            if is_sel || hv {
+                fb.rect(46, y, W as i32 - 92, 24, if is_sel { [40, 48, 62, 230] } else { [32, 32, 38, 190] });
+                fb.frame(46, y, W as i32 - 92, 24, if is_sel { [255, 255, 255, 255] } else { [130, 130, 140, 255] });
+            }
+            text_shadow(fb, 54, y + 4, wname, [255, 255, 255, 255], 1);
+            text_shadow(fb, 54, y + 14, meta, [175, 175, 185, 255], 1);
+        }
+    }
+    button(fb, 46, 200, 188, 22, "Play Selected World", hover == 0);
+    button(fb, 246, 200, 188, 22, "Create New World", hover == 1);
+    button(fb, 46, 228, 188, 22, "Delete World", hover == 2);
+    button(fb, 246, 228, 188, 22, "Cancel", hover == 3);
+}
+
+/// Classic Minecraft Java Edition chunk-grid world generation/loading screen.
+pub fn draw_loading_screen(fb: &mut Framebuffer, label: &str, pct: f32, tick: u32) {
+    let atlas = Textures::atlas();
+    for y in 0..H as i32 {
+        for x in 0..W as i32 {
+            let c = atlas.sample_kind(TexKind::Dirt, ((x / 2) % 16) as f32 / 16.0, ((y / 2) % 16) as f32 / 16.0, 0, false);
+            fb.set(x, y, c[0] / 3, c[1] / 3, c[2] / 3, 255);
+        }
+    }
+    let title = label;
+    text_shadow(fb, (W as i32 - title.len() as i32 * 6) / 2, 54, title, [255, 255, 255, 255], 1);
+    let pct_str = format!("{}%", (pct * 100.0).clamp(0.0, 100.0) as i32);
+    text_shadow(fb, (W as i32 - pct_str.len() as i32 * 6) / 2, 68, &pct_str, [200, 220, 200, 255], 1);
+
+    // Classic Java 11x11 chunk-loading square grid in the center
+    let grid = 11i32;
+    let cell = 7i32;
+    let gx0 = (W as i32 - grid * cell) / 2;
+    let gy0 = 92;
+    let radius_f = pct * 7.8;
+    fb.rect(gx0 - 3, gy0 - 3, grid * cell + 6, grid * cell + 6, [18, 18, 22, 230]);
+    for rz in 0..grid {
+        for rx in 0..grid {
+            let dx = (rx - 5) as f32;
+            let dz = (rz - 5) as f32;
+            let d = (dx * dx + dz * dz).sqrt();
+            let col = if d <= radius_f - 1.5 {
+                [242, 242, 242, 255] // Fully lit center chunks
+            } else if d <= radius_f {
+                [92, 212, 92, 255] // Active green chunk rim
+            } else if d <= radius_f + 1.0 && ((rx + rz + tick as i32) & 1 == 0) {
+                [224, 198, 72, 255] // Pre-lighting yellow
+            } else {
+                [46, 52, 68, 255] // Unloaded chunk
+            };
+            fb.rect(gx0 + rx * cell, gy0 + rz * cell, cell - 1, cell - 1, col);
+        }
+    }
 }
 
 pub fn draw_options_screen(
     fb: &mut Framebuffer,
+    fov: f32,
     sound: bool,
     music: bool,
     scale: i32,
     camera: u8,
     shader_name: &str,
+    difficulty: u8,
+    auto_jump: bool,
     pack_count: usize,
     hover: usize,
 ) {
-    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
-    let (px, py, pw, ph) = (64, 14, 352, 242);
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 165]);
+    let (px, py, pw, ph) = (32, 10, 416, 250);
     panel(fb, px, py, pw, ph);
-    text(fb, px + 10, py + 8, "OPTIONS", [60, 60, 60, 255], 1);
-    let cam_name = match camera { 1 => "THIRD PERSON", 2 => "DISTANT", _ => "FIRST PERSON" };
+    let hdr = "Options";
+    text(fb, (W as i32 - hdr.len() as i32 * 6) / 2, py + 7, hdr, [45, 45, 45, 255], 1);
+    let cam_name = match camera { 1 => "3rd Person Back", 2 => "3rd Person Front", _ => "1st Person" };
     let res_label = match scale {
-        0 => "960x540 (ULTRA HD)",
-        1 => "640x360 (HD)",
-        2 => "480x270 (STD)",
-        _ => "320x180 (FAST)",
+        0 => "Native HD (960x540)",
+        1 => "Balanced (640x360)",
+        2 => "Fast (480x270)",
+        _ => "Ultra Fast (320x180)",
     };
+    let diff_name = match difficulty { 0 => "Peaceful", 1 => "Easy", 2 => "Normal", _ => "Hard" };
     let items = [
-        format!("SOUND: {}", if sound { "ON" } else { "OFF" }),
-        format!("MUSIC: {}", if music { "ON" } else { "OFF" }),
-        format!("3D RES: {}", res_label),
-        format!("CAMERA (F5/C): {}", cam_name),
-        format!("SHADER: {}", shader_name),
-        format!("RELOAD PACKS ({} LOADED)", pack_count),
-        "DONE".to_string(),
+        format!("FOV: {} (C=Zoom)", fov.round() as i32),
+        format!("Difficulty: {}", diff_name),
+        format!("Music: {}", if music { "ON" } else { "OFF" }),
+        format!("Sounds: {}", if sound { "ON" } else { "OFF" }),
+        format!("Graphics: {}", res_label),
+        format!("Camera (F5): {}", cam_name),
+        format!("Auto-Jump: {}", if auto_jump { "ON" } else { "OFF" }),
+        format!("Shader: {}", shader_name),
+        format!("Resource Packs ({})", pack_count),
+        "Done".to_string(),
     ];
     for (i, label) in items.iter().enumerate() {
-        button(fb, px + 54, py + 26 + i as i32 * 26, pw - 108, 22, label, hover == i);
+        if i < 8 {
+            let col = i % 2;
+            let row = i / 2;
+            button(fb, px + 14 + col as i32 * 198, py + 24 + row as i32 * 28, 190, 22, label, hover == i);
+        } else if i == 8 {
+            button(fb, px + 14, py + 144, 388, 22, label, hover == 8);
+        } else {
+            button(fb, px + 108, py + 210, 200, 22, label, hover == 9);
+        }
     }
-    text(fb, px + 10, py + ph - 14, "Drop .zip/.mrpack in packs/ or use Pack Loader", [90, 90, 90, 255], 1);
+    text(fb, px + 14, py + 174, "Keys: F1 HUD | F2 Screenshot | F3 Debug | F4 Mode | F5 Cam | F11 Full", [65, 65, 70, 255], 1);
+    text(fb, px + 14, py + 188, "      C Zoom | F Offhand | Q Drop | Ctrl Sprint | Shift Sneak", [65, 65, 70, 255], 1);
 }
 
 pub fn draw_enchant_screen(
@@ -3703,24 +3847,25 @@ pub fn draw_brewing_screen(
 
 pub fn draw_trade_screen(
     fb: &mut Framebuffer,
+    profession: &str,
     trades: &[(u16, u32, u16, u32)],
     hot: &[crate::craft::Stack; 9],
     tick: u32,
     hover: Option<(usize, usize)>,
 ) {
-    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
-    let (px, py, pw, ph) = (64, 16, 352, 238);
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 150]);
+    let (px, py, pw, ph) = (56, 12, 368, 246);
     panel(fb, px, py, pw, ph);
-    text(fb, px + 10, py + 8, "VILLAGER TRADING  (CLICK TO TRADE)", [60, 60, 60, 255], 1);
-    for (i, &(cost_id, cost_n, out_id, out_n)) in trades.iter().enumerate() {
-        let by = 30 + i as i32 * 30;
+    text(fb, px + 10, py + 7, &format!("{} (Click Trade)", profession), [50, 50, 55, 255], 1);
+    for (i, &(cost_id, cost_n, out_id, out_n)) in trades.iter().enumerate().take(6) {
+        let by = 26 + i as i32 * 28;
         let hv = hover == Some((0, i));
-        button(fb, 82, by, 316, 26, "", hv);
-        draw_item_icon(fb, 90, by + 3, cost_id, 20, tick);
-        text_shadow(fb, 114, by + 9, &format!("x{} {}", cost_n, crate::items::name(cost_id)), [255, 255, 255, 255], 1);
-        text_shadow(fb, 224, by + 9, "->", [255, 235, 120, 255], 1);
-        draw_item_icon(fb, 244, by + 3, out_id, 20, tick);
-        text_shadow(fb, 268, by + 9, &format!("x{} {}", out_n, crate::items::name(out_id)), [170, 255, 170, 255], 1);
+        button(fb, 72, by, 336, 24, "", hv);
+        draw_item_icon(fb, 80, by + 2, cost_id, 20, tick);
+        text_shadow(fb, 104, by + 8, &format!("{}x {}", cost_n, crate::items::name(cost_id)), [255, 255, 255, 255], 1);
+        text_shadow(fb, 222, by + 8, "->", [255, 235, 120, 255], 1);
+        draw_item_icon(fb, 242, by + 2, out_id, 20, tick);
+        text_shadow(fb, 266, by + 8, &format!("{}x {}", out_n, crate::items::name(out_id)), [170, 255, 170, 255], 1);
     }
     for i in 0..9 {
         let (x, y, w, h) = hot_slot_rect(i);

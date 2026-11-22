@@ -192,6 +192,7 @@ extern "system" {
     fn DestroyWindow(hWnd: HWND) -> i32;
     fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: isize) -> isize;
     fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> isize;
+    fn ShowWindow(hWnd: HWND, nCmdShow: i32) -> i32;
     fn SetWindowTextW(hWnd: HWND, lpString: *const u16) -> i32;
     fn GetClientRect(hWnd: HWND, lpRect: *mut RECT) -> i32;
     fn AdjustWindowRect(lpRect: *mut RECT, dwStyle: u32, bMenu: i32) -> i32;
@@ -687,6 +688,23 @@ impl Platform for Win32 {
     fn set_dimension(&mut self, dim: u8) {
         if let Ok(mut a) = self.audio.lock() {
             a.set_dimension(dim);
+        }
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        unsafe {
+            const GWL_STYLE: i32 = -16;
+            const SW_MAXIMIZE: i32 = 3;
+            const SW_RESTORE: i32 = 9;
+            let style = GetWindowLongPtrW(self.hwnd, GWL_STYLE) as u32;
+            if (style & 0x00C00000) != 0 {
+                // Enter borderless maximized fullscreen
+                SetWindowLongPtrW(self.hwnd, GWL_STYLE, (style & !0x00CF0000) as isize);
+                ShowWindow(self.hwnd, SW_MAXIMIZE);
+            } else {
+                SetWindowLongPtrW(self.hwnd, GWL_STYLE, (style | WS_OVERLAPPEDWINDOW) as isize);
+                ShowWindow(self.hwnd, SW_RESTORE);
+            }
         }
     }
 

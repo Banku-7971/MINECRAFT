@@ -14,6 +14,7 @@ const types = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.wasm': 'application/wasm',
+  '.ogg': 'audio/ogg',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
@@ -21,9 +22,13 @@ const types = {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  let name = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');
-  name = path.basename(name);
-  const file = path.join(WEB, name);
+  const rel = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');
+  const file = path.resolve(WEB, rel);
+  if (!file.startsWith(WEB + path.sep) && file !== WEB) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('forbidden');
+    return;
+  }
 
   fs.readFile(file, (err, data) => {
     if (err) {

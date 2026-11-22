@@ -127,16 +127,57 @@ pub const SPAWN_ALLAY: u16 = 377;
 pub const SPAWN_WANDERING_TRADER: u16 = 378;
 pub const SPAWN_GUARDIAN: u16 = 379;
 pub const SPAWN_WARDEN: u16 = 380;
+pub const STONE_SWORD: u16 = 381;
+pub const STONE_AXE: u16 = 382;
+pub const STONE_SHOVEL: u16 = 383;
+pub const DIAMOND_SHOVEL: u16 = 384;
+pub const GOLD_PICK: u16 = 385;
+pub const GOLD_SWORD: u16 = 386;
+pub const GOLD_AXE: u16 = 387;
+pub const GOLD_SHOVEL: u16 = 388;
+pub const GOLD_HOE: u16 = 389;
+pub const GOLD_HELMET: u16 = 390;
+pub const GOLD_CHESTPLATE: u16 = 391;
+pub const GOLD_LEGGINGS: u16 = 392;
+pub const GOLD_BOOTS: u16 = 393;
+pub const NETHERITE_AXE: u16 = 394;
+pub const NETHERITE_SHOVEL: u16 = 395;
+pub const NETHERITE_HOE: u16 = 396;
+pub const WHEAT_SEEDS: u16 = 397;
+pub const BEETROOT: u16 = 398;
+pub const BAKED_POTATO: u16 = 399;
+pub const PUMPKIN_PIE: u16 = 400;
+pub const GOLDEN_CARROT: u16 = 401;
+pub const PAPER: u16 = 402;
+pub const BOOK: u16 = 403;
+pub const SUGAR: u16 = 404;
+pub const BAMBOO: u16 = 405;
+pub const FISHING_ROD: u16 = 406;
+pub const SPYGLASS: u16 = 407;
+pub const POTION_STRENGTH: u16 = 408;
+pub const POTION_REGEN: u16 = 409;
+pub const POTION_JUMP: u16 = 410;
 
 pub fn name(id: u16) -> &'static str {
     match id {
         0 => "Air",
         WOOD_PICK => "Wooden Pickaxe", STONE_PICK => "Stone Pickaxe", IRON_PICK => "Iron Pickaxe",
         DIAMOND_PICK => "Diamond Pickaxe", NETHERITE_PICK => "Netherite Pickaxe",
-        WOOD_AXE => "Wooden Axe", IRON_AXE => "Iron Axe", DIAMOND_AXE => "Diamond Axe",
-        WOOD_SHOVEL => "Wooden Shovel", IRON_SHOVEL => "Iron Shovel",
-        WOOD_SWORD => "Wooden Sword", IRON_SWORD => "Iron Sword", DIAMOND_SWORD => "Diamond Sword",
-        NETHERITE_SWORD => "Netherite Sword",
+        GOLD_PICK => "Golden Pickaxe",
+        WOOD_AXE => "Wooden Axe", STONE_AXE => "Stone Axe", IRON_AXE => "Iron Axe", DIAMOND_AXE => "Diamond Axe",
+        GOLD_AXE => "Golden Axe", NETHERITE_AXE => "Netherite Axe",
+        WOOD_SHOVEL => "Wooden Shovel", STONE_SHOVEL => "Stone Shovel", IRON_SHOVEL => "Iron Shovel",
+        DIAMOND_SHOVEL => "Diamond Shovel", GOLD_SHOVEL => "Golden Shovel", NETHERITE_SHOVEL => "Netherite Shovel",
+        WOOD_SWORD => "Wooden Sword", STONE_SWORD => "Stone Sword", IRON_SWORD => "Iron Sword",
+        DIAMOND_SWORD => "Diamond Sword", GOLD_SWORD => "Golden Sword", NETHERITE_SWORD => "Netherite Sword",
+        GOLD_HOE => "Golden Hoe", NETHERITE_HOE => "Netherite Hoe",
+        WHEAT_SEEDS => "Wheat Seeds", BEETROOT => "Beetroot", BAKED_POTATO => "Baked Potato",
+        PUMPKIN_PIE => "Pumpkin Pie", GOLDEN_CARROT => "Golden Carrot",
+        PAPER => "Paper", BOOK => "Book", SUGAR => "Sugar", BAMBOO => "Bamboo",
+        FISHING_ROD => "Fishing Rod", SPYGLASS => "Spyglass",
+        POTION_STRENGTH => "Potion of Strength", POTION_REGEN => "Potion of Regeneration", POTION_JUMP => "Potion of Leaping",
+        GOLD_HELMET => "Golden Helmet", GOLD_CHESTPLATE => "Golden Chestplate",
+        GOLD_LEGGINGS => "Golden Leggings", GOLD_BOOTS => "Golden Boots",
         APPLE => "Apple", GOLDEN_APPLE => "Golden Apple", BREAD => "Bread",
         COOKED_PORK => "Cooked Porkchop", RAW_PORK => "Raw Porkchop",
         RAW_BEEF => "Raw Beef", STEAK => "Steak", RAW_CHICKEN => "Raw Chicken",
@@ -202,10 +243,10 @@ pub fn name(id: u16) -> &'static str {
 /// Armor slot index (0=helmet, 1=chestplate, 2=leggings, 3=boots).
 pub fn armor_slot(id: u16) -> Option<usize> {
     match id {
-        IRON_HELMET | DIAMOND_HELMET | NETHERITE_HELMET => Some(0),
-        IRON_CHESTPLATE | DIAMOND_CHESTPLATE | NETHERITE_CHESTPLATE | ELYTRA => Some(1),
-        IRON_LEGGINGS | DIAMOND_LEGGINGS | NETHERITE_LEGGINGS => Some(2),
-        IRON_BOOTS | DIAMOND_BOOTS | NETHERITE_BOOTS => Some(3),
+        IRON_HELMET | GOLD_HELMET | DIAMOND_HELMET | NETHERITE_HELMET => Some(0),
+        IRON_CHESTPLATE | GOLD_CHESTPLATE | DIAMOND_CHESTPLATE | NETHERITE_CHESTPLATE | ELYTRA => Some(1),
+        IRON_LEGGINGS | GOLD_LEGGINGS | DIAMOND_LEGGINGS | NETHERITE_LEGGINGS => Some(2),
+        IRON_BOOTS | GOLD_BOOTS | DIAMOND_BOOTS | NETHERITE_BOOTS => Some(3),
         _ => None,
     }
 }
@@ -213,6 +254,10 @@ pub fn armor_slot(id: u16) -> Option<usize> {
 /// Armor defense points (max 20 = 10 full armor icons).
 pub fn armor_points(id: u16) -> u32 {
     match id {
+        GOLD_HELMET => 2,
+        GOLD_BOOTS => 1,
+        GOLD_LEGGINGS => 3,
+        GOLD_CHESTPLATE => 5,
         IRON_HELMET | IRON_BOOTS => 2,
         IRON_LEGGINGS => 5,
         IRON_CHESTPLATE => 6,
@@ -224,30 +269,32 @@ pub fn armor_points(id: u16) -> u32 {
 }
 
 pub fn is_hoe(id: u16) -> bool {
-    matches!(id, WOOD_HOE..=DIAMOND_HOE)
+    matches!(id, WOOD_HOE..=DIAMOND_HOE | GOLD_HOE | NETHERITE_HOE)
 }
 
 /// Tool mining speed multiplier and tier (0 = hand).
 pub fn tool_tier(id: u16) -> u8 {
     match id {
         WOOD_PICK | WOOD_AXE | WOOD_SHOVEL | WOOD_SWORD => 1,
-        STONE_PICK => 2,
+        STONE_PICK | STONE_AXE | STONE_SHOVEL | STONE_SWORD => 2,
+        GOLD_PICK | GOLD_AXE | GOLD_SHOVEL | GOLD_SWORD => 2,
         IRON_PICK | IRON_AXE | IRON_SHOVEL | IRON_SWORD => 3,
-        DIAMOND_PICK | DIAMOND_AXE | DIAMOND_SWORD => 4,
-        NETHERITE_PICK | NETHERITE_SWORD => 5,
+        DIAMOND_PICK | DIAMOND_AXE | DIAMOND_SHOVEL | DIAMOND_SWORD => 4,
+        NETHERITE_PICK | NETHERITE_AXE | NETHERITE_SHOVEL | NETHERITE_SWORD => 5,
         _ => 0,
     }
 }
 
 pub fn pickaxe_tier(id: u16) -> u8 {
-    match id { WOOD_PICK => 1, STONE_PICK => 2, IRON_PICK => 3, DIAMOND_PICK => 4, NETHERITE_PICK => 5, _ => 0 }
+    match id { WOOD_PICK => 1, STONE_PICK | GOLD_PICK => 2, IRON_PICK => 3, DIAMOND_PICK => 4, NETHERITE_PICK => 5, _ => 0 }
 }
 
 pub fn is_food(id: u16) -> f32 {
     match id {
-        GOLDEN_APPLE => 10.0,
+        GOLDEN_APPLE => 10.0, PUMPKIN_PIE => 8.0,
         APPLE => 4.0, BREAD => 5.0, COOKED_PORK => 8.0, STEAK => 8.0, COOKED_CHICKEN => 6.0,
-        FISH => 3.0, CARROT => 3.0, COOKIE => 2.0,
+        BAKED_POTATO => 5.0, GOLDEN_CARROT => 6.0,
+        FISH => 3.0, CARROT => 3.0, BEETROOT => 2.0, COOKIE => 2.0,
         RAW_PORK | RAW_BEEF => 2.0, RAW_CHICKEN => 1.5, ROTTEN_FLESH => 1.0,
         _ => 0.0,
     }
@@ -259,6 +306,7 @@ pub fn max_stack(id: u16) -> u32 {
         WOOD_PICK..=DIAMOND_SWORD | NETHERITE_SWORD | BUCKET | WATER_BUCKET | LAVA_BUCKET
             | COMPASS | MAP | CLOCK | ELYTRA | SHIELD | TOTEM | BOW | FLINT_AND_STEEL | SHEARS
             | IRON_HELMET..=DIAMOND_CHESTPLATE | WOOD_HOE..=MINECART | POTION_HEAL..=ENCHANTED_BOOK
+            | STONE_SWORD..=NETHERITE_HOE | FISHING_ROD..=POTION_JUMP
     ) {
         1
     } else {
@@ -297,29 +345,32 @@ pub fn creative_tab_items(tab: usize) -> &'static [u16] {
             PISTON, STICKY_PISTON, HOPPER, LAMP, RAIL, TNT, DOOR, IRON_DOOR,
         ],
         6 => &[ // Tools & Utilities
-            WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK, NETHERITE_PICK,
-            WOOD_AXE, IRON_AXE, DIAMOND_AXE, WOOD_SHOVEL, IRON_SHOVEL,
-            WOOD_HOE, STONE_HOE, IRON_HOE, DIAMOND_HOE,
-            FLINT_AND_STEEL, SHEARS, BUCKET, WATER_BUCKET, LAVA_BUCKET, BOAT, MINECART,
+            WOOD_PICK, STONE_PICK, IRON_PICK, GOLD_PICK, DIAMOND_PICK, NETHERITE_PICK,
+            WOOD_AXE, STONE_AXE, IRON_AXE, GOLD_AXE, DIAMOND_AXE, NETHERITE_AXE,
+            WOOD_SHOVEL, STONE_SHOVEL, IRON_SHOVEL, GOLD_SHOVEL, DIAMOND_SHOVEL, NETHERITE_SHOVEL,
+            WOOD_HOE, STONE_HOE, IRON_HOE, GOLD_HOE, DIAMOND_HOE, NETHERITE_HOE,
+            FLINT_AND_STEEL, SHEARS, FISHING_ROD, SPYGLASS, BUCKET, WATER_BUCKET, LAVA_BUCKET, BOAT, MINECART,
             EYE_OF_ENDER, COMPASS, CLOCK, MAP, ELYTRA, FIREWORK, XP_BOTTLE, BONE_MEAL,
             MUSIC_DISC_CAT, MUSIC_DISC_PIGSTEP,
         ],
         7 => &[ // Combat
-            WOOD_SWORD, IRON_SWORD, DIAMOND_SWORD, NETHERITE_SWORD,
+            WOOD_SWORD, STONE_SWORD, IRON_SWORD, GOLD_SWORD, DIAMOND_SWORD, NETHERITE_SWORD,
             BOW, ARROW, SHIELD, TOTEM,
             IRON_HELMET, IRON_CHESTPLATE, IRON_LEGGINGS, IRON_BOOTS,
+            GOLD_HELMET, GOLD_CHESTPLATE, GOLD_LEGGINGS, GOLD_BOOTS,
             DIAMOND_HELMET, DIAMOND_CHESTPLATE, DIAMOND_LEGGINGS, DIAMOND_BOOTS,
             NETHERITE_HELMET, NETHERITE_CHESTPLATE, NETHERITE_LEGGINGS, NETHERITE_BOOTS,
             TNT,
         ],
         8 => &[ // Food & Drinks
-            APPLE, GOLDEN_APPLE, BREAD, STEAK, COOKED_PORK, COOKED_CHICKEN,
-            RAW_BEEF, RAW_PORK, RAW_CHICKEN, FISH, CARROT, COOKIE, CAKE, ROTTEN_FLESH,
-            GLASS_BOTTLE, POTION_HEAL, POTION_FIRE, POTION_SPEED,
+            APPLE, GOLDEN_APPLE, GOLDEN_CARROT, BREAD, STEAK, COOKED_PORK, COOKED_CHICKEN, BAKED_POTATO, PUMPKIN_PIE,
+            RAW_BEEF, RAW_PORK, RAW_CHICKEN, FISH, CARROT, BEETROOT, COOKIE, CAKE, ROTTEN_FLESH,
+            GLASS_BOTTLE, POTION_HEAL, POTION_FIRE, POTION_SPEED, POTION_STRENGTH, POTION_REGEN, POTION_JUMP,
         ],
         9 => &[ // Ingredients
             COAL, IRON_INGOT, GOLD_INGOT, GOLD_NUGGET, DIAMOND, EMERALD, LAPIS_LAZULI, NETHERITE_INGOT, NETHER_QUARTZ, AMETHYST,
             STICK, FLINT, FEATHER, LEATHER, BONE, BONE_MEAL, STRING, GUNPOWDER, SLIMEBALL,
+            PAPER, BOOK, SUGAR, BAMBOO, WHEAT_SEEDS,
             ENDER_PEARL, BLAZE_ROD, BLAZE_POWDER, EYE_OF_ENDER, NETHER_STAR, NETHER_WART, EGG, WOOL, REDSTONE_DUST, ENCHANTED_BOOK,
         ],
         10 => &[ // Spawn Eggs

@@ -19,18 +19,23 @@ pub const VK_UP: u32 = 0x26;
 pub const VK_RIGHT: u32 = 0x27;
 pub const VK_DOWN: u32 = 0x28;
 pub const VK_A: u32 = 0x41;
+pub const VK_B: u32 = 0x42;
 pub const VK_C: u32 = 0x43;
 pub const VK_D: u32 = 0x44;
 pub const VK_E: u32 = 0x45;
 pub const VK_F: u32 = 0x46;
+pub const VK_G: u32 = 0x47;
 pub const VK_Q: u32 = 0x51;
 pub const VK_S: u32 = 0x53;
 pub const VK_T: u32 = 0x54;
 pub const VK_W: u32 = 0x57;
 pub const VK_Z: u32 = 0x5A;
+pub const VK_F1: u32 = 0x70;
+pub const VK_F2: u32 = 0x71;
 pub const VK_F3: u32 = 0x72;
 pub const VK_F4: u32 = 0x73;
 pub const VK_F5: u32 = 0x74;
+pub const VK_F11: u32 = 0x7A;
 pub const VK_SLASH: u32 = 0xBF;
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +62,7 @@ pub trait Platform {
     fn set_music(&mut self, on: bool);
     fn set_sound(&mut self, on: bool);
     fn set_dimension(&mut self, _dim: u8) {}
+    fn toggle_fullscreen(&mut self) {}
     fn set_cursor(&mut self, visible: bool);
     fn set_capture(&mut self, captured: bool);
     /// Mouse position in 480x270 framebuffer space.
