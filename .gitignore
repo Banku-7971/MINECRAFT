@@ -67,5 +67,3 @@
 /crates/horizon-client/src/game/items/
 /crates/horizon-client/src/game/native_hooks/
 
-# Release artifact, uploaded separately rather than stored in Git.
-/Sigma-Craft.zip
