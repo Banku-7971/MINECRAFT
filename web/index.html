@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>RustCraft - Minecraft in Rust</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <div id="frame-wrap">
+      <canvas id="screen" width="960" height="540" aria-label="RustCraft game view"></canvas>
+      <div id="start" class="overlay">
+        <div class="logo">RUST<span>CRAFT</span></div>
+        <p class="tagline">A voxel sandbox written in Rust, compiled to WebAssembly</p>
+        <div class="start-actions">
+          <button id="play">Click to play</button>
+          <button id="open-packs-title" class="btn-secondary">Packs, Shaders &amp; Mods</button>
+        </div>
+        <div class="controls">
+          <div><b>WASD</b> move &nbsp; <b>Mouse</b> look &nbsp; <b>Space</b> jump &nbsp; <b>Shift</b> sprint</div>
+          <div><b>Left click</b> break / attack &nbsp; <b>Right click</b> place block</div>
+          <div><b>F5 / C</b> change camera &nbsp; <b>E</b> inventory &nbsp; <b>T</b> chat &nbsp; <b>1-9 / wheel</b> hotbar</div>
+        </div>
+      </div>
+
+      <div id="packs-modal" class="overlay hidden" role="dialog" aria-label="Packs, Shaders & Modpacks">
+        <div class="modal-card">
+          <div class="modal-head">
+            <div>
+              <h2>Packs, Shaders &amp; Modpacks</h2>
+              <div id="pack-summary" class="modal-sub">Shader: VANILLA &bull; 0 packs active</div>
+            </div>
+            <div class="modal-head-btns">
+              <button id="reset-packs" class="btn-small btn-danger">Reset Vanilla</button>
+              <button id="close-packs" class="btn-small">Done</button>
+            </div>
+          </div>
+
+          <div class="shader-bar">
+            <span>Shader:</span>
+            <button class="shader-chip active" data-shader="0">Vanilla</button>
+            <button class="shader-chip" data-shader="1">BSL Warm</button>
+            <button class="shader-chip" data-shader="2">Complementary</button>
+            <button class="shader-chip" data-shader="3">Sildur's</button>
+            <button class="shader-chip" data-shader="4">Nostalgia</button>
+          </div>
+
+          <div class="import-row">
+            <label id="dropzone" class="dropzone" for="pack-file">
+              <b>Drop .zip / .mrpack / .json</b> or <u>choose files</u> (Resource Packs, Shaders, Datapacks, Modpacks)
+              <input id="pack-file" type="file" accept=".zip,.mrpack,.json" multiple hidden />
+            </label>
+            <div class="url-row">
+              <input id="pack-url" type="url" placeholder="Paste direct .zip / .mrpack URL..." />
+              <button id="load-url" class="btn-small">Load URL</button>
+            </div>
+          </div>
+
+          <div id="pack-toast" class="toast"></div>
+
+          <div class="modal-cols">
+            <div class="col-browse">
+              <div class="tabs">
+                <button class="tab active" data-ptype="resourcepack">Resource Packs</button>
+                <button class="tab" data-ptype="shader">Shaders</button>
+                <button class="tab" data-ptype="datapack">Datapacks</button>
+                <button class="tab" data-ptype="modpack">Modpacks</button>
+              </div>
+              <div class="search-row">
+                <input id="modrinth-q" type="text" placeholder="Search Modrinth (e.g. Faithful, BSL, Vanilla Tweaks)..." />
+                <button id="modrinth-go" class="btn-small">Search</button>
+              </div>
+              <div id="modrinth-list" class="list-box"></div>
+            </div>
+
+            <div class="col-active">
+              <h3>Loaded Packs</h3>
+              <div id="active-list" class="list-box small-list">
+                <div class="empty-msg">No custom packs loaded yet.</div>
+              </div>
+              <h3 id="mods-heading" class="hidden">Modpack Contents</h3>
+              <div id="mods-list" class="list-box small-list hidden"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="side">
+      <h1>RustCraft</h1>
+      <p class="sub">Procedural Minecraft-like sandbox</p>
+      <div class="side-pack-box">
+        <button id="open-packs-side" class="btn-side">Packs, Shaders &amp; Mods</button>
+        <div id="side-shader-info" class="side-pack-meta">Shader: VANILLA &bull; 0 packs</div>
+      </div>
+      <h3>Controls</h3>
+      <ul>
+        <li><span>WASD</span> Move</li><li><span>Mouse</span> Look around</li>
+        <li><span>Space</span> Jump</li><li><span>Shift</span> Sprint</li>
+        <li><span>F5 / C</span> First / third / front camera</li>
+        <li><span>E</span> Inventory &amp; crafting</li>
+        <li><span>T</span> Chat (/shader, /packs)</li>
+        <li><span>Left click</span> Break block / hit mob</li>
+        <li><span>Right click</span> Place block / use</li>
+        <li><span>1-9 / Wheel</span> Select hotbar slot</li>
+        <li><span>Esc</span> Pause / close UI</li>
+      </ul>
+      <h3>What's inside</h3>
+      <p>Biomes, caves, ores, villages, temples, shipwrecks, mineshafts, trees, day &amp; night, real resource/shader/datapack/modpack loading, 3D mobs, and Nether &amp; End dimensions.</p>
+      <p class="note">Runs 100% in WebAssembly. Desktop also auto-loads packs from <code>packs/</code>.</p>
+      <div id="status"><span class="dot"></span> <span id="statustext">Loading world...</span></div>
+    </div>
+  </div>
+  <script src="/game.js"></script>
+</body>
+</html>
