@@ -146,6 +146,11 @@ pub fn resolve_mob(raw: &str) -> Option<MobKind> {
         "fox" => Some(MobKind::Fox),
         "bee" => Some(MobKind::Bee),
         "phantom" => Some(MobKind::Phantom),
+        "panda" => Some(MobKind::Panda),
+        "allay" => Some(MobKind::Allay),
+        "wandering_trader" | "trader" => Some(MobKind::WanderingTrader),
+        "guardian" => Some(MobKind::Guardian),
+        "warden" => Some(MobKind::Warden),
         _ => None,
     }
 }
@@ -221,10 +226,11 @@ pub fn autocomplete(input: &str) -> Option<String> {
         .into_iter()
         .find(|s| s.to_ascii_lowercase().starts_with(&ql)),
         "/summon" => [
-            "cow", "sheep", "pig", "chicken", "wolf", "fox", "bee", "squid", "villager",
-            "zombie", "skeleton", "creeper", "spider", "phantom", "enderman",
-            "slime", "blaze", "ghast", "wither_skeleton", "wither", "piglin",
-            "zombified_piglin", "polar_bear", "parrot", "ender_dragon", "iron_golem", "snow_golem", "tnt",
+            "cow", "sheep", "pig", "chicken", "wolf", "fox", "bee", "panda", "allay", "squid",
+            "villager", "wandering_trader", "zombie", "skeleton", "creeper", "spider", "phantom",
+            "guardian", "enderman", "slime", "blaze", "ghast", "wither_skeleton", "wither",
+            "warden", "piglin", "zombified_piglin", "polar_bear", "parrot", "ender_dragon",
+            "iron_golem", "snow_golem", "tnt",
         ]
         .into_iter()
         .find(|s| s.starts_with(&ql)),

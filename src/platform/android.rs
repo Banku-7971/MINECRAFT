@@ -6,7 +6,7 @@
 //! `present`, and `Audio` renders 22050 Hz mono PCM directly for `AudioTrack`.
 
 use crate::platform::{Event, Platform};
-use crate::render::{Framebuffer, H, W};
+use crate::render::{Framebuffer, H, OUT_H, OUT_W, W};
 use crate::sound::{Audio, Sfx};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -32,7 +32,7 @@ fn quit_flag() -> &'static Mutex<bool> {
 }
 
 fn frame_argb() -> &'static Mutex<Vec<i32>> {
-    FRAME_ARGB.get_or_init(|| Mutex::new(vec![0; W * H]))
+    FRAME_ARGB.get_or_init(|| Mutex::new(vec![0; OUT_W * OUT_H]))
 }
 
 fn audio_mixer() -> &'static Mutex<Audio> {

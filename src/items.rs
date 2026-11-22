@@ -122,6 +122,11 @@ pub const SPAWN_BEE: u16 = 372;
 pub const SPAWN_PHANTOM: u16 = 373;
 pub const MUSIC_DISC_CAT: u16 = 374;
 pub const MUSIC_DISC_PIGSTEP: u16 = 375;
+pub const SPAWN_PANDA: u16 = 376;
+pub const SPAWN_ALLAY: u16 = 377;
+pub const SPAWN_WANDERING_TRADER: u16 = 378;
+pub const SPAWN_GUARDIAN: u16 = 379;
+pub const SPAWN_WARDEN: u16 = 380;
 
 pub fn name(id: u16) -> &'static str {
     match id {
@@ -183,6 +188,11 @@ pub fn name(id: u16) -> &'static str {
         SPAWN_FOX => "Fox Spawn Egg",
         SPAWN_BEE => "Bee Spawn Egg",
         SPAWN_PHANTOM => "Phantom Spawn Egg",
+        SPAWN_PANDA => "Panda Spawn Egg",
+        SPAWN_ALLAY => "Allay Spawn Egg",
+        SPAWN_WANDERING_TRADER => "Wandering Trader Spawn Egg",
+        SPAWN_GUARDIAN => "Guardian Spawn Egg",
+        SPAWN_WARDEN => "Warden Spawn Egg",
         MUSIC_DISC_CAT => "Music Disc (Cat)",
         MUSIC_DISC_PIGSTEP => "Music Disc (Pigstep)",
         _ => world::block_name(id),
@@ -313,9 +323,9 @@ pub fn creative_tab_items(tab: usize) -> &'static [u16] {
             ENDER_PEARL, BLAZE_ROD, BLAZE_POWDER, EYE_OF_ENDER, NETHER_STAR, NETHER_WART, EGG, WOOL, REDSTONE_DUST, ENCHANTED_BOOK,
         ],
         10 => &[ // Spawn Eggs
-            SPAWN_SHEEP, SPAWN_COW, SPAWN_PIG, SPAWN_CHICKEN, SPAWN_WOLF, SPAWN_FOX, SPAWN_BEE, SPAWN_SQUID, SPAWN_POLAR_BEAR, SPAWN_PARROT, SPAWN_SLIME,
-            SPAWN_ZOMBIE, SPAWN_SKELETON, SPAWN_CREEPER, SPAWN_SPIDER, SPAWN_PHANTOM, SPAWN_ENDERMAN, SPAWN_VILLAGER,
-            SPAWN_ZOMBIFIED_PIGLIN, SPAWN_PIGLIN, SPAWN_GHAST, SPAWN_BLAZE, SPAWN_WITHER_SKELETON, SPAWN_WITHER, SPAWN_ENDER_DRAGON,
+            SPAWN_SHEEP, SPAWN_COW, SPAWN_PIG, SPAWN_CHICKEN, SPAWN_WOLF, SPAWN_FOX, SPAWN_BEE, SPAWN_PANDA, SPAWN_ALLAY, SPAWN_SQUID, SPAWN_POLAR_BEAR, SPAWN_PARROT, SPAWN_SLIME,
+            SPAWN_ZOMBIE, SPAWN_SKELETON, SPAWN_CREEPER, SPAWN_SPIDER, SPAWN_PHANTOM, SPAWN_GUARDIAN, SPAWN_ENDERMAN, SPAWN_VILLAGER, SPAWN_WANDERING_TRADER,
+            SPAWN_ZOMBIFIED_PIGLIN, SPAWN_PIGLIN, SPAWN_GHAST, SPAWN_BLAZE, SPAWN_WITHER_SKELETON, SPAWN_WITHER, SPAWN_WARDEN, SPAWN_ENDER_DRAGON,
             SPAWN_IRON_GOLEM, SPAWN_SNOW_GOLEM,
         ],
         _ => &[],

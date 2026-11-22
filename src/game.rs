@@ -153,6 +153,7 @@ pub struct Game<P: Platform> {
     world: World,
     scene: Framebuffer,
     fb: Framebuffer,
+    out_fb: Framebuffer,
     pub player: Player,
     mobs: Vec<Mob>,
     drops: Vec<Drop>,
@@ -342,14 +343,16 @@ fn requires_pickaxe(b: u16) -> u8 {
 
 fn scene_dims(scale: i32) -> (usize, usize) {
     match scale {
-        1 => (480, 270),
-        2 => (320, 180),
-        3 => (240, 135),
-        _ => (160, 90),
+        0 => (960, 540),
+        1 => (640, 360),
+        2 => (480, 270),
+        _ => (320, 180),
     }
 }
 
-// Default to crisp 1:1 480x270 rendering (players can still adjust Pixel Scale in Options).
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_PIXEL_SCALE: i32 = 0;
+#[cfg(target_arch = "wasm32")]
 const DEFAULT_PIXEL_SCALE: i32 = 1;
 
 impl<P: Platform> Game<P> {
@@ -384,6 +387,7 @@ impl<P: Platform> Game<P> {
             world,
             scene: Framebuffer::new(scene_w, scene_h),
             fb: Framebuffer::new(render::W, render::H),
+            out_fb: Framebuffer::new(render::OUT_W, render::OUT_H),
             player,
             mobs,
             drops: Vec::new(),
@@ -621,10 +625,11 @@ impl<P: Platform> Game<P> {
             self.fps_timer = now;
         }
 
-        let mut frame = std::mem::replace(&mut self.fb, Framebuffer::new(render::W, render::H));
-        frame.cursor = (self.mouse_x, self.mouse_y);
-        self.plat.present(&mut frame);
-        self.fb = frame;
+        let mut out = std::mem::replace(&mut self.out_fb, Framebuffer::new(render::OUT_W, render::OUT_H));
+        render::composite_ui_2x(&self.fb, &mut out);
+        out.cursor = (self.mouse_x * 2, self.mouse_y * 2);
+        self.plat.present(&mut out);
+        self.out_fb = out;
     }
 
     // ------------------------------------------------------------------ input
@@ -1184,7 +1189,7 @@ impl<P: Platform> Game<P> {
                     Screen::Options => match i {
                         0 => { self.sound_on = !self.sound_on; self.audio.sound_on = self.sound_on; self.plat.set_sound(self.sound_on); }
                         1 => { self.music_on = !self.music_on; self.audio.music_on = self.music_on; self.plat.set_music(self.music_on); }
-                        2 => { self.pixel_scale = if self.pixel_scale >= 4 { 1 } else { self.pixel_scale + 1 }; let (sw, sh) = scene_dims(self.pixel_scale); self.scene = Framebuffer::new(sw, sh); }
+                        2 => { self.pixel_scale = (self.pixel_scale + 1) % 4; let (sw, sh) = scene_dims(self.pixel_scale); self.scene = Framebuffer::new(sw, sh); }
                         3 => { self.camera = (self.camera + 1) % 3; }
                         4 => { packs::cycle_shader_preset(); }
                         5 => {
@@ -1911,10 +1916,12 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         MobKind::Spider => Some(Sfx::Spider),
         MobKind::Creeper => Some(Sfx::Creeper),
         MobKind::Enderman | MobKind::EnderDragon => Some(Sfx::Enderman),
-        MobKind::Villager => Some(Sfx::Villager),
+        MobKind::Villager | MobKind::WanderingTrader => Some(Sfx::Villager),
         MobKind::Wolf | MobKind::Fox => Some(Sfx::Wolf),
         MobKind::Bee => Some(Sfx::Bee),
+        MobKind::Allay => Some(Sfx::Beacon),
         MobKind::Wither => Some(Sfx::Wither),
+        MobKind::Warden => Some(Sfx::Warden),
         _ => None,
     }
 }
@@ -2262,7 +2269,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 if proj <= 0.0 || proj > e_reach { continue; }
                 let cx = ox - dx * proj; let cy = oy - dy * proj; let cz = oz - dz * proj;
                 if cx * cx + cy * cy + cz * cz >= 0.85 * 0.85 { continue; }
-                if m.kind == MobKind::Villager {
+                if m.kind == MobKind::Villager || m.kind == MobKind::WanderingTrader {
                     self.ui = Ui::Trade;
                     self.mouse_right = false;
                     self.mouse_left = false;
@@ -2675,10 +2682,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
             return;
         }
-        // Spawn Eggs (322..=331, 336..=345, 367..=373)
+        // Spawn Eggs (322..=331, 336..=345, 367..=373, 376..=380)
         if (items::SPAWN_SHEEP..=items::SPAWN_VILLAGER).contains(&held.id)
             || (items::SPAWN_ZOMBIFIED_PIGLIN..=items::SPAWN_ENDER_DRAGON).contains(&held.id)
             || (items::SPAWN_IRON_GOLEM..=items::SPAWN_PHANTOM).contains(&held.id)
+            || (items::SPAWN_PANDA..=items::SPAWN_WARDEN).contains(&held.id)
         {
             let kind = match held.id {
                 items::SPAWN_SHEEP => MobKind::Sheep,
@@ -2708,6 +2716,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 items::SPAWN_FOX => MobKind::Fox,
                 items::SPAWN_BEE => MobKind::Bee,
                 items::SPAWN_PHANTOM => MobKind::Phantom,
+                items::SPAWN_PANDA => MobKind::Panda,
+                items::SPAWN_ALLAY => MobKind::Allay,
+                items::SPAWN_WANDERING_TRADER => MobKind::WanderingTrader,
+                items::SPAWN_GUARDIAN => MobKind::Guardian,
+                items::SPAWN_WARDEN => MobKind::Warden,
                 _ => MobKind::Villager,
             };
             let mx = (h.x + h.nx) as f32 + 0.5;
@@ -2719,6 +2732,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             if kind == MobKind::Wither {
                 self.plat.play(Sfx::Wither);
                 self.message = String::from("The Wither has been summoned!");
+                self.msg_timer = 3.0;
+            } else if kind == MobKind::Warden {
+                self.plat.play(Sfx::Warden);
+                self.message = String::from("The Warden has awakened!");
                 self.msg_timer = 3.0;
             }
             if self.mode == GameMode::Survival {
@@ -3500,7 +3517,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let mut xp_from_mobs = 0u32;
         for m in self.mobs.iter_mut() {
             m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace, self.mode != GameMode::Survival);
-            if matches!(m.kind, MobKind::Skeleton | MobKind::Ghast | MobKind::Blaze | MobKind::EnderDragon | MobKind::Wither)
+            if matches!(m.kind, MobKind::Skeleton | MobKind::Ghast | MobKind::Blaze | MobKind::EnderDragon | MobKind::Wither | MobKind::Warden | MobKind::Guardian)
                 && self.mode == GameMode::Survival && self.grace <= 0.0 && m.ranged_cd <= 0.0
             {
                 let dx_p = self.player.x - m.x;
@@ -3509,8 +3526,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 let d = (dx_p * dx_p + dy_p * dy_p + dz_p * dz_p).sqrt();
                 let max_r = if matches!(m.kind, MobKind::Ghast | MobKind::EnderDragon | MobKind::Wither) { 38.0 } else { 18.0 };
                 if d > 3.5 && d < max_r {
-                    m.ranged_cd = if m.kind == MobKind::Wither { 2.0 } else if m.kind == MobKind::EnderDragon { 2.8 } else { 3.2 };
-                    let sp = if m.kind == MobKind::Skeleton { 16.0 } else { 13.0 };
+                    m.ranged_cd = if m.kind == MobKind::Wither { 2.0 } else if m.kind == MobKind::Warden { 2.4 } else if m.kind == MobKind::EnderDragon { 2.8 } else { 3.2 };
+                    let sp = if m.kind == MobKind::Skeleton { 16.0 } else if m.kind == MobKind::Warden { 19.0 } else { 13.0 };
                     let is_fb = m.kind != MobKind::Skeleton;
                     self.mob_projectiles.push((m.x, m.y + 1.4, m.z, dx_p / d * sp, dy_p / d * sp + if is_fb { 0.0 } else { 1.5 }, dz_p / d * sp, is_fb));
                 }
@@ -4133,7 +4150,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let shader = packs::active_shader();
         self.scene.clear();
         render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader, false, None);
-        render::upscale(&self.scene, &mut self.fb);
+        render::upscale(&self.scene, &mut self.out_fb);
+        self.fb.clear_transparent();
         render::draw_title_overlay(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
@@ -4150,6 +4168,16 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     fn draw_multiplayer(&mut self) {
         let hover = self.hover_index();
         let status = format!("{}  ({})", self.net_status, if self.net.hosting { "hosting" } else { "offline" });
+        let pan_yaw = self.title_t * 0.14;
+        let pan_y = (self.spawn.1 + 12.0).clamp(44.0, 80.0);
+        let cam = Cam::from(pan_yaw, -0.14, self.spawn.0, pan_y, self.spawn.2);
+        let atlas = Textures::atlas();
+        let shader = packs::active_shader();
+        self.scene.clear();
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader, false, None);
+        render::upscale(&self.scene, &mut self.out_fb);
+        self.out_fb.blur_dim(3, 95);
+        self.fb.clear_transparent();
         render::draw_multiplayer_screen(&mut self.fb, &self.net_addr, &status, hover, self.net.hosting);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
@@ -4158,6 +4186,15 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     fn draw_options(&mut self) {
         let hover = self.hover_index();
         let sh = packs::active_shader();
+        let pan_yaw = self.title_t * 0.14;
+        let pan_y = (self.spawn.1 + 12.0).clamp(44.0, 80.0);
+        let cam = Cam::from(pan_yaw, -0.14, self.spawn.0, pan_y, self.spawn.2);
+        let atlas = Textures::atlas();
+        self.scene.clear();
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &sh, false, None);
+        render::upscale(&self.scene, &mut self.out_fb);
+        self.out_fb.blur_dim(3, 95);
+        self.fb.clear_transparent();
         render::draw_options_screen(&mut self.fb, self.sound_on, self.music_on, self.pixel_scale, self.camera, &sh.name, packs::pack_count(), hover);
         self.plat.set_capture(false);
         self.plat.set_cursor(true);
@@ -4192,6 +4229,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             Cam::with_fov(self.player.yaw + std::f32::consts::PI, -self.player.pitch, cam_x, cam_y, cam_z, fov_mul)
         };
         self.scene.clear();
+        self.fb.clear_transparent();
         self.fb.cursor = (self.mouse_x, self.mouse_y);
         let mining_overlay = self.mining.map(|((mx, my, mz), prog)| {
             (mx, my, mz, (prog * 10.0).clamp(0.0, 9.0) as u8)
@@ -4261,7 +4299,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 render::draw_beacon_beam(&mut self.scene, &cam, bx as f32 + 0.5, by as f32 + 0.5, bz as f32 + 0.5, self.tick);
             }
         }
-        render::upscale(&self.scene, &mut self.fb);
+        render::upscale(&self.scene, &mut self.out_fb);
+        if shader.tonemap_aces {
+            self.out_fb.apply_vignette(0.14);
+        }
 
         if self.weather > 0 && self.world.dim == Dimension::Overworld {
             let dim_tint = if self.weather == 2 { 55 } else { 32 };
@@ -4287,6 +4328,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.mobs.iter().find(|m| m.kind == MobKind::EnderDragon).map(|m| m.hp)
             } else { None };
             let wither_hp = self.mobs.iter().find(|m| m.kind == MobKind::Wither).map(|m| m.hp);
+            let warden_hp = self.mobs.iter().find(|m| m.kind == MobKind::Warden).map(|m| m.hp);
             let shield_blk = self.is_shield_blocking();
             let armor_pts = self.player.armor_points();
             let cur_biome = self.world.biome(self.player.x.floor() as i32, self.player.z.floor() as i32);
@@ -4313,6 +4355,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.world.dim,
                 dragon_hp,
                 wither_hp,
+                warden_hp,
                 self.beacon_buff,
                 (self.player.x, self.player.y, self.player.z),
                 self.fps,
@@ -4337,7 +4380,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
         }
         if !matches!(self.ui, Ui::None | Ui::Chat | Ui::Death) {
-            self.fb.blur_dim(2, 95);
+            self.out_fb.blur_dim(4, 95);
         }
         if self.ui == Ui::Creative {
             let list = self.creative_items_filtered();

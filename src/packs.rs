@@ -53,10 +53,14 @@ pub struct PackRegistry {
 
 impl PackRegistry {
     fn new() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        let (shader_preset_idx, active_shader) = (5, ShaderConfig::preset(5));
+        #[cfg(target_arch = "wasm32")]
+        let (shader_preset_idx, active_shader) = (0, ShaderConfig::vanilla());
         Self {
             packs: Vec::new(),
-            active_shader: ShaderConfig::vanilla(),
-            shader_preset_idx: 0,
+            active_shader,
+            shader_preset_idx,
             active_textures: Textures::new(),
             mod_downloads: Vec::new(),
             custom_sounds: Vec::new(),
@@ -80,7 +84,7 @@ pub fn active_shader() -> ShaderConfig {
 
 pub fn cycle_shader_preset() -> ShaderConfig {
     if let Ok(mut r) = registry().write() {
-        r.shader_preset_idx = (r.shader_preset_idx + 1) % 5;
+        r.shader_preset_idx = (r.shader_preset_idx + 1) % 6;
         r.active_shader = ShaderConfig::preset(r.shader_preset_idx);
         return r.active_shader.clone();
     }
@@ -89,7 +93,7 @@ pub fn cycle_shader_preset() -> ShaderConfig {
 
 pub fn set_shader_preset(idx: usize) -> ShaderConfig {
     if let Ok(mut r) = registry().write() {
-        r.shader_preset_idx = idx % 5;
+        r.shader_preset_idx = idx % 6;
         r.active_shader = ShaderConfig::preset(r.shader_preset_idx);
         return r.active_shader.clone();
     }

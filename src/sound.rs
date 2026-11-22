@@ -50,6 +50,7 @@ pub enum Sfx {
     Villager = 36,
     Wolf = 37,
     Bee = 38,
+    Warden = 39,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -134,6 +135,7 @@ impl Audio {
             (Sfx::Villager, synth_villager()),
             (Sfx::Wolf, synth_wolf()),
             (Sfx::Bee, synth_bee()),
+            (Sfx::Warden, synth_warden()),
         ];
         Audio {
             music_on: true,
@@ -498,6 +500,18 @@ fn synth_bee() -> Vec<i16> {
         let t = i as f32 / SAMPLE_RATE as f32;
         let f = 195.0 + (t * 14.0 * 6.283).sin() * 14.0;
         let s = ((t * f * 6.283).sin() * 0.55 + (t * f * 2.0 * 6.283).sin() * 0.30) * env(t, 0.03, 0.14) * 0.24;
+        (s.clamp(-1.0, 1.0) * 32000.0) as i16
+    }).collect()
+}
+
+fn synth_warden() -> Vec<i16> {
+    let n = (0.72 * SAMPLE_RATE as f32) as usize;
+    (0..n).map(|i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let pulse = 0.6 + 0.4 * (t * 6.5 * 6.283).sin();
+        let sub = (t * 52.0 * 6.283).sin() * 0.58 + (t * 78.0 * 6.283).sin() * 0.30;
+        let sculk = (t * 240.0 * 6.283).sin() * (-t * 5.0).exp() * 0.25;
+        let s = (sub * pulse + sculk) * env(t, 0.03, 0.24) * 0.52;
         (s.clamp(-1.0, 1.0) * 32000.0) as i16
     }).collect()
 }
