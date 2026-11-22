@@ -25,6 +25,11 @@ pub enum MobKind {
     EnderDragon,
     IronGolem,
     SnowGolem,
+    Wither,
+    Squid,
+    Fox,
+    Bee,
+    Phantom,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -53,6 +58,11 @@ pub enum FaceArt {
     EnderDragon,
     IronGolem,
     SnowGolem,
+    Wither,
+    Squid,
+    Fox,
+    Bee,
+    Phantom,
 }
 
 #[derive(Copy, Clone)]
@@ -80,6 +90,8 @@ impl MobKind {
             MobKind::WitherSkeleton => 14, MobKind::Slime => 15, MobKind::Wolf => 16,
             MobKind::PolarBear => 17, MobKind::Parrot => 18, MobKind::EnderDragon => 19,
             MobKind::IronGolem => 20, MobKind::SnowGolem => 21,
+            MobKind::Wither => 22, MobKind::Squid => 23, MobKind::Fox => 24,
+            MobKind::Bee => 25, MobKind::Phantom => 26,
         }
     }
 
@@ -92,6 +104,8 @@ impl MobKind {
             14 => MobKind::WitherSkeleton, 15 => MobKind::Slime, 16 => MobKind::Wolf,
             17 => MobKind::PolarBear, 18 => MobKind::Parrot, 19 => MobKind::EnderDragon,
             20 => MobKind::IronGolem, 21 => MobKind::SnowGolem,
+            22 => MobKind::Wither, 23 => MobKind::Squid, 24 => MobKind::Fox,
+            25 => MobKind::Bee, 26 => MobKind::Phantom,
             _ => MobKind::Sheep,
         }
     }
@@ -120,6 +134,11 @@ impl MobKind {
             MobKind::EnderDragon => "Ender Dragon",
             MobKind::IronGolem => "Iron Golem",
             MobKind::SnowGolem => "Snow Golem",
+            MobKind::Wither => "Wither",
+            MobKind::Squid => "Squid",
+            MobKind::Fox => "Fox",
+            MobKind::Bee => "Bee",
+            MobKind::Phantom => "Phantom",
         }
     }
 
@@ -129,12 +148,16 @@ impl MobKind {
             MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider
                 | MobKind::Enderman | MobKind::Piglin | MobKind::Ghast
                 | MobKind::Blaze | MobKind::WitherSkeleton | MobKind::Slime
-                | MobKind::EnderDragon
+                | MobKind::EnderDragon | MobKind::Wither | MobKind::Phantom
         )
     }
 
     pub fn flying(self) -> bool {
-        matches!(self, MobKind::Ghast | MobKind::Blaze | MobKind::Parrot | MobKind::EnderDragon)
+        matches!(
+            self,
+            MobKind::Ghast | MobKind::Blaze | MobKind::Parrot | MobKind::EnderDragon
+                | MobKind::Wither | MobKind::Bee | MobKind::Phantom | MobKind::Squid
+        )
     }
 
     pub fn health(self) -> f32 {
@@ -142,13 +165,14 @@ impl MobKind {
             MobKind::Spider | MobKind::Piglin | MobKind::Slime => 16.0,
             MobKind::Enderman => 40.0,
             MobKind::PolarBear => 30.0,
-            MobKind::Ghast => 10.0,
+            MobKind::Ghast | MobKind::Squid | MobKind::Bee | MobKind::Fox => 10.0,
             MobKind::EnderDragon => 200.0,
+            MobKind::Wither => 300.0,
             MobKind::IronGolem => 100.0,
             MobKind::Chicken | MobKind::Parrot | MobKind::SnowGolem => 4.0,
             MobKind::Wolf => 8.0,
             MobKind::Villager | MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper
-                | MobKind::ZombifiedPiglin | MobKind::Blaze | MobKind::WitherSkeleton => 20.0,
+                | MobKind::ZombifiedPiglin | MobKind::Blaze | MobKind::WitherSkeleton | MobKind::Phantom => 20.0,
             _ => 10.0,
         }
     }
@@ -177,20 +201,26 @@ impl MobKind {
             MobKind::EnderDragon => 304,     // Nether Star / Dragon trophy
             MobKind::IronGolem => 279,       // Iron Ingot
             MobKind::SnowGolem => world::SNOW,
+            MobKind::Wither => 304,          // Nether Star
+            MobKind::Squid => 278,           // Fish
+            MobKind::Fox => 285,             // Feather
+            MobKind::Bee => 270,             // Apple / Sweet
+            MobKind::Phantom => 286,         // Leather (Membrane)
         }
     }
 
     pub fn height(self) -> f32 {
         match self {
-            MobKind::Chicken | MobKind::Parrot => 0.7,
-            MobKind::Spider | MobKind::Pig | MobKind::Wolf => 0.9,
-            MobKind::Slime => 1.0,
+            MobKind::Chicken | MobKind::Parrot | MobKind::Bee => 0.7,
+            MobKind::Spider | MobKind::Pig | MobKind::Wolf | MobKind::Fox | MobKind::Phantom => 0.9,
+            MobKind::Slime | MobKind::Squid => 1.0,
             MobKind::PolarBear => 1.4,
             MobKind::Sheep | MobKind::Cow => 1.35,
             MobKind::SnowGolem => 1.9,
             MobKind::WitherSkeleton => 2.4,
             MobKind::IronGolem => 2.7,
             MobKind::Enderman => 2.9,
+            MobKind::Wither => 3.2,
             MobKind::Ghast => 3.4,
             MobKind::EnderDragon => 3.8,
             _ => 1.8,
@@ -497,6 +527,57 @@ pub fn mob_parts(kind: MobKind, walk: f32, airborne: bool) -> Vec<Part3D> {
             Part3D { cx: -0.44, cy: 1.08, cz: 0.08, hx: 0.20, hy: 0.05, hz: 0.05, pivot_y: 1.12, swing: -s * 0.3, col: [112, 76, 44], col_alt: [86, 56, 32], face: FaceArt::None },
             Part3D { cx: 0.44, cy: 1.08, cz: 0.08, hx: 0.20, hy: 0.05, hz: 0.05, pivot_y: 1.12, swing: s * 0.3, col: [112, 76, 44], col_alt: [86, 56, 32], face: FaceArt::None },
         ],
+        MobKind::Wither => {
+            let hover = (walk * 0.5).sin() * 0.14;
+            vec![
+                // Center boss head + two flanking heads + bone ribcage + spine tail
+                Part3D { cx: 0.0, cy: 2.65 + hover, cz: 0.08, hx: 0.28, hy: 0.28, hz: 0.28, pivot_y: 2.37, swing: 0.0, col: [34, 34, 40], col_alt: [120, 175, 255], face: FaceArt::Wither },
+                Part3D { cx: -0.64, cy: 2.45 + hover, cz: 0.02, hx: 0.20, hy: 0.20, hz: 0.20, pivot_y: 2.25, swing: 0.0, col: [32, 32, 38], col_alt: [105, 165, 250], face: FaceArt::Wither },
+                Part3D { cx: 0.64, cy: 2.45 + hover, cz: 0.02, hx: 0.20, hy: 0.20, hz: 0.20, pivot_y: 2.25, swing: 0.0, col: [32, 32, 38], col_alt: [105, 165, 250], face: FaceArt::Wither },
+                Part3D { cx: 0.0, cy: 2.18 + hover, cz: 0.0, hx: 0.58, hy: 0.10, hz: 0.12, pivot_y: 2.18, swing: 0.0, col: [42, 42, 48], col_alt: [28, 28, 34], face: FaceArt::None },
+                Part3D { cx: 0.0, cy: 1.56 + hover, cz: 0.0, hx: 0.16, hy: 0.58, hz: 0.14, pivot_y: 1.56, swing: 0.0, col: [36, 36, 42], col_alt: [24, 24, 30], face: FaceArt::None },
+                Part3D { cx: 0.0, cy: 1.72 + hover, cz: 0.0, hx: 0.42, hy: 0.08, hz: 0.18, pivot_y: 1.72, swing: 0.0, col: [48, 48, 56], col_alt: [30, 30, 36], face: FaceArt::None },
+                Part3D { cx: 0.0, cy: 1.42 + hover, cz: 0.0, hx: 0.36, hy: 0.08, hz: 0.16, pivot_y: 1.42, swing: 0.0, col: [48, 48, 56], col_alt: [30, 30, 36], face: FaceArt::None },
+                Part3D { cx: 0.0, cy: 0.85 + hover, cz: -0.14, hx: 0.12, hy: 0.38, hz: 0.12, pivot_y: 1.15, swing: s * 0.25, col: [32, 32, 38], col_alt: [22, 22, 26], face: FaceArt::None },
+            ]
+        }
+        MobKind::Squid => vec![
+            Part3D { cx: 0.0, cy: 0.82, cz: 0.0, hx: 0.30, hy: 0.38, hz: 0.30, pivot_y: 0.82, swing: 0.0, col: [44, 62, 108], col_alt: [32, 46, 86], face: FaceArt::Squid },
+            Part3D { cx: -0.16, cy: 0.28, cz: -0.16, hx: 0.05, hy: 0.24, hz: 0.05, pivot_y: 0.50, swing: s * 0.45, col: [36, 52, 94], col_alt: [26, 38, 74], face: FaceArt::None },
+            Part3D { cx: 0.16, cy: 0.28, cz: -0.16, hx: 0.05, hy: 0.24, hz: 0.05, pivot_y: 0.50, swing: -s * 0.45, col: [36, 52, 94], col_alt: [26, 38, 74], face: FaceArt::None },
+            Part3D { cx: -0.16, cy: 0.28, cz: 0.16, hx: 0.05, hy: 0.24, hz: 0.05, pivot_y: 0.50, swing: -s * 0.45, col: [36, 52, 94], col_alt: [26, 38, 74], face: FaceArt::None },
+            Part3D { cx: 0.16, cy: 0.28, cz: 0.16, hx: 0.05, hy: 0.24, hz: 0.05, pivot_y: 0.50, swing: s * 0.45, col: [36, 52, 94], col_alt: [26, 38, 74], face: FaceArt::None },
+        ],
+        MobKind::Fox => vec![
+            Part3D { cx: 0.0, cy: 0.44, cz: 0.0, hx: 0.20, hy: 0.18, hz: 0.38, pivot_y: 0.44, swing: 0.0, col: [216, 106, 36], col_alt: [242, 236, 224], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.52, cz: 0.46, hx: 0.19, hy: 0.16, hz: 0.18, pivot_y: 0.44, swing: 0.0, col: [222, 114, 40], col_alt: [28, 26, 28], face: FaceArt::Fox },
+            Part3D { cx: 0.0, cy: 0.46, cz: 0.68, hx: 0.08, hy: 0.06, hz: 0.09, pivot_y: 0.44, swing: 0.0, col: [245, 240, 230], col_alt: [24, 24, 28], face: FaceArt::None },
+            Part3D { cx: -0.12, cy: 0.72, cz: 0.44, hx: 0.05, hy: 0.07, hz: 0.04, pivot_y: 0.65, swing: 0.0, col: [44, 34, 30], col_alt: [216, 106, 36], face: FaceArt::None },
+            Part3D { cx: 0.12, cy: 0.72, cz: 0.44, hx: 0.05, hy: 0.07, hz: 0.04, pivot_y: 0.65, swing: 0.0, col: [44, 34, 30], col_alt: [216, 106, 36], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.42, cz: -0.58, hx: 0.12, hy: 0.11, hz: 0.26, pivot_y: 0.44, swing: s * 0.25, col: [242, 238, 228], col_alt: [216, 106, 36], face: FaceArt::None },
+            Part3D { cx: -0.12, cy: 0.16, cz: 0.24, hx: 0.06, hy: 0.16, hz: 0.06, pivot_y: 0.32, swing: s, col: [44, 34, 30], col_alt: [30, 24, 22], face: FaceArt::None },
+            Part3D { cx: 0.12, cy: 0.16, cz: 0.24, hx: 0.06, hy: 0.16, hz: 0.06, pivot_y: 0.32, swing: -s, col: [44, 34, 30], col_alt: [30, 24, 22], face: FaceArt::None },
+            Part3D { cx: -0.12, cy: 0.16, cz: -0.24, hx: 0.06, hy: 0.16, hz: 0.06, pivot_y: 0.32, swing: -s, col: [44, 34, 30], col_alt: [30, 24, 22], face: FaceArt::None },
+            Part3D { cx: 0.12, cy: 0.16, cz: -0.24, hx: 0.06, hy: 0.16, hz: 0.06, pivot_y: 0.32, swing: s, col: [44, 34, 30], col_alt: [30, 24, 22], face: FaceArt::None },
+        ],
+        MobKind::Bee => {
+            let flap = if airborne { (walk * 3.5).sin() * 0.65 } else { 0.0 };
+            vec![
+                Part3D { cx: 0.0, cy: 0.48, cz: 0.0, hx: 0.20, hy: 0.20, hz: 0.28, pivot_y: 0.48, swing: 0.0, col: [244, 198, 42], col_alt: [44, 34, 28], face: FaceArt::Bee },
+                Part3D { cx: -0.26, cy: 0.68, cz: 0.0, hx: 0.18, hy: 0.03, hz: 0.14, pivot_y: 0.66, swing: flap, col: [224, 242, 250], col_alt: [190, 215, 232], face: FaceArt::None },
+                Part3D { cx: 0.26, cy: 0.68, cz: 0.0, hx: 0.18, hy: 0.03, hz: 0.14, pivot_y: 0.66, swing: -flap, col: [224, 242, 250], col_alt: [190, 215, 232], face: FaceArt::None },
+            ]
+        }
+        MobKind::Phantom => {
+            let flap = (walk * 1.4).sin() * 0.45;
+            vec![
+                Part3D { cx: 0.0, cy: 0.56, cz: 0.34, hx: 0.20, hy: 0.12, hz: 0.18, pivot_y: 0.56, swing: 0.0, col: [66, 78, 126], col_alt: [110, 248, 86], face: FaceArt::Phantom },
+                Part3D { cx: 0.0, cy: 0.54, cz: -0.04, hx: 0.22, hy: 0.10, hz: 0.32, pivot_y: 0.54, swing: 0.0, col: [72, 86, 138], col_alt: [198, 194, 180], face: FaceArt::None },
+                Part3D { cx: -0.58, cy: 0.54, cz: 0.0, hx: 0.38, hy: 0.04, hz: 0.26, pivot_y: 0.54, swing: flap, col: [58, 70, 118], col_alt: [44, 54, 96], face: FaceArt::None },
+                Part3D { cx: 0.58, cy: 0.54, cz: 0.0, hx: 0.38, hy: 0.04, hz: 0.26, pivot_y: 0.54, swing: -flap, col: [58, 70, 118], col_alt: [44, 54, 96], face: FaceArt::None },
+                Part3D { cx: 0.0, cy: 0.52, cz: -0.54, hx: 0.07, hy: 0.05, hz: 0.26, pivot_y: 0.52, swing: -flap * 0.5, col: [64, 76, 124], col_alt: [46, 56, 98], face: FaceArt::None },
+            ]
+        }
     }
 }
 
@@ -643,7 +724,15 @@ impl Mob {
                 self.yaw = ang;
             }
             let g = world.highest_ground(self.x.floor() as i32, self.z.floor() as i32) as f32;
-            let hover = g + if self.kind == MobKind::Ghast { 5.5 } else { 2.4 };
+            let hover = if self.kind == MobKind::Squid {
+                (world::SEA as f32 - 1.5).min(g + 0.5)
+            } else if self.kind == MobKind::Ghast || self.kind == MobKind::Wither {
+                g + 5.5
+            } else if self.kind == MobKind::Phantom {
+                if hostile_active && dist < 24.0 { py + 2.5 } else { g + 7.5 }
+            } else {
+                g + 2.2
+            };
             self.vy = (hover - self.y).clamp(-2.5, 2.5);
             self.x += (self.vx + self.kb_vx) * dt;
             self.y += self.vy * dt;
@@ -811,22 +900,24 @@ pub fn biome_mob(biome: Biome, dim: Dimension, seed: u32, day: f32) -> MobKind {
         Dimension::End => MobKind::Enderman,
         Dimension::Overworld => {
             if day < 0.42 && seed % 2 == 0 && biome != Biome::MushroomIsland {
-                return match (seed >> 3) % 5 {
+                return match (seed >> 3) % 6 {
                     0 => MobKind::Zombie,
                     1 => MobKind::Skeleton,
                     2 => MobKind::Creeper,
                     3 => MobKind::Spider,
+                    4 => MobKind::Phantom,
                     _ => if biome == Biome::Swamp { MobKind::Slime } else { MobKind::Enderman },
                 };
             }
             match biome {
                 Biome::Snowy => if seed % 3 == 0 { MobKind::PolarBear } else { MobKind::Wolf },
-                Biome::Taiga => match (seed >> 3) % 3 { 0 => MobKind::Wolf, 1 => MobKind::Sheep, _ => MobKind::Pig },
+                Biome::Taiga => match (seed >> 3) % 4 { 0 => MobKind::Wolf, 1 => MobKind::Fox, 2 => MobKind::Sheep, _ => MobKind::Pig },
                 Biome::Jungle => match (seed >> 3) % 3 { 0 => MobKind::Parrot, 1 => MobKind::Chicken, _ => MobKind::Pig },
-                Biome::Swamp => match (seed >> 3) % 3 {
-                    0 => if day < 0.42 { MobKind::Slime } else { MobKind::Chicken },
+                Biome::Swamp => match (seed >> 3) % 4 {
+                    0 => if day < 0.42 { MobKind::Slime } else { MobKind::Squid },
                     1 => MobKind::Sheep,
-                    _ => MobKind::Pig,
+                    2 => MobKind::Pig,
+                    _ => MobKind::Chicken,
                 },
                 Biome::MushroomIsland => MobKind::Cow,
                 Biome::Desert | Biome::Badlands => {
@@ -840,11 +931,12 @@ pub fn biome_mob(biome: Biome, dim: Dimension, seed: u32, day: f32) -> MobKind {
                         }
                     }
                 }
-                _ => match (seed >> 3) % 5 {
+                _ => match (seed >> 3) % 6 {
                     0 => MobKind::Sheep,
                     1 => MobKind::Cow,
                     2 => MobKind::Pig,
                     3 => MobKind::Chicken,
+                    4 => MobKind::Bee,
                     _ => if biome == Biome::Forest || biome == Biome::DarkForest { MobKind::Wolf } else { MobKind::Sheep },
                 },
             }

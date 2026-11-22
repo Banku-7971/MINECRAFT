@@ -41,6 +41,12 @@ pub enum Sfx {
     Enderman = 27,
     Door = 28,
     LevelUp = 29,
+    ShieldBlock = 30,
+    Totem = 31,
+    Beacon = 32,
+    Wither = 33,
+    JukeboxCat = 34,
+    JukeboxPigstep = 35,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -116,6 +122,12 @@ impl Audio {
             (Sfx::Enderman, synth_enderman()),
             (Sfx::Door, synth_thud(90.0, 0.18, 0.40)),
             (Sfx::LevelUp, synth_arp()),
+            (Sfx::ShieldBlock, synth_thud(310.0, 0.14, 0.52)),
+            (Sfx::Totem, synth_chime_chord(&[0, 4, 7, 12, 16], 1.1)),
+            (Sfx::Beacon, synth_chime_chord(&[-12, 0, 7, 12], 1.4)),
+            (Sfx::Wither, synth_growl(68.0, 0.95)),
+            (Sfx::JukeboxCat, synth_jukebox(false)),
+            (Sfx::JukeboxPigstep, synth_jukebox(true)),
         ];
         Audio {
             music_on: true,
@@ -544,29 +556,79 @@ fn note_hz(semi: i32) -> f32 {
     440.0 * 2f32.powf((semi as f32 - 9.0) / 12.0)
 }
 
-/// Calm C418-inspired looping ambient soundtrack (sparse warm felt piano + lush room tail).
+fn synth_chime_chord(semis: &[i32], dur: f32) -> Vec<i16> {
+    let n = (dur * SAMPLE_RATE as f32) as usize;
+    let mut out = vec![0i16; n];
+    for (i, s) in out.iter_mut().enumerate() {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let a = env(t, 0.02, dur * 0.45);
+        let mut acc = 0.0f32;
+        for (k, &semi) in semis.iter().enumerate() {
+            let delay = k as f32 * 0.04;
+            if t >= delay {
+                let f = note_hz(semi);
+                acc += ((t - delay) * f * 6.283).sin() * 0.28 + ((t - delay) * f * 2.0 * 6.283).sin() * 0.08;
+            }
+        }
+        *s = (acc * a * 18000.0).clamp(-32000.0, 32000.0) as i16;
+    }
+    out
+}
+
+fn synth_jukebox(pigstep: bool) -> Vec<i16> {
+    let dur = 7.2f32;
+    let n = (dur * SAMPLE_RATE as f32) as usize;
+    let mut out = vec![0.0f32; n];
+    let notes_cat: [i32; 24] = [0, 4, 7, 12, 11, 7, 4, 0, 2, 5, 9, 14, 12, 9, 5, 2, 4, 7, 11, 16, 14, 12, 9, 7];
+    let notes_pig: [i32; 24] = [-12, -5, 0, -5, 3, -5, 0, -5, -10, -3, 2, -3, 5, 2, -3, 0, -8, -1, 4, -1, 7, 4, 0, -5];
+    let seq = if pigstep { &notes_pig } else { &notes_cat };
+    let step = dur / seq.len() as f32;
+    for (idx, &semi) in seq.iter().enumerate() {
+        let start = (idx as f32 * step * SAMPLE_RATE as f32) as usize;
+        let len = (step * 1.15 * SAMPLE_RATE as f32) as usize;
+        let f = note_hz(semi);
+        let bass = note_hz(semi - 12);
+        for j in 0..len {
+            if start + j >= n { break; }
+            let t = j as f32 / SAMPLE_RATE as f32;
+            let a = env(t, 0.01, step * 0.55);
+            let lead = if pigstep {
+                (t * f * 6.283).sin().signum() * 0.35 + (t * bass * 6.283).sin() * 0.45
+            } else {
+                (t * f * 6.283).sin() * 0.55 + (t * f * 2.0 * 6.283).sin() * 0.18
+            };
+            out[start + j] += lead * a * 0.32;
+        }
+    }
+    out.iter().map(|v| (v.clamp(-1.0, 1.0) * 26000.0) as i16).collect()
+}
+
+/// Calm C418-inspired looping ambient soundtrack (24-bar felt piano + sub-pad + shimmer + hall reverb).
 fn render_music() -> Vec<i16> {
     const BPM: f32 = 58.0;
     let beat = 60.0 / BPM;
     let step = beat;
-    let bars = 12usize;
+    let bars = 24usize;
     let steps = bars * 4;
     let total = (steps as f32 * step * SAMPLE_RATE as f32) as usize;
     let mut buf = vec![0.0f32; total];
 
-    let chords: [[i32; 3]; 6] = [
-        [-7, -3, 0], // Fmaj / C-root warmth
+    let chords: [[i32; 3]; 8] = [
+        [-7, -3, 0],
         [-12, -5, 0],
         [-3, 0, 4],
         [-7, -3, 2],
         [-10, -3, 0],
         [-5, -1, 2],
+        [-8, -3, 0],
+        [-5, 0, 4],
     ];
     // Sparse contemplative melody (-99 = rest)
-    let melody: [i32; 24] = [
+    let melody: [i32; 32] = [
         12, 7, -99, 4, 9, -99, 7, -99,
         16, 12, -99, 9, 7, -99, 4, 0,
         7, 9, -99, 12, 7, -99, 4, -99,
+        14, 12, 9, -99, 7, 4, 0, -99,
     ];
 
     let add_tone = |buf: &mut Vec<f32>, start: usize, freq: f32, dur: f32, vol: f32, bright: f32| {

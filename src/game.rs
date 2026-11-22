@@ -275,6 +275,9 @@ pub struct Game<P: Platform> {
     swimming: bool,
     spawned_villages: HashSet<(i32, i32)>,
     particles: Vec<entities::Particle>,
+    beacons: HashSet<(u8, i32, i32, i32)>,
+    jukeboxes: HashMap<(u8, i32, i32, i32), u16>,
+    beacon_buff: bool,
 }
 
 fn collides(world: &mut World, x: f32, y: f32, z: f32) -> bool {
@@ -503,6 +506,9 @@ impl<P: Platform> Game<P> {
             swimming: false,
             spawned_villages: HashSet::new(),
             particles: Vec::with_capacity(128),
+            beacons: HashSet::new(),
+            jukeboxes: HashMap::new(),
+            beacon_buff: false,
         };
         game.load_world();
         #[cfg(not(target_arch = "wasm32"))]
@@ -1016,6 +1022,22 @@ impl<P: Platform> Game<P> {
         self.levers.clear();
         self.redstone_sources.clear();
         self.spawned_villages.clear();
+        self.beacons.clear();
+        self.jukeboxes.clear();
+        self.beacon_buff = false;
+    }
+
+    fn is_beacon_pyramid(world: &mut World, x: i32, y: i32, z: i32) -> bool {
+        if y < 2 { return false; }
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                let b = world.get(x + dx, y - 1, z + dz);
+                if !matches!(b, world::IRON_BLOCK | world::GOLD_BLOCK | world::DIAMOND_BLOCK | world::EMERALD_BLOCK | world::LAPIS_BLOCK) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     fn start_singleplayer(&mut self) {
@@ -1920,7 +1942,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             self.mining = None;
             let held_id = self.player.held().id;
             let ench = self.player.enchants.get(&held_id).copied().unwrap_or(0) as f32;
-            let str_bonus = if self.potion_strength > 0.0 { 3.0 } else { 0.0 };
+            let str_bonus = if self.potion_strength > 0.0 || self.beacon_buff { 3.0 } else { 0.0 };
             let is_crit = !self.player.on_ground && self.player.vy < -0.5 && !self.swimming;
             let mut dmg = match held_id {
                 items::NETHERITE_SWORD => 8.0,
@@ -2073,6 +2095,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let is_shovel = matches!(held_id, items::WOOD_SHOVEL | items::IRON_SHOVEL);
 
         let ench = self.player.enchants.get(&held_id).copied().unwrap_or(0) as f32;
+        let haste_mul = if self.beacon_buff { 1.45 } else { 1.0 };
         let tool_bonus = (if need > 0 {
             if has_pick { 1.5 + items::pickaxe_tier(held_id) as f32 * 1.1 } else { 0.22 }
         } else if is_wood && is_axe {
@@ -2081,7 +2104,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             1.8 + items::tool_tier(held_id) as f32 * 1.0
         } else {
             1.0
-        }) * (1.0 + ench * 0.35);
+        }) * (1.0 + ench * 0.35) * haste_mul;
         let hardness = match h.block {
             world::OBSIDIAN | world::CRYING_OBSIDIAN | world::ANCIENT_DEBRIS | world::BEACON => 28.0,
             world::IRON_BLOCK | world::GOLD_BLOCK | world::DIAMOND_BLOCK | world::EMERALD_BLOCK | world::LAPIS_BLOCK | world::SPAWNER => 5.0,
@@ -2284,11 +2307,19 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             return;
         }
 
-        // Firework boost while Elytra gliding, Potions, XP Bottle, Egg
-        if held.id == items::FIREWORK && self.elytra_gliding {
-            self.player.vy = (self.player.vy + dy * 12.0 + 4.0).clamp(-10.0, 14.0);
-            self.player.x += dx * 2.5;
-            self.player.z += dz * 2.5;
+        // Firework boost while Elytra gliding, or colorful firework burst in the sky
+        if held.id == items::FIREWORK {
+            if self.elytra_gliding {
+                self.player.vy = (self.player.vy + dy * 12.0 + 4.0).clamp(-10.0, 14.0);
+                self.player.x += dx * 2.5;
+                self.player.z += dz * 2.5;
+            }
+            let fx = self.player.x + dx * 6.0;
+            let fy = ey + dy * 6.0 + 2.0;
+            let fz = self.player.z + dz * 6.0;
+            self.spawn_particle_burst(fx, fy, fz, [255, 72, 92], 14, 4.6, 2.2);
+            self.spawn_particle_burst(fx, fy + 0.3, fz, [85, 220, 255], 12, 4.2, 2.2);
+            self.spawn_particle_burst(fx, fy - 0.2, fz, [255, 230, 68], 10, 3.8, 2.2);
             if self.mode == GameMode::Survival {
                 let s = &mut self.player.hot[self.player.selected];
                 s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
@@ -2484,6 +2515,40 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     self.msg_timer = 1.5;
                     return;
                 }
+                world::JUKEBOX => {
+                    let key = (self.world.dim.idx() as u8, h.x, h.y, h.z);
+                    if let Some(old_disc) = self.jukeboxes.remove(&key) {
+                        self.drops.push(Drop::new(h.x as f32 + 0.5, h.y as f32 + 1.1, h.z as f32 + 0.5, old_disc));
+                        self.message = String::from("Ejected Music Disc");
+                        self.msg_timer = 1.5;
+                        self.plat.play(Sfx::Click);
+                        return;
+                    } else if matches!(held.id, items::MUSIC_DISC_CAT | items::MUSIC_DISC_PIGSTEP) {
+                        let disc = held.id;
+                        self.jukeboxes.insert(key, disc);
+                        if self.mode == GameMode::Survival {
+                            let s = &mut self.player.hot[self.player.selected];
+                            s.count -= 1; if s.count == 0 { *s = Stack::EMPTY; }
+                        }
+                        self.plat.play(if disc == items::MUSIC_DISC_PIGSTEP { Sfx::JukeboxPigstep } else { Sfx::JukeboxCat });
+                        self.message = format!("Now playing: {}", items::name(disc));
+                        self.msg_timer = 3.0;
+                        return;
+                    }
+                }
+                world::BEACON => {
+                    let key = (self.world.dim.idx() as u8, h.x, h.y, h.z);
+                    self.beacons.insert(key);
+                    if Self::is_beacon_pyramid(&mut self.world, h.x, h.y, h.z) {
+                        self.plat.play(Sfx::Beacon);
+                        self.message = String::from("Beacon Active: Haste + Strength + Speed!");
+                    } else {
+                        self.plat.play(Sfx::Click);
+                        self.message = String::from("Place Beacon on a 3x3 Iron/Gold/Diamond/Emerald base!");
+                    }
+                    self.msg_timer = 2.5;
+                    return;
+                }
                 world::BED => {
                     self.spawn = (h.x as f32 + 0.5, h.y as f32 + 1.0, h.z as f32 + 0.5);
                     let day = (self.time * std::f32::consts::TAU).sin() * 0.5 + 0.5;
@@ -2606,11 +2671,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
             return;
         }
-        // Spawn Eggs (322..=331, 336..=345, 367..=368)
+        // Spawn Eggs (322..=331, 336..=345, 367..=373)
         if (items::SPAWN_SHEEP..=items::SPAWN_VILLAGER).contains(&held.id)
             || (items::SPAWN_ZOMBIFIED_PIGLIN..=items::SPAWN_ENDER_DRAGON).contains(&held.id)
-            || held.id == items::SPAWN_IRON_GOLEM
-            || held.id == items::SPAWN_SNOW_GOLEM
+            || (items::SPAWN_IRON_GOLEM..=items::SPAWN_PHANTOM).contains(&held.id)
         {
             let kind = match held.id {
                 items::SPAWN_SHEEP => MobKind::Sheep,
@@ -2635,6 +2699,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 items::SPAWN_ENDER_DRAGON => MobKind::EnderDragon,
                 items::SPAWN_IRON_GOLEM => MobKind::IronGolem,
                 items::SPAWN_SNOW_GOLEM => MobKind::SnowGolem,
+                items::SPAWN_WITHER => MobKind::Wither,
+                items::SPAWN_SQUID => MobKind::Squid,
+                items::SPAWN_FOX => MobKind::Fox,
+                items::SPAWN_BEE => MobKind::Bee,
+                items::SPAWN_PHANTOM => MobKind::Phantom,
                 _ => MobKind::Villager,
             };
             let mx = (h.x + h.nx) as f32 + 0.5;
@@ -2643,6 +2712,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             let mut m = Mob::spawn(kind, mx, my, mz);
             m.yaw = (self.player.x - mx).atan2(self.player.z - mz);
             self.mobs.push(m);
+            if kind == MobKind::Wither {
+                self.plat.play(Sfx::Wither);
+                self.message = String::from("The Wither has been summoned!");
+                self.msg_timer = 3.0;
+            }
             if self.mode == GameMode::Survival {
                 let s = &mut self.player.hot[self.player.selected];
                 s.count -= 1;
@@ -2711,6 +2785,12 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             self.plat.play(Sfx::Place);
             if held.id == world::FURNACE { self.furnaces.insert((px, py, pz), Furnace::new()); }
             if held.id == world::BREWING_STAND { self.brewing_stands.insert((px, py, pz), BrewingStand::new()); }
+            if held.id == world::BEACON {
+                self.beacons.insert((self.world.dim.idx() as u8, px, py, pz));
+                if Self::is_beacon_pyramid(&mut self.world, px, py, pz) {
+                    self.plat.play(Sfx::Beacon);
+                }
+            }
             if matches!(held.id, world::REDSTONE_TORCH | world::LEVER | world::PRESSURE_PLATE | world::BUTTON | world::REPEATER | world::COMPARATOR) {
                 self.redstone_sources.insert((px, py, pz));
             }
@@ -2996,14 +3076,23 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         if self.mode != GameMode::Survival || self.grace > 0.0 { return; }
         if is_fire && self.potion_fire > 0.0 { return; }
         let mut dmg = raw;
+        let mut blocked = false;
         if !is_fire {
             let ap = self.player.armor_points() as f32;
             dmg *= 1.0 - (ap * 0.04).min(0.8);
-            if self.is_shield_blocking() { dmg *= 0.25; }
+            if self.is_shield_blocking() {
+                dmg *= 0.15;
+                blocked = true;
+            }
         }
-        self.player.hp -= dmg.max(0.5);
-        self.hurt_flash = 0.45;
-        self.plat.play(Sfx::Hurt);
+        self.player.hp -= dmg.max(0.4);
+        self.hurt_flash = if blocked { 0.15 } else { 0.45 };
+        if blocked {
+            self.plat.play(Sfx::ShieldBlock);
+            self.spawn_particle_burst(self.player.x, self.player.y + 1.1, self.player.z, [215, 225, 240], 6, 2.2, 6.0);
+        } else {
+            self.plat.play(Sfx::Hurt);
+        }
     }
 
     fn explode(&mut self, cx: f32, cy: f32, cz: f32, radius: f32) {
@@ -3222,7 +3311,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 } else {
                     4.3
                 };
-                if self.potion_speed > 0.0 { speed *= 1.35; }
+                if self.potion_speed > 0.0 || self.beacon_buff { speed *= 1.32; }
                 speed *= self.speed_mul;
                 if under_b == world::SOUL_SAND { speed *= 0.55; }
                 if under_b == world::ICE { speed *= 1.28; }
@@ -3407,19 +3496,19 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let mut xp_from_mobs = 0u32;
         for m in self.mobs.iter_mut() {
             m.update(&mut self.world, self.player.x, self.player.y, self.player.z, dt, self.tick, day, self.grace, self.mode != GameMode::Survival);
-            if matches!(m.kind, MobKind::Skeleton | MobKind::Ghast | MobKind::Blaze | MobKind::EnderDragon)
+            if matches!(m.kind, MobKind::Skeleton | MobKind::Ghast | MobKind::Blaze | MobKind::EnderDragon | MobKind::Wither)
                 && self.mode == GameMode::Survival && self.grace <= 0.0 && m.ranged_cd <= 0.0
             {
                 let dx_p = self.player.x - m.x;
                 let dy_p = (self.player.y + 1.0) - (m.y + 1.2);
                 let dz_p = self.player.z - m.z;
                 let d = (dx_p * dx_p + dy_p * dy_p + dz_p * dz_p).sqrt();
-                let max_r = if m.kind == MobKind::Ghast || m.kind == MobKind::EnderDragon { 36.0 } else { 18.0 };
+                let max_r = if matches!(m.kind, MobKind::Ghast | MobKind::EnderDragon | MobKind::Wither) { 38.0 } else { 18.0 };
                 if d > 3.5 && d < max_r {
-                    m.ranged_cd = if m.kind == MobKind::EnderDragon { 2.8 } else { 3.2 };
-                    let sp = if m.kind == MobKind::Skeleton { 16.0 } else { 12.0 };
+                    m.ranged_cd = if m.kind == MobKind::Wither { 2.0 } else if m.kind == MobKind::EnderDragon { 2.8 } else { 3.2 };
+                    let sp = if m.kind == MobKind::Skeleton { 16.0 } else { 13.0 };
                     let is_fb = m.kind != MobKind::Skeleton;
-                    self.mob_projectiles.push((m.x, m.y + 1.2, m.z, dx_p / d * sp, dy_p / d * sp + if is_fb { 0.0 } else { 1.5 }, dz_p / d * sp, is_fb));
+                    self.mob_projectiles.push((m.x, m.y + 1.4, m.z, dx_p / d * sp, dy_p / d * sp + if is_fb { 0.0 } else { 1.5 }, dz_p / d * sp, is_fb));
                 }
             }
             let mb = self.world.get(m.x.floor() as i32, (m.y + 0.2).floor() as i32, m.z.floor() as i32);
@@ -3515,6 +3604,13 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.explode(bx, by, bz, 3.2);
             } else {
                 self.plat.play(Sfx::Explode);
+            }
+        }
+        for m in &self.mobs {
+            if m.hp <= 0.0 && m.kind == MobKind::Wither {
+                self.drops.push(Drop::new(m.x, m.y + 0.5, m.z, items::NETHER_STAR));
+                self.message = String::from("The Wither has been defeated!");
+                self.msg_timer = 5.0;
             }
         }
         self.mobs.retain(|m| m.hp > 0.0 && (m.x - self.player.x).abs() < 75.0 && (m.z - self.player.z).abs() < 75.0);
@@ -3841,7 +3937,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.grace = 2.5;
                 self.message = String::from("Totem of Undying saved you!");
                 self.msg_timer = 4.0;
-                self.plat.play(Sfx::LevelUp);
+                self.plat.play(Sfx::Totem);
+                self.spawn_particle_burst(self.player.x, self.player.y + 1.0, self.player.z, [255, 224, 64], 16, 4.2, 4.0);
+                self.spawn_particle_burst(self.player.x, self.player.y + 1.0, self.player.z, [80, 235, 95], 12, 3.6, 4.0);
             } else {
                 if !self.rule_keep_inventory {
                     for s in self.player.hot.iter_mut() {
@@ -3908,17 +4006,23 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 let sy = (py + (((h >> 4) & 7) as i32 - 3)).clamp(1, world::WORLD_H as i32 - 2);
                 let sz = pz + (((h >> 8) & 15) as i32 - 8);
                 let nb = self.world.get(sx, sy, sz);
-                if nb == world::TORCH || nb == world::CAMPFIRE || nb == world::SPAWNER {
+                if nb == world::TORCH || nb == world::SOUL_TORCH || nb == world::CAMPFIRE || nb == world::SPAWNER {
                     self.particles.push(entities::Particle {
                         x: sx as f32 + 0.5,
-                        y: sy as f32 + if nb == world::TORCH { 0.68 } else { 0.45 },
+                        y: sy as f32 + if matches!(nb, world::TORCH | world::SOUL_TORCH) { 0.68 } else { 0.45 },
                         z: sz as f32 + 0.5,
                         vx: (((h >> 12) & 15) as f32 - 7.5) * 0.04,
                         vy: 0.65 + ((h >> 16) & 7) as f32 * 0.08,
                         vz: (((h >> 20) & 15) as f32 - 7.5) * 0.04,
                         life: 0.45,
                         size: if nb == world::CAMPFIRE { 0.11 } else { 0.08 },
-                        color: if k % 3 == 0 { [135, 135, 140] } else { [255, 175, 55] },
+                        color: if nb == world::SOUL_TORCH {
+                            [82, 226, 255]
+                        } else if k % 3 == 0 {
+                            [135, 135, 140]
+                        } else {
+                            [255, 175, 55]
+                        },
                         gravity: -0.35,
                     });
                 } else if nb == world::NETHER_PORTAL {
@@ -3938,6 +4042,36 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
             if self.swimming && self.tick % 8 == 0 {
                 self.spawn_particle_burst(self.player.x, self.player.y + 0.8, self.player.z, [105, 185, 255], 3, 1.4, 6.0);
+            }
+        }
+        // Beacon pyramid aura + Jukebox musical note particles (every 20 ticks)
+        if self.tick % 20 == 0 {
+            let cur_d = self.world.dim.idx() as u8;
+            self.beacons.retain(|&(d, bx, by, bz)| d != cur_d || self.world.get(bx, by, bz) == world::BEACON);
+            let mut active = false;
+            for &(d, bx, by, bz) in &self.beacons {
+                if d != cur_d { continue; }
+                let d2 = (bx as f32 + 0.5 - self.player.x).powi(2) + (bz as f32 + 0.5 - self.player.z).powi(2);
+                if d2 < 42.0 * 42.0 && Self::is_beacon_pyramid(&mut self.world, bx, by, bz) {
+                    active = true;
+                    break;
+                }
+            }
+            self.beacon_buff = active;
+            if active && self.player.hp < 20.0 {
+                self.player.hp = (self.player.hp + 0.4).min(20.0);
+            }
+            let jb_notes: Vec<(i32, i32, i32)> = self.jukeboxes.keys()
+                .filter(|&&(d, jx, jy, jz)| d == cur_d && self.world.get(jx, jy, jz) == world::JUKEBOX)
+                .map(|&(_, jx, jy, jz)| (jx, jy, jz))
+                .collect();
+            for (jx, jy, jz) in jb_notes {
+                let col = match self.tick % 60 {
+                    0 => [255, 85, 185],
+                    20 => [85, 230, 255],
+                    _ => [130, 255, 95],
+                };
+                self.spawn_particle_burst(jx as f32 + 0.5, jy as f32 + 1.15, jz as f32 + 0.5, col, 2, 0.8, -1.2);
             }
         }
         // Auto-save every 20 seconds
@@ -4064,7 +4198,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let hand_light_str = |id: u16| -> f32 {
             match id {
                 world::GLOWSTONE | world::SEA_LANTERN | world::LANTERN | world::BEACON | items::LAVA_BUCKET => 0.96,
-                world::TORCH | world::CAMPFIRE => 0.88,
+                world::TORCH | world::SOUL_TORCH | world::CAMPFIRE => 0.88,
                 world::REDSTONE_TORCH | world::PUMPKIN => 0.56,
                 _ => 0.0,
             }
@@ -4117,6 +4251,12 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         for p in self.particles.iter() {
             render::draw_particle_3d(&mut self.scene, &cam, p.x, p.y, p.z, p.size, p.color, day);
         }
+        let cur_d = self.world.dim.idx() as u8;
+        for &(d, bx, by, bz) in &self.beacons {
+            if d == cur_d && Self::is_beacon_pyramid(&mut self.world, bx, by, bz) {
+                render::draw_beacon_beam(&mut self.scene, &cam, bx as f32 + 0.5, by as f32 + 0.5, bz as f32 + 0.5, self.tick);
+            }
+        }
         render::upscale(&self.scene, &mut self.fb);
 
         if self.weather > 0 && self.world.dim == Dimension::Overworld {
@@ -4142,6 +4282,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             let dragon_hp = if self.world.dim == Dimension::End {
                 self.mobs.iter().find(|m| m.kind == MobKind::EnderDragon).map(|m| m.hp)
             } else { None };
+            let wither_hp = self.mobs.iter().find(|m| m.kind == MobKind::Wither).map(|m| m.hp);
             let shield_blk = self.is_shield_blocking();
             let armor_pts = self.player.armor_points();
             let cur_biome = self.world.biome(self.player.x.floor() as i32, self.player.z.floor() as i32);
@@ -4167,6 +4308,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 cur_biome,
                 self.world.dim,
                 dragon_hp,
+                wither_hp,
+                self.beacon_buff,
                 (self.player.x, self.player.y, self.player.z),
                 self.fps,
                 self.camera,
@@ -4174,6 +4317,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 self.mode,
                 self.show_debug,
             );
+            if self.player.held().id == items::MAP || self.player.offhand.id == items::MAP {
+                render::draw_minimap(&mut self.fb, &mut self.world, self.player.x, self.player.z, self.player.yaw);
+            }
             // crosshair progress
             if let Some((_, prog)) = self.mining {
                 let (cx, cy) = (render::W as i32 / 2, render::H as i32 / 2);

@@ -115,6 +115,13 @@ pub const NETHERITE_BOOTS: u16 = 365;
 pub const ENCHANTED_BOOK: u16 = 366;
 pub const SPAWN_IRON_GOLEM: u16 = 367;
 pub const SPAWN_SNOW_GOLEM: u16 = 368;
+pub const SPAWN_WITHER: u16 = 369;
+pub const SPAWN_SQUID: u16 = 370;
+pub const SPAWN_FOX: u16 = 371;
+pub const SPAWN_BEE: u16 = 372;
+pub const SPAWN_PHANTOM: u16 = 373;
+pub const MUSIC_DISC_CAT: u16 = 374;
+pub const MUSIC_DISC_PIGSTEP: u16 = 375;
 
 pub fn name(id: u16) -> &'static str {
     match id {
@@ -171,6 +178,13 @@ pub fn name(id: u16) -> &'static str {
         ENCHANTED_BOOK => "Enchanted Book",
         SPAWN_IRON_GOLEM => "Iron Golem Spawn Egg",
         SPAWN_SNOW_GOLEM => "Snow Golem Spawn Egg",
+        SPAWN_WITHER => "Wither Spawn Egg",
+        SPAWN_SQUID => "Squid Spawn Egg",
+        SPAWN_FOX => "Fox Spawn Egg",
+        SPAWN_BEE => "Bee Spawn Egg",
+        SPAWN_PHANTOM => "Phantom Spawn Egg",
+        MUSIC_DISC_CAT => "Music Disc (Cat)",
+        MUSIC_DISC_PIGSTEP => "Music Disc (Pigstep)",
         _ => world::block_name(id),
     }
 }
@@ -264,8 +278,8 @@ pub fn creative_tab_items(tab: usize) -> &'static [u16] {
             PUMPKIN, HAY, WHEAT, VINE, COBWEB, MAGMA, SOUL_SAND, BEDROCK, WATER, LAVA, SPAWNER,
         ],
         3 => &[ // Functional Blocks
-            CRAFTING, FURNACE, CHEST, ANVIL, ENCHANTING, BREWING_STAND, BEACON, END_PORTAL_FRAME,
-            TORCH, LANTERN, CAMPFIRE, GLOWSTONE, SEA_LANTERN, SHROOMLIGHT,
+            CRAFTING, FURNACE, CHEST, ANVIL, ENCHANTING, BREWING_STAND, BEACON, JUKEBOX, END_PORTAL_FRAME,
+            TORCH, SOUL_TORCH, LANTERN, CAMPFIRE, GLOWSTONE, SEA_LANTERN, SHROOMLIGHT,
             LADDER, SIGN, BED, CAKE, BOOKSHELF,
         ],
         4 => &[ // Redstone Blocks
@@ -278,6 +292,7 @@ pub fn creative_tab_items(tab: usize) -> &'static [u16] {
             WOOD_HOE, STONE_HOE, IRON_HOE, DIAMOND_HOE,
             FLINT_AND_STEEL, SHEARS, BUCKET, WATER_BUCKET, LAVA_BUCKET, BOAT, MINECART,
             EYE_OF_ENDER, COMPASS, CLOCK, MAP, ELYTRA, FIREWORK, XP_BOTTLE, BONE_MEAL,
+            MUSIC_DISC_CAT, MUSIC_DISC_PIGSTEP,
         ],
         7 => &[ // Combat
             WOOD_SWORD, IRON_SWORD, DIAMOND_SWORD, NETHERITE_SWORD,
@@ -298,9 +313,9 @@ pub fn creative_tab_items(tab: usize) -> &'static [u16] {
             ENDER_PEARL, BLAZE_ROD, BLAZE_POWDER, EYE_OF_ENDER, NETHER_STAR, NETHER_WART, EGG, WOOL, REDSTONE_DUST, ENCHANTED_BOOK,
         ],
         10 => &[ // Spawn Eggs
-            SPAWN_SHEEP, SPAWN_COW, SPAWN_PIG, SPAWN_CHICKEN, SPAWN_WOLF, SPAWN_POLAR_BEAR, SPAWN_PARROT, SPAWN_SLIME,
-            SPAWN_ZOMBIE, SPAWN_SKELETON, SPAWN_CREEPER, SPAWN_SPIDER, SPAWN_ENDERMAN, SPAWN_VILLAGER,
-            SPAWN_ZOMBIFIED_PIGLIN, SPAWN_PIGLIN, SPAWN_GHAST, SPAWN_BLAZE, SPAWN_WITHER_SKELETON, SPAWN_ENDER_DRAGON,
+            SPAWN_SHEEP, SPAWN_COW, SPAWN_PIG, SPAWN_CHICKEN, SPAWN_WOLF, SPAWN_FOX, SPAWN_BEE, SPAWN_SQUID, SPAWN_POLAR_BEAR, SPAWN_PARROT, SPAWN_SLIME,
+            SPAWN_ZOMBIE, SPAWN_SKELETON, SPAWN_CREEPER, SPAWN_SPIDER, SPAWN_PHANTOM, SPAWN_ENDERMAN, SPAWN_VILLAGER,
+            SPAWN_ZOMBIFIED_PIGLIN, SPAWN_PIGLIN, SPAWN_GHAST, SPAWN_BLAZE, SPAWN_WITHER_SKELETON, SPAWN_WITHER, SPAWN_ENDER_DRAGON,
             SPAWN_IRON_GOLEM, SPAWN_SNOW_GOLEM,
         ],
         _ => &[],

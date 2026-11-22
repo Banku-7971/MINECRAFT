@@ -154,7 +154,9 @@ pub const NETHER_WART: u16 = 132;
 pub const BUTTON: u16 = 133;
 pub const IRON_DOOR: u16 = 134;
 pub const IRON_DOOR_OPEN: u16 = 135;
-pub const MAX_BLOCK: u16 = 135;
+pub const JUKEBOX: u16 = 136;
+pub const SOUL_TORCH: u16 = 137;
+pub const MAX_BLOCK: u16 = 137;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Dimension {
@@ -750,6 +752,7 @@ pub fn block_name(id: u16) -> &'static str {
         REPEATER => "Redstone Repeater", COMPARATOR => "Redstone Comparator",
         SPAWNER => "Monster Spawner", SAPLING => "Oak Sapling", NETHER_WART => "Nether Wart",
         BUTTON => "Stone Button", IRON_DOOR | IRON_DOOR_OPEN => "Iron Door",
+        JUKEBOX => "Jukebox", SOUL_TORCH => "Soul Torch",
         _ => "Unknown",
     }
 }
@@ -758,7 +761,7 @@ pub fn is_solid(id: u16) -> bool {
     !matches!(
         id,
         AIR | WATER | LAVA | TALL_GRASS | FLOWER_RED | FLOWER_YELLOW | COBWEB | VINE | WHEAT
-            | TORCH | SNOW_LAYER | RAIL | REDSTONE_DUST | LEVER | PRESSURE_PLATE | REDSTONE_TORCH
+            | TORCH | SOUL_TORCH | SNOW_LAYER | RAIL | REDSTONE_DUST | LEVER | PRESSURE_PLATE | REDSTONE_TORCH
             | NETHER_PORTAL | END_PORTAL | DOOR_OPEN | IRON_DOOR_OPEN | SAPLING | NETHER_WART
             | BUTTON | REPEATER | COMPARATOR
     )
@@ -787,7 +790,7 @@ pub fn emits_light(id: u16) -> u8 {
     match id {
         TORCH | CAMPFIRE | LANTERN | SHROOMLIGHT | NETHER_PORTAL | END_PORTAL => 14,
         GLOWSTONE | SEA_LANTERN | BEACON => 15,
-        LAVA | MAGMA | CRYING_OBSIDIAN | ENCHANTING => 12,
+        LAVA | MAGMA | CRYING_OBSIDIAN | ENCHANTING | SOUL_TORCH => 12,
         REDSTONE_TORCH => 7,
         _ => 0,
     }
