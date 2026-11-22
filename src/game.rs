@@ -20,6 +20,13 @@ pub const STORE: usize = 27;
 const DEFAULT_BLOCK_REACH: f32 = 4.5;
 const DEFAULT_ENTITY_REACH: f32 = 3.0;
 
+static CUSTOM_SAVE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+#[allow(dead_code)]
+pub fn set_save_dir(dir: std::path::PathBuf) {
+    let _ = CUSTOM_SAVE_DIR.set(dir);
+}
+
 pub struct Player {
     pub x: f32, pub y: f32, pub z: f32, pub vy: f32,
     pub yaw: f32, pub pitch: f32,
@@ -560,6 +567,20 @@ impl<P: Platform> Game<P> {
         self.screen == Screen::Playing && self.ui == Ui::Chat
     }
 
+    /// 0 = menus/title/pause/inventory, 1 = active gameplay HUD, 2 = chat open
+    #[allow(dead_code)]
+    pub fn ui_state(&self) -> u8 {
+        if self.screen != Screen::Playing {
+            0
+        } else if self.ui == Ui::Chat {
+            2
+        } else if self.ui == Ui::None {
+            1
+        } else {
+            0
+        }
+    }
+
     pub fn frame(&mut self) {
         if self.plat.should_quit() || self.quit { return; }
         let now = self.plat.now();
@@ -613,9 +634,10 @@ impl<P: Platform> Game<P> {
                 }
                 Event::MouseMove { dx, dy } => {
                     if self.screen == Screen::Playing && (self.ui == Ui::None || self.ui == Ui::Chat) {
-                        let sens = 0.0026;
-                        self.player.yaw += dx as f32 * sens;
-                        self.player.pitch = (self.player.pitch - dy as f32 * 0.0024).clamp(-1.52, 1.52);
+                        let zoomed = self.ui == Ui::None && self.keys.contains(&plat::VK_Z);
+                        let z_mul = if zoomed { 0.36 } else { 1.0 };
+                        self.player.yaw += dx as f32 * 0.0026 * z_mul;
+                        self.player.pitch = (self.player.pitch - dy as f32 * 0.0024 * z_mul).clamp(-1.52, 1.52);
                         (self.mouse_x, self.mouse_y) = self.plat.mouse();
                     } else {
                         let (mx, my) = self.plat.mouse();
@@ -3854,7 +3876,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let atlas = Textures::atlas();
         let shader = packs::active_shader();
         self.scene.clear();
-        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader, false);
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, 0.25, self.tick, None, &shader, false, None);
         render::upscale(&self.scene, &mut self.fb);
         render::draw_title_overlay(&mut self.fb, &["Singleplayer", &gm_label, "Multiplayer", "Options", "Quit"], hover, &self.splash, self.title_t);
         self.plat.set_capture(false);
@@ -3890,7 +3912,8 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         // camera
         let (fx, fy, fz) = self.look_dir();
         let eye_y = self.eye().1;
-        let fov_mul = if self.sprinting || self.swimming { 1.10 } else { 1.0 };
+        let zoomed = self.ui == Ui::None && self.keys.contains(&plat::VK_Z);
+        let fov_mul = if zoomed { 0.34 } else if self.sprinting || self.swimming { 1.10 } else { 1.0 };
         let cam = if self.camera == 0 {
             Cam::with_fov(self.player.yaw, self.player.pitch, self.player.x, eye_y, self.player.z, fov_mul)
         } else if self.camera == 1 {
@@ -3920,7 +3943,22 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let atlas = Textures::atlas();
         let shader = packs::active_shader();
         let is_spectator = self.mode == GameMode::Spectator;
-        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, self.time, self.tick, mining_overlay, &shader, is_spectator);
+        let hand_light_str = |id: u16| -> f32 {
+            match id {
+                world::GLOWSTONE | world::SEA_LANTERN | world::LANTERN | world::BEACON | items::LAVA_BUCKET => 0.96,
+                world::TORCH | world::CAMPFIRE => 0.88,
+                world::REDSTONE_TORCH | world::PUMPKIN => 0.56,
+                _ => 0.0,
+            }
+        };
+        let held_str = hand_light_str(self.player.hot[self.player.selected].id)
+            .max(hand_light_str(self.player.offhand.id));
+        let dyn_light = if held_str > 0.0 && !is_spectator {
+            Some((self.player.x, eye_y - 0.15, self.player.z, held_str))
+        } else {
+            None
+        };
+        render::render_world(&mut self.scene, &atlas, &mut self.world, &cam, self.time, self.tick, mining_overlay, &shader, is_spectator, dyn_light);
         if !is_spectator && self.ui == Ui::None {
             let b_reach = self.block_reach();
             if let Some(h) = world::raycast(&mut self.world, self.player.x, eye_y, self.player.z, fx, fy, fz, b_reach, false) {
@@ -4025,6 +4063,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 let a = (self.hurt_flash * 140.0) as u8;
                 self.fb.rect(0, 0, render::W as i32, render::H as i32, [180, 20, 20, a]);
             }
+        }
+        if !matches!(self.ui, Ui::None | Ui::Chat | Ui::Death) {
+            self.fb.blur_dim(2, 95);
         }
         if self.ui == Ui::Creative {
             let list = self.creative_items_filtered();
@@ -4349,6 +4390,9 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     }
 
     fn save_path() -> std::path::PathBuf {
+        if let Some(dir) = CUSTOM_SAVE_DIR.get() {
+            return dir.join("world_save.dat");
+        }
         std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("world_save.dat")))
