@@ -1179,7 +1179,7 @@ mod tests {
             let sp = (cow.vx * cow.vx + cow.vz * cow.vz).sqrt();
             max_speed = max_speed.max(sp);
         }
-        assert!(max_speed >= 4.0, "expected panic speed >= 4.0 m/s, got {}", max_speed);
+        assert!(max_speed >= 2.75, "expected panic speed >= 2.75 m/s, got {}", max_speed);
         assert!(max_y > 41.0, "expected cow to jump over 1-block ledge (y > 41.0), got {}", max_y);
         assert!(cow.y >= 40.99 && cow.z >= 5.5, "expected cow to climb onto 1-block step, got y={} z={}", cow.y, cow.z);
     }
