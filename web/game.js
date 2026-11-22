@@ -53,25 +53,46 @@ let musicStep = 0;
 let customSoundVersion = -1;
 const customAudioBuffers = new Map();
 
-// Expressive C418-inspired ambient felt-piano phrases: [notes_hz[], hold_sec, pause_sec, vel]
-// Warm Fmaj7 / C / Am / G contemplative progression with natural breathing space
-const AMBIENT_PHRASES = [
-  [[261.63, 392.00], 3.4, 1.35, 0.055],
-  [[329.63], 2.8, 1.15, 0.048],
-  [[440.00], 3.2, 1.65, 0.052],
-  [[392.00], 3.8, 2.25, 0.044],
-  [[220.00, 329.63, 523.25], 4.0, 1.55, 0.050],
-  [[493.88], 2.9, 1.15, 0.045],
-  [[440.00], 3.5, 2.10, 0.046],
-  [[174.61, 261.63, 349.23], 4.4, 1.70, 0.052],
-  [[329.63], 2.6, 1.10, 0.046],
-  [[293.66], 3.4, 1.45, 0.044],
-  [[261.63], 4.2, 2.80, 0.042],
-  [[196.00, 293.66, 392.00], 4.2, 1.60, 0.050],
-  [[440.00], 2.8, 1.25, 0.044],
-  [[392.00], 3.6, 1.80, 0.042],
-  [[329.63], 4.6, 3.40, 0.038],
+// 100% Original Ambient Music Suites per Dimension: [notes_hz[], hold_sec, pause_sec, vel]
+// Overworld ("Sunlight & Moss"): warm Dmaj7 / Bm9 / Gmaj7 / A6 felt-piano progression
+const OVERWORLD_PHRASES = [
+  [[146.83, 293.66, 369.99], 3.6, 1.40, 0.055],
+  [[440.00], 2.8, 1.15, 0.048],
+  [[587.33], 3.2, 1.65, 0.052],
+  [[493.88], 3.8, 2.20, 0.045],
+  [[123.47, 246.94, 369.99], 4.0, 1.55, 0.052],
+  [[554.37], 2.9, 1.15, 0.045],
+  [[493.88], 3.5, 2.10, 0.046],
+  [[98.00, 196.00, 293.66], 4.4, 1.70, 0.052],
+  [[369.99], 2.6, 1.10, 0.046],
+  [[329.63], 3.4, 1.45, 0.044],
+  [[293.66], 4.2, 2.75, 0.042],
+  [[110.00, 220.00, 329.63], 4.2, 1.60, 0.050],
+  [[493.88], 2.8, 1.25, 0.044],
+  [[440.00], 3.6, 1.80, 0.042],
+  [[369.99], 4.6, 3.20, 0.040],
 ];
+
+// Nether ("Ember Choir"): deep Phrygian cello/brass drones & distant bells
+const NETHER_PHRASES = [
+  [[73.42, 110.00], 5.6, 2.40, 0.065],
+  [[293.66], 3.4, 1.90, 0.036],
+  [[77.78, 116.54], 5.8, 2.50, 0.062],
+  [[311.13], 3.6, 2.10, 0.034],
+  [[65.41, 98.00], 5.4, 2.30, 0.064],
+  [[246.94], 3.8, 2.40, 0.035],
+];
+
+// The End ("Astral Drift"): cosmic Lydian floating pads & crystal chimes
+const END_PHRASES = [
+  [[130.81, 196.00], 5.0, 1.80, 0.052],
+  [[523.25, 739.99], 3.2, 1.60, 0.040],
+  [[185.00, 261.63], 4.8, 2.10, 0.048],
+  [[659.25], 3.6, 1.70, 0.038],
+  [[146.83, 220.00], 5.2, 2.30, 0.050],
+  [[587.33, 739.99], 4.0, 2.50, 0.038],
+];
+let lastMusicDim = 0;
 
 function createRoomImpulse(ctx, dur = 3.0, decay = 2.6) {
   const len = Math.floor(ctx.sampleRate * dur);
@@ -262,16 +283,17 @@ function playWebSfx(id) {
     case 5: playNoise(0.045, 0.08, 1350 * p, 'bandpass', 0, 1.4); playTone(260 * p, 0.035, 0.05, 'triangle', 140 * p, 0, 1000); break; // Stone tap step
     case 6: playTone(185 * p, 0.055, 0.08, 'triangle', 120 * p, 0, 900); playNoise(0.04, 0.06, 800 * p, 'bandpass'); break; // Wood creak step
     case 7: playNoise(0.085, 0.09, 1750 * p, 'bandpass', 0, 0.8); break; // Sand crunch step
-    case 8: playNoise(0.16, 0.11, 820 * p, 'bandpass', 0, 1.6); playNoise(0.12, 0.06, 1500 * p, 'bandpass', 0.03, 1.2); break; // Water splash step
-    case 9: playNoise(0.06, 0.05, 520, 'lowpass'); playTone(140 * p, 0.07, 0.04, 'sine', 220 * p, 0, 800); break; // Jump
+    case 8: playNoise(0.16, 0.11, 820 * p, 'bandpass', 0, 1.6); playTone(260 * p, 0.08, 0.06, 'sine', 520 * p, 0.01, 1400); break; // Water bubble step
+    case 9: playNoise(0.06, 0.05, 520, 'lowpass'); playTone(145 * p, 0.07, 0.04, 'sine', 225 * p, 0, 800); break; // Jump
     case 10: playNoise(0.07, 0.10, 420, 'lowpass'); playTone(88 * p, 0.08, 0.08, 'sine', 48 * p, 0, 400); break; // Land
     case 11: playNoise(0.09, 0.12, 760, 'lowpass'); playTone(165 * p, 0.10, 0.10, 'triangle', 76 * p, 0, 800); break; // Hurt
     case 12: playNoise(0.07, 0.10, 880, 'bandpass'); playTone(190 * p, 0.09, 0.10, 'triangle', 86 * p, 0, 900); break; // MobHurt
     case 13: playNoise(0.11, 0.09, 680, 'lowpass'); playTone(220 * p, 0.16, 0.07, 'sine', 70 * p, 0, 600); break; // MobDie
-    case 14: playTone(740 * p, 0.045, 0.055, 'sine', 1240 * p, 0, 2400); break; // Pickup pop
-    case 15: playNoise(0.05, 0.06, 1100, 'bandpass'); playTone(480, 0.05, 0.05, 'triangle', 640, 0.02, 1600); break; // Craft
-    case 17: playNoise(0.65, 0.28, 340, 'lowpass'); playTone(56, 0.45, 0.20, 'sine', 28, 0, 260); break; // Explode boom
-    case 18: playNoise(0.28, 0.13, 980 * p, 'bandpass', 0, 1.3); playNoise(0.18, 0.08, 1750 * p, 'bandpass', 0.04); break; // Splash
+    case 14: playTone(760 * p, 0.055, 0.055, 'sine', 1280 * p, 0, 2400); break; // Pickup pop
+    case 15: playTone(420, 0.04, 0.05, 'triangle', 320, 0, 1200); playTone(680, 0.06, 0.05, 'triangle', 860, 0.045, 1800); break; // Craft
+    case 16: playNoise(0.26, 0.10, 460, 'lowpass'); playNoise(0.04, 0.06, 2200, 'highpass', 0.09); break; // Furnace crackle
+    case 17: playNoise(0.68, 0.28, 340, 'lowpass'); playTone(56, 0.45, 0.20, 'sine', 28, 0, 260); break; // Explode boom
+    case 18: playNoise(0.28, 0.13, 980 * p, 'bandpass', 0, 1.3); playTone(310 * p, 0.08, 0.07, 'sine', 640 * p, 0.03, 1600); break; // Splash
     case 19: playTone(98 * p, 0.36, 0.09, 'sawtooth', 76 * p, 0, 460); playTone(146 * p, 0.32, 0.05, 'triangle', 108 * p, 0, 520); break; // Zombie groan
     case 20: playNoise(0.035, 0.08, 1850 * p, 'bandpass', 0, 2.2); playNoise(0.035, 0.07, 2200 * p, 'bandpass', 0.06, 2.2); break; // Skeleton bone clack
     case 21: playTone(132 * p, 0.48, 0.09, 'sawtooth', 106 * p, 0, 480); playTone(264 * p, 0.42, 0.04, 'sine', 212 * p, 0, 700); break; // Cow moo
@@ -279,16 +301,16 @@ function playWebSfx(id) {
     case 23: playTone(165 * p, 0.15, 0.08, 'triangle', 215 * p, 0, 820); break; // Pig oink
     case 24: playTone(610 * p, 0.055, 0.06, 'triangle', 740 * p, 0, 1600); playTone(520 * p, 0.055, 0.05, 'triangle', 660 * p, 0.07, 1500); break; // Chicken cluck
     case 25: playNoise(0.14, 0.08, 1800 * p, 'bandpass', 0, 2.0); break; // Spider hiss
-    case 26: playNoise(0.45, 0.13, 2100, 'bandpass', 0, 1.4); break; // Creeper fuse hiss
+    case 26: playNoise(0.55, 0.14, 2400, 'highpass', 0, 1.4); playTone(1650, 0.48, 0.03, 'sine', 2900, 0, 3400); break; // Creeper fuse hiss
     case 27: playTone(195 * p, 0.28, 0.07, 'sawtooth', 128 * p, 0, 620); playTone(390 * p, 0.24, 0.04, 'sine', 190 * p, 0, 900); break; // Enderman
-    case 28: playNoise(0.06, 0.08, 620, 'lowpass'); playTone(132 * p, 0.10, 0.08, 'triangle', 88 * p, 0, 600); break; // Door
-    case 29: playFeltPianoNote(659.25, 0.55, 0.06, 0.00); playFeltPianoNote(830.61, 0.55, 0.06, 0.07); playFeltPianoNote(987.77, 0.65, 0.06, 0.14); playFeltPianoNote(1318.51, 0.90, 0.07, 0.21); break; // LevelUp
-    case 30: playNoise(0.05, 0.10, 1400 * p, 'bandpass'); playTone(310 * p, 0.10, 0.10, 'triangle', 160 * p, 0, 1200); break; // Shield block
-    case 31: [523.25, 659.25, 783.99, 1046.5].forEach((f, idx) => playFeltPianoNote(f, 0.65, 0.08, idx * 0.04)); break; // Totem
-    case 32: [261.63, 523.25, 783.99, 1046.5].forEach((f, idx) => playFeltPianoNote(f, 0.90, 0.07, idx * 0.05)); break; // Beacon
-    case 33: playTone(72 * p, 0.65, 0.12, 'sawtooth', 48 * p, 0, 380); playNoise(0.55, 0.12, 420, 'lowpass'); break; // Wither roar
-    case 34: [523.25, 659.25, 783.99, 1046.5, 987.77, 783.99].forEach((f, idx) => playTone(f, 0.22, 0.06, 'triangle', null, idx * 0.18, 2200)); break; // Jukebox Cat
-    case 35: [261.63, 392.0, 440.0, 392.0, 311.13, 392.0].forEach((f, idx) => playTone(f, 0.22, 0.06, 'sawtooth', null, idx * 0.18, 1200)); break; // Jukebox Pigstep
+    case 28: playTone(135 * p, 0.11, 0.08, 'triangle', 180 * p, 0, 650); playTone(520, 0.04, 0.05, 'sine', 380, 0.09, 1200); break; // Door
+    case 29: [659.25, 830.61, 987.77, 1244.51, 1479.98].forEach((f, idx) => playFeltPianoNote(f, 0.55 + idx * 0.1, 0.06, idx * 0.07)); break; // LevelUp
+    case 30: playTone(320 * p, 0.12, 0.09, 'triangle', 220 * p, 0, 1200); playTone(515 * p, 0.10, 0.07, 'sine', 480 * p, 0, 1600); break; // Shield block
+    case 31: [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((f, idx) => playFeltPianoNote(f, 0.65, 0.075, idx * 0.04)); break; // Totem
+    case 32: [261.63, 523.25, 783.99, 1046.5, 1567.98].forEach((f, idx) => playFeltPianoNote(f, 0.90, 0.065, idx * 0.05)); break; // Beacon
+    case 33: playTone(68 * p, 0.65, 0.12, 'sawtooth', 46 * p, 0, 380); playNoise(0.55, 0.12, 420, 'lowpass'); break; // Wither roar
+    case 34: [554.37, 659.25, 830.61, 1108.73, 987.77, 830.61, 659.25, 554.37].forEach((f, idx) => playTone(f, 0.24, 0.055, 'triangle', null, idx * 0.22, 2200)); break; // Meadow Promenade
+    case 35: [146.83, 146.83, 220.0, 146.83, 174.61, 174.61, 261.63, 196.0].forEach((f, idx) => playTone(f, 0.19, 0.075, 'sawtooth', null, idx * 0.20, 1100)); break; // Basalt Bounce
     case 36: playTone(152 * p, 0.34, 0.08, 'sawtooth', 132 * p, 0, 620); break; // Villager hmm
     case 37: playNoise(0.06, 0.09, 900 * p, 'lowpass'); playTone(280 * p, 0.14, 0.10, 'sawtooth', 140 * p, 0, 880); break; // Wolf bark
     case 38: playTone(195 * p, 0.28, 0.05, 'sawtooth', 210 * p, 0, 740); break; // Bee buzz
@@ -310,9 +332,16 @@ function pumpAudio() {
     }
   }
   if (musicOn && audioCtx && audioCtx.state === 'running') {
+    const dim = (flags >> 2) & 3;
+    if (dim !== lastMusicDim) {
+      lastMusicDim = dim;
+      musicStep = 0;
+      musicNextAt = audioCtx.currentTime + 0.35;
+    }
+    const phrases = dim === 1 ? NETHER_PHRASES : dim === 2 ? END_PHRASES : OVERWORLD_PHRASES;
     const now = audioCtx.currentTime;
     if (now >= musicNextAt) {
-      const [notes, hold, pause, vel] = AMBIENT_PHRASES[musicStep % AMBIENT_PHRASES.length];
+      const [notes, hold, pause, vel] = phrases[musicStep % phrases.length];
       for (let i = 0; i < notes.length; i++) {
         playFeltPianoNote(notes[i], hold, vel * (i === 0 ? 1.0 : 0.72), i * 0.045);
       }

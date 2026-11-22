@@ -233,7 +233,8 @@ pub extern "C" fn game_audio_pop() -> i32 {
 pub extern "C" fn game_audio_flags() -> u32 {
     let m = if web::music_enabled() { 1 } else { 0 };
     let s = if web::sound_enabled() { 2 } else { 0 };
-    m | s
+    let d = (web::music_dimension() as u32 & 3) << 2;
+    d | m | s
 }
 
 #[no_mangle]

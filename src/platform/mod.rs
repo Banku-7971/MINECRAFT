@@ -56,6 +56,7 @@ pub trait Platform {
     fn play(&mut self, s: Sfx);
     fn set_music(&mut self, on: bool);
     fn set_sound(&mut self, on: bool);
+    fn set_dimension(&mut self, _dim: u8) {}
     fn set_cursor(&mut self, visible: bool);
     fn set_capture(&mut self, captured: bool);
     /// Mouse position in 480x270 framebuffer space.

@@ -684,6 +684,12 @@ impl Platform for Win32 {
         }
     }
 
+    fn set_dimension(&mut self, dim: u8) {
+        if let Ok(mut a) = self.audio.lock() {
+            a.set_dimension(dim);
+        }
+    }
+
     fn set_cursor(&mut self, visible: bool) {
         if visible == self.cursor_visible {
             return;
