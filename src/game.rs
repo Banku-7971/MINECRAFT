@@ -676,6 +676,9 @@ impl<P: Platform> Game<P> {
                     self.mouse_right = false;
                     self.mining = None;
                     self.sprinting = false;
+                    if self.screen == Screen::Playing && self.ui == Ui::None {
+                        self.open_pause();
+                    }
                 }
                 Event::MouseMove { dx, dy } => {
                     if self.screen == Screen::Playing && (self.ui == Ui::None || self.ui == Ui::Chat) {
@@ -1541,7 +1544,7 @@ impl<P: Platform> Game<P> {
         }
 
         // crafting output
-        let (rx, ry, rw, rh) = render::craft_result_rect(grid_size);
+        let (rx, ry, rw, rh) = render::inv_craft_result_rect(grid_size);
         if mx >= rx && mx < rx + rw && my >= ry && my < ry + rh {
             let result = self.craft_result();
             if !result.is_empty() {
@@ -1559,7 +1562,7 @@ impl<P: Platform> Game<P> {
         }
         // crafting grid
         for i in 0..grid_size * grid_size {
-            let (x, y, w, h) = render::craft_slot_rect(i, grid_size);
+            let (x, y, w, h) = render::inv_craft_slot_rect(i, grid_size);
             if mx >= x && mx < x + w && my >= y && my < y + h {
                 self.slot_click(right, 0, render::craft_grid_idx(i, grid_size));
                 return;
@@ -1567,7 +1570,7 @@ impl<P: Platform> Game<P> {
         }
         // recipe book controls
         let recs = craft::recipes();
-        let pages = (recs.len() + 5) / 6;
+        let pages = (recs.len() + 11) / 12;
         let (pvx, pvy, pvw, pvh) = render::recipe_prev_rect();
         if mx >= pvx && mx < pvx + pvw && my >= pvy && my < pvy + pvh {
             self.recipe_page = if self.recipe_page == 0 { pages.saturating_sub(1) } else { self.recipe_page - 1 };
@@ -1580,10 +1583,10 @@ impl<P: Platform> Game<P> {
             self.plat.play(Sfx::Click);
             return;
         }
-        for i in 0..6 {
+        for i in 0..12 {
             let (x, y, w, h) = render::recipe_slot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h {
-                let idx = self.recipe_page * 6 + i;
+                let idx = self.recipe_page * 12 + i;
                 if idx < recs.len() {
                     self.recipe_sel = idx;
                     self.plat.play(Sfx::Click);
@@ -1613,7 +1616,7 @@ impl<P: Platform> Game<P> {
         }
         // storage
         for i in 0..STORE {
-            let (x, y, w, h) = render::inv_slot_rect(i);
+            let (x, y, w, h) = render::inv_panel_slot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h {
                 self.slot_click(right, 1, i);
                 return;
@@ -1621,7 +1624,7 @@ impl<P: Platform> Game<P> {
         }
         // hotbar
         for i in 0..HOT {
-            let (x, y, w, h) = render::hot_slot_rect(i);
+            let (x, y, w, h) = render::inv_panel_hot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h {
                 self.slot_click(right, 2, i);
                 return;
@@ -2153,16 +2156,16 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             } + ench * 1.5 + str_bonus;
             if is_crit { dmg *= 1.5; }
             self.mobs[i].hp -= dmg;
-            self.mobs[i].hurt = 0.45;
+            self.mobs[i].hurt = 0.5;
             let (mxp, myp, mzp) = (self.mobs[i].x, self.mobs[i].y + 0.8, self.mobs[i].z);
             self.spawn_particle_burst(mxp, myp, mzp, if is_crit { [255, 215, 70] } else { [215, 48, 48] }, if is_crit { 10 } else { 6 }, 2.4, 7.0);
             let kdx = self.mobs[i].x - self.player.x;
             let kdz = self.mobs[i].z - self.player.z;
             let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
-            let kb = if self.sprinting { 8.4 } else { 5.2 } + ench * 1.4;
+            let kb = if self.sprinting { 9.6 } else { 6.2 } + ench * 2.2;
             self.mobs[i].kb_vx = (kdx / kd) * kb;
             self.mobs[i].kb_vz = (kdz / kd) * kb;
-            self.mobs[i].vy = self.mobs[i].vy.max(if self.sprinting { 4.2 } else { 3.2 });
+            self.mobs[i].vy = self.mobs[i].vy.max(if self.sprinting { 6.2 } else { 5.2 });
             self.mobs[i].on_ground = false;
             if !self.mobs[i].kind.hostile() || self.mobs[i].kind == MobKind::Spider {
                 self.mobs[i].panic = if self.mobs[i].kind == MobKind::Spider { 12.0 } else { 4.0 };
@@ -2358,8 +2361,19 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 drop.count += 1;
             }
             if !drop.is_empty() {
-                let left = self.player.add(drop.id, drop.count);
-                if left > 0 { self.drops.push(Drop::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5, drop.id)); }
+                for di in 0..drop.count {
+                    let seed = self.tick.wrapping_add((x as u32).wrapping_mul(73856093) ^ (z as u32).wrapping_mul(19349663) ^ di as u32);
+                    let ang = (seed % 360) as f32 * 0.01745329;
+                    let spd = 1.15 + ((seed >> 8) % 10) as f32 * 0.07;
+                    self.drops.push(Drop::with_scatter(
+                        x as f32 + 0.5,
+                        y as f32 + 0.45,
+                        z as f32 + 0.5,
+                        drop.id,
+                        ang.cos() * spd,
+                        ang.sin() * spd,
+                    ));
+                }
             }
             let xp_gain = match b {
                 world::COAL_ORE => 1,
@@ -3537,7 +3551,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 if under_b == world::ICE { speed *= 1.28; }
                 if in_cobweb { speed *= 0.25; }
 
-                let kb_decay = (1.0 - 8.5 * dt).max(0.0);
+                let kb_decay = 0.03f32.powf(dt);
                 self.player_kb_vx *= kb_decay;
                 self.player_kb_vz *= kb_decay;
                 if self.player_kb_vx.abs() < 0.05 { self.player_kb_vx = 0.0; }
@@ -3594,7 +3608,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     }
                 } else {
                     if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
-                        self.player.vy = if self.potion_jump > 0.0 { 11.8 } else { 9.0 };
+                        self.player.vy = if self.potion_jump > 0.0 { 11.8 } else { 8.95 };
                         self.player.on_ground = false;
                         self.plat.play(Sfx::Jump);
                     }
@@ -3604,6 +3618,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 if collides(&mut self.world, self.player.x, ny, self.player.z) {
                     if self.player.vy < 0.0 {
                         let pre_vy = self.player.vy;
+                        self.player.y = (ny - 0.005).floor() + 1.0;
                         self.elytra_gliding = false;
                         if self.flying {
                             self.flying = false;
@@ -3625,8 +3640,15 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     self.player.vy = 0.0;
                 } else {
                     self.player.y = ny;
-                    self.player.on_ground = false;
-                    if self.player.y > self.fall_y { self.fall_y = self.player.y; }
+                    if self.player.vy <= 0.0 && collides(&mut self.world, self.player.x, self.player.y - 0.02, self.player.z) {
+                        self.player.y = (self.player.y - 0.02).floor() + 1.0;
+                        self.player.on_ground = true;
+                        self.player.vy = 0.0;
+                        self.fall_y = self.player.y;
+                    } else {
+                        self.player.on_ground = false;
+                        if self.player.y > self.fall_y { self.fall_y = self.player.y; }
+                    }
                 }
                 let move_mag = (vx * vx + vz * vz).sqrt();
                 if move_mag > 0.1 && (self.player.on_ground || in_water || self.flying) {
@@ -3853,9 +3875,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     let kdx = self.player.x - self.mobs[i].x;
                     let kdz = self.player.z - self.mobs[i].z;
                     let kd = (kdx * kdx + kdz * kdz).sqrt().max(0.05);
-                    self.player_kb_vx = (kdx / kd) * 6.0;
-                    self.player_kb_vz = (kdz / kd) * 6.0;
-                    self.player.vy = self.player.vy.max(3.6);
+                    self.player_kb_vx = (kdx / kd) * 7.4;
+                    self.player_kb_vz = (kdz / kd) * 7.4;
+                    self.player.vy = self.player.vy.max(6.2);
+                    self.player.on_ground = false;
                     self.damage_player(2.0, false);
                 }
             }
@@ -3933,12 +3956,13 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             }
         }
 
-        // drops
+        // drops (0.35s pickup delay so broken blocks visibly drop on the ground before collecting)
         for d in self.drops.iter_mut() { d.update(&mut self.world, dt); }
         let mut picked: Vec<usize> = Vec::new();
         for (i, d) in self.drops.iter().enumerate() {
+            if d.age < 0.35 { continue; }
             let dist = ((d.x - self.player.x).powi(2) + (d.y - self.player.y - 0.8).powi(2) + (d.z - self.player.z).powi(2)).sqrt();
-            if dist < 1.8 { picked.push(i); }
+            if dist < 1.4 { picked.push(i); }
         }
         for i in picked.into_iter().rev() {
             let d = self.drops.remove(i);
@@ -4792,10 +4816,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     fn inv_hover(&self, grid_size: usize) -> Option<(usize, usize)> {
         let (mx, my) = (self.mouse_x, self.mouse_y);
         for i in 0..grid_size * grid_size {
-            let (x, y, w, h) = render::craft_slot_rect(i, grid_size);
+            let (x, y, w, h) = render::inv_craft_slot_rect(i, grid_size);
             if mx >= x && mx < x + w && my >= y && my < y + h { return Some((0, i)); }
         }
-        let (rx, ry, rw, rh) = render::craft_result_rect(grid_size);
+        let (rx, ry, rw, rh) = render::inv_craft_result_rect(grid_size);
         if mx >= rx && mx < rx + rw && my >= ry && my < ry + rh { return Some((0, 99)); }
         let (pvx, pvy, pvw, pvh) = render::recipe_prev_rect();
         if mx >= pvx && mx < pvx + pvw && my >= pvy && my < pvy + pvh { return Some((3, 100)); }
@@ -4803,7 +4827,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         if mx >= nvx && mx < nvx + nvw && my >= nvy && my < nvy + nvh { return Some((3, 101)); }
         let (fx, fy, fw, fh) = render::recipe_fill_rect();
         if mx >= fx && mx < fx + fw && my >= fy && my < fy + fh { return Some((3, 102)); }
-        for i in 0..6 {
+        for i in 0..12 {
             let (x, y, w, h) = render::recipe_slot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h { return Some((3, i)); }
         }
@@ -4814,11 +4838,11 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let (ox, oy, ow, oh) = render::offhand_slot_rect();
         if mx >= ox && mx < ox + ow && my >= oy && my < oy + oh { return Some((4, 4)); }
         for i in 0..STORE {
-            let (x, y, w, h) = render::inv_slot_rect(i);
+            let (x, y, w, h) = render::inv_panel_slot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h { return Some((1, i)); }
         }
         for i in 0..HOT {
-            let (x, y, w, h) = render::hot_slot_rect(i);
+            let (x, y, w, h) = render::inv_panel_hot_rect(i);
             if mx >= x && mx < x + w && my >= y && my < y + h { return Some((2, i)); }
         }
         None

@@ -40,25 +40,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v2.2.0"
+          TAG="v2.3.0"
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
           fi
 
           NOTES_FILE="$(mktemp)"
           cat <<'EOF' > "$NOTES_FILE"
-          ## Windows Downloads (v2.2.0 — 100% Original Audio & Music)
+          ## Windows Downloads (v2.3.0 — Java Edition UI, 3D Hand, Esc Pause, Drops, Jump & Knockback)
           - **`Minecraft.exe`** — Portable 64-bit Windows GUI game executable (double-click to play; no Java or DLLs required).
           - **`Minecraft-Setup.exe`** — Windows GUI installer (installs to `%LOCALAPPDATA%\Minecraft`, creates Desktop & Start Menu shortcuts, and adds Windows Apps & Features uninstaller).
 
-          ### 100% Original Sound & Music Suite
-          - **3 Original Dimension Soundtracks:** Overworld (*"Sunlight & Moss"* felt-piano + pad), Nether (*"Ember Choir"* dark Phrygian drones & bells), and The End (*"Astral Drift"* Lydian crystal chimes).
-          - **Original Jukebox Tracks:** *"Meadow Promenade"* and *"Basalt Bounce"* full-length multi-part grooves.
-          - **Pitch-Varied Original Foley & Mob Audio:** Zero external/copyrighted audio assets; linear-interpolated pitch variation on footsteps, digging, placing, water splashes, furnace crackle, Creeper fuse hiss, explosions, and all mob voices.
+          ### What's New in v2.3.0
+          - **Java Edition Survival Inventory & Recipe Book:** Unified `#C6C6C6` panel with integrated black Steve paper-doll preview (tracks cursor + renders equipped armor/offhand), 4 armor slots + offhand silhouettes, 2×2 crafting grid, 3×9 inventory + 1×9 hotbar, and 12 distinct page-1 recipes in the Recipe Book.
+          - **True 3D First-Person Hand & Held Blocks:** Perspective-projected 3D Steve forearm (with walk bob & swing animation) and true 3D held blocks.
+          - **Java Edition `182×22` Hotbar & HUD:** Authentic `182×22` hotbar, `24×24` white-bevelled active slot selector, `182×5` segmented XP bar with outlined level number, and flush-aligned pixel hearts, armor, drumsticks, and air bubbles.
+          - **Gameplay Polish:** Pressing `Esc` in-game reliably pauses (including on pointer-lock release), breaking blocks drops scattered item entities into the world with pickup delay, crisp Java-style jump ground-snap, and natural exponential knockback impulse & decay.
 
           ### Included Features
-          - Real `.zip` / `.mrpack` / `.json` **Resource Pack, Shader Pack, Datapack, and Modpack** loader (drop packs in `packs/` next to `Minecraft.exe`, or cycle shaders in **Options -> Shader** and `/shader`).
-          - Horizon-style 3D volumetric clouds, 15x15 chunk render distance, 960x540 HD rendering, 32 3D mobs, Nether & End dimensions, Redstone, Crafting, Enchanting, Brewing, and LAN Multiplayer.
+          - 100% original multi-dimension music & pitch-varied foley/mob audio, real `.zip` / `.mrpack` / `.json` **Resource Pack, Shader Pack, Datapack, and Modpack** loader, volumetric horizon clouds, 15×15 chunk render distance, 960×540 HD rendering, 32 3D mobs, Nether & End dimensions, Redstone, Crafting, Enchanting, Brewing, and LAN Multiplayer.
           EOF
 
           # Remove leading indentation from heredoc
