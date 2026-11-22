@@ -1,0 +1,5 @@
+Block and item 16x16 pixel textures packed into assets/textures.bin are sourced from:
+1. Reworkbench (16x16 Minecraft Resource Pack) by Pharador / AntoineThebaud (CC-BY-4.0)
+   https://github.com/AntoineThebaud/Reworkbench
+2. Pixel Perfection Legacy by XSSheep & Nova Wostra
+   https://github.com/minetest-texture-packs/Pixel-Perfection-Legacy
