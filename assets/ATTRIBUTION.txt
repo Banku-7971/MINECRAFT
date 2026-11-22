@@ -3,3 +3,7 @@ Block and item 16x16 pixel textures packed into assets/textures.bin are sourced 
    https://github.com/AntoineThebaud/Reworkbench
 2. Pixel Perfection Legacy by XSSheep & Nova Wostra
    https://github.com/minetest-texture-packs/Pixel-Perfection-Legacy
+
+All built-in sound effects, mob voices, jukebox tracks ("Meadow Promenade", "Basalt Bounce"),
+and dimension soundtracks (Overworld "Sunlight & Moss", Nether "Ember Choir", End "Astral Drift")
+are 100% original procedural synthesis written in Rust (src/sound.rs) and WebAudio (web/game.js).

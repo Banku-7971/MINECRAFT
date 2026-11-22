@@ -40,23 +40,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v2.1.0"
+          TAG="v2.2.0"
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
           fi
 
           NOTES_FILE="$(mktemp)"
           cat <<'EOF' > "$NOTES_FILE"
-          ## Windows Downloads
+          ## Windows Downloads (v2.2.0 — 100% Original Audio & Music)
           - **`Minecraft.exe`** — Portable 64-bit Windows GUI game executable (double-click to play; no Java or DLLs required).
           - **`Minecraft-Setup.exe`** — Windows GUI installer (installs to `%LOCALAPPDATA%\Minecraft`, creates Desktop & Start Menu shortcuts, and adds Windows Apps & Features uninstaller).
 
-          > **Why is the `.exe` ~3–5 MB instead of 200+ MB?**
-          > Official Minecraft Java Edition bundles the Java Virtual Machine (JRE), LWJGL/OpenGL native libraries, and ~150 MB of `.ogg` audio + PNG files. This engine is compiled directly to native x86_64 machine code in zero-dependency Rust with procedural audio synthesis and compressed textures embedded inside the `.exe`.
+          ### 100% Original Sound & Music Suite
+          - **3 Original Dimension Soundtracks:** Overworld (*"Sunlight & Moss"* felt-piano + pad), Nether (*"Ember Choir"* dark Phrygian drones & bells), and The End (*"Astral Drift"* Lydian crystal chimes).
+          - **Original Jukebox Tracks:** *"Meadow Promenade"* and *"Basalt Bounce"* full-length multi-part grooves.
+          - **Pitch-Varied Original Foley & Mob Audio:** Zero external/copyrighted audio assets; linear-interpolated pitch variation on footsteps, digging, placing, water splashes, furnace crackle, Creeper fuse hiss, explosions, and all mob voices.
 
           ### Included Features
           - Real `.zip` / `.mrpack` / `.json` **Resource Pack, Shader Pack, Datapack, and Modpack** loader (drop packs in `packs/` next to `Minecraft.exe`, or cycle shaders in **Options -> Shader** and `/shader`).
-          - Smooth continuous biome transitions, `F5`/`C` 3rd-person camera cycling, mob collision, red hurt flash + knockback + panic flee AI, Nether & End dimensions, Redstone, Crafting, Enchanting, Brewing, and LAN Multiplayer.
+          - Horizon-style 3D volumetric clouds, 15x15 chunk render distance, 960x540 HD rendering, 32 3D mobs, Nether & End dimensions, Redstone, Crafting, Enchanting, Brewing, and LAN Multiplayer.
           EOF
 
           # Remove leading indentation from heredoc

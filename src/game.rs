@@ -515,6 +515,7 @@ impl<P: Platform> Game<P> {
             beacon_buff: false,
         };
         game.load_world();
+        game.plat.set_dimension(game.world.dim.idx() as u8);
         #[cfg(not(target_arch = "wasm32"))]
         {
             game.reload_native_packs();
@@ -4645,6 +4646,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
 
     fn travel_to(&mut self, target_dim: Dimension, tx: f32, ty: f32, tz: f32) {
         self.world.set_dim(target_dim);
+        self.plat.set_dimension(target_dim.idx() as u8);
         self.portal_cd = 3.5;
         self.player.vy = 0.0;
         let ix = tx.floor() as i32;

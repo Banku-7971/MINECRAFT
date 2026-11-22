@@ -28,10 +28,12 @@ thread_local! {
     static FRAME: RefCell<Vec<u8>> = RefCell::new(Vec::new());
     static SOUND_ON: Cell<bool> = Cell::new(true);
     static MUSIC_ON: Cell<bool> = Cell::new(true);
+    static MUSIC_DIM: Cell<u8> = Cell::new(0);
 }
 
 pub fn sound_enabled() -> bool { SOUND_ON.with(|c| c.get()) }
 pub fn music_enabled() -> bool { MUSIC_ON.with(|c| c.get()) }
+pub fn music_dimension() -> u8 { MUSIC_DIM.with(|c| c.get()) }
 
 pub struct Web;
 
@@ -90,6 +92,10 @@ impl Platform for Web {
 
     fn set_sound(&mut self, on: bool) {
         SOUND_ON.with(|c| c.set(on));
+    }
+
+    fn set_dimension(&mut self, dim: u8) {
+        MUSIC_DIM.with(|c| c.set(dim));
     }
 
     fn set_cursor(&mut self, visible: bool) {
