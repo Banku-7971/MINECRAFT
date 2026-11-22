@@ -3616,9 +3616,10 @@ pub fn draw_select_world_screen(
 ) {
     // Classic Java dirt background
     let atlas = Textures::atlas();
+    let dirt_k = Textures::face_kind(world::DIRT, 0, 1, 0);
     for y in 0..H as i32 {
         for x in 0..W as i32 {
-            let c = atlas.sample_kind(TexKind::Dirt, ((x / 2) % 16) as f32 / 16.0, ((y / 2) % 16) as f32 / 16.0, 0, false);
+            let c = atlas.sample_kind(dirt_k, ((x / 2) % 16) as f32 / 16.0, ((y / 2) % 16) as f32 / 16.0, 0, false);
             fb.set(x, y, c[0] / 3, c[1] / 3, c[2] / 3, 255);
         }
     }
@@ -3632,7 +3633,7 @@ pub fn draw_select_world_screen(
         for (i, (wname, meta)) in worlds.iter().take(6).enumerate() {
             let y = 32 + i as i32 * 26;
             let is_sel = i == selected;
-            let hv = hover == 10 + i;
+            let hv = hover == 4 + i;
             if is_sel || hv {
                 fb.rect(46, y, W as i32 - 92, 24, if is_sel { [40, 48, 62, 230] } else { [32, 32, 38, 190] });
                 fb.frame(46, y, W as i32 - 92, 24, if is_sel { [255, 255, 255, 255] } else { [130, 130, 140, 255] });
@@ -3650,9 +3651,10 @@ pub fn draw_select_world_screen(
 /// Classic Minecraft Java Edition chunk-grid world generation/loading screen.
 pub fn draw_loading_screen(fb: &mut Framebuffer, label: &str, pct: f32, tick: u32) {
     let atlas = Textures::atlas();
+    let dirt_k = Textures::face_kind(world::DIRT, 0, 1, 0);
     for y in 0..H as i32 {
         for x in 0..W as i32 {
-            let c = atlas.sample_kind(TexKind::Dirt, ((x / 2) % 16) as f32 / 16.0, ((y / 2) % 16) as f32 / 16.0, 0, false);
+            let c = atlas.sample_kind(dirt_k, ((x / 2) % 16) as f32 / 16.0, ((y / 2) % 16) as f32 / 16.0, 0, false);
             fb.set(x, y, c[0] / 3, c[1] / 3, c[2] / 3, 255);
         }
     }

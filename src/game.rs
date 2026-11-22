@@ -811,6 +811,19 @@ impl<P: Platform> Game<P> {
             Screen::Title => {
                 if code == VK_RETURN { self.start_singleplayer(); }
             }
+            Screen::SelectWorld => {
+                if code == VK_ESCAPE { self.screen = Screen::Title; }
+                else if code == VK_UP && self.selected_world > 0 { self.selected_world -= 1; }
+                else if code == VK_DOWN && self.selected_world + 1 < self.worlds_list.len() { self.selected_world += 1; }
+                else if code == VK_RETURN {
+                    if let Some((wname, _)) = self.worlds_list.get(self.selected_world).cloned() {
+                        self.world_name = wname;
+                        self.load_world();
+                    }
+                    self.start_singleplayer();
+                }
+            }
+            Screen::Loading => {}
             Screen::Options => {
                 if code == VK_ESCAPE { if self.return_to_pause { self.return_to_pause = false; self.screen = Screen::Playing; self.ui = Ui::Pause; } else { self.screen = Screen::Title; } }
             }
@@ -2446,7 +2459,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     self.trade_prof = if m.kind == MobKind::WanderingTrader {
                         5
                     } else {
-                        ((m.x.abs() as usize * 7 + m.z.abs() as usize * 13) % 5)
+                        (m.x.abs() as usize * 7 + m.z.abs() as usize * 13) % 5
                     };
                     self.ui = Ui::Trade;
                     self.mouse_right = false;
@@ -4442,7 +4455,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
         let ring = (pct * 4.0) as i32;
         for dx in -ring..=ring {
             for dz in -ring..=ring {
-                let _ = self.world.chunk(pcx + dx, pcz + dz);
+                let _ = self.world.highest_ground((pcx + dx) * 16, (pcz + dz) * 16);
             }
         }
         self.out_fb.clear();
