@@ -70,21 +70,16 @@ pub trait Platform {
 
 #[cfg(windows)]
 pub mod win32;
-#[cfg(all(not(windows), not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(windows), not(target_arch = "wasm32")))]
 pub mod harness;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
-#[cfg(target_os = "android")]
-pub mod android;
 
 #[cfg(windows)]
 pub fn create() -> impl Platform { win32::Win32::new("Minecraft") }
 
-#[cfg(all(not(windows), not(target_arch = "wasm32"), not(target_os = "android")))]
+#[cfg(all(not(windows), not(target_arch = "wasm32")))]
 pub fn create() -> impl Platform { harness::Harness::new() }
 
 #[cfg(target_arch = "wasm32")]
 pub fn create() -> impl Platform { web::Web::new() }
-
-#[cfg(target_os = "android")]
-pub fn create() -> impl Platform { android::Android::new() }

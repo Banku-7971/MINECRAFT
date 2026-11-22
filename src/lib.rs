@@ -26,6 +26,3 @@ mod world;
 
 #[cfg(target_arch = "wasm32")]
 mod web_export;
-
-#[cfg(target_os = "android")]
-mod android_export;
