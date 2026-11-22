@@ -72,6 +72,11 @@ pub fn recipes() -> Vec<Recipe> {
     vec![
         // --- basics ---
         shaped!(p, 4, [0, world::LOG, 0; 0, 0, 0; 0, 0, 0]),
+        shaped!(s, 4, [0, p, 0; 0, p, 0; 0, 0, 0]),
+        shaped!(world::CRAFTING, 1, [p, p, 0; p, p, 0; 0, 0, 0]),
+        shaped!(world::FURNACE, 1, [c, c, c; c, 0, c; c, c, c]),
+        shaped!(world::CHEST, 1, [p, p, p; p, 0, p; p, p, p]),
+        shaped!(world::TORCH, 4, [0, COAL, 0; 0, s, 0; 0, 0, 0]),
         shaped!(p, 4, [0, world::BIRCH_LOG, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(p, 4, [0, world::SPRUCE_LOG, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(p, 4, [0, world::JUNGLE_LOG, 0; 0, 0, 0; 0, 0, 0]),
@@ -81,11 +86,6 @@ pub fn recipes() -> Vec<Recipe> {
         shaped!(BLAZE_POWDER, 2, [0, BLAZE_ROD, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(EYE_OF_ENDER, 1, [ENDER_PEARL, BLAZE_POWDER, 0; 0, 0, 0; 0, 0, 0]),
         shaped!(world::NETHER_BRICKS, 1, [world::NETHERRACK, world::NETHERRACK, 0; world::NETHERRACK, world::NETHERRACK, 0; 0, 0, 0]),
-        shaped!(s, 4, [0, p, 0; 0, p, 0; 0, 0, 0]),
-        shaped!(world::CRAFTING, 1, [p, p, 0; p, p, 0; 0, 0, 0]),
-        shaped!(world::FURNACE, 1, [c, c, c; c, 0, c; c, c, c]),
-        shaped!(world::CHEST, 1, [p, p, p; p, 0, p; p, p, p]),
-        shaped!(world::TORCH, 4, [0, COAL, 0; 0, s, 0; 0, 0, 0]),
         shaped!(world::BED, 1, [world::WOOL_WHITE, world::WOOL_WHITE, world::WOOL_WHITE; p, p, p; 0, 0, 0]),
         shaped!(world::BOOKSHELF, 1, [p, p, p; world::WOOL_WHITE, world::WOOL_WHITE, world::WOOL_WHITE; p, p, p]),
         shaped!(world::LANTERN, 1, [0, 0, 0; ir, world::TORCH, ir; 0, 0, 0]),

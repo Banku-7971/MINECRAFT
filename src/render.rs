@@ -2552,83 +2552,205 @@ fn armor_icon(fb: &mut Framebuffer, x: i32, y: i32, state: u8) {
     }
 }
 
-pub const SLOT: i32 = 24;
-pub const HOT_Y: i32 = 238;
-pub fn hotbar_x(i: usize) -> i32 { W as i32 / 2 - (9 * (SLOT + 2)) / 2 + i as i32 * (SLOT + 2) }
+pub const SLOT: i32 = 20;
+pub const HOT_Y: i32 = 246;
+pub fn hotbar_x(i: usize) -> i32 { (W as i32 - 182) / 2 + 1 + i as i32 * 20 }
 
-pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32, swing: f32) {
-    let bob_x = (walk_bob * 0.8).cos() * 3.5 - swing.sin() * 20.0;
-    let bob_y = (walk_bob * 1.6).sin().abs() * 3.5 + swing.sin() * 14.0;
-    if item == 0 {
-        // Thick, bold Minecraft 1st-person POV Steve arm emerging from bottom-right
-        let bx = (362.0 + bob_x) as i32;
-        let by = (154.0 + bob_y) as i32;
-        for row in 0..124 {
-            let slant = ((row as f32) * 0.50) as i32;
-            let px = bx + slant;
-            let py = by + row;
-            if py >= H as i32 { break; }
-            if row > 78 {
-                // Cyan shirt sleeve cuff
-                fb.rect(px - 2, py, 48, 1, [46, 154, 174, 255]);
-                fb.rect(px + 46, py, 20, 1, [32, 110, 128, 255]);
-            } else {
-                // Thick forearm skin front + shaded side + top highlight
-                fb.rect(px, py, 46, 1, [218, 170, 130, 255]);
-                fb.rect(px + 46, py, 19, 1, [168, 124, 90, 255]);
-                if row < 7 {
-                    fb.rect(px, py, 46, 1, [236, 194, 156, 255]);
-                    fb.rect(px + 46, py, 19, 1, [192, 148, 112, 255]);
-                }
-            }
-        }
-    } else if item < 256 && !is_flat_block_icon(item) {
-        // Larger chunky Minecraft 3D held block + thick Steve forearm gripping from bottom-right
-        let bx = (362.0 + bob_x) as i32;
-        let by = (152.0 + bob_y) as i32;
-        for row in 0..84 {
-            let slant = ((row as f32) * 0.46) as i32;
-            let px = bx + 44 + slant;
-            let py = by + 40 + row;
-            if py >= H as i32 { break; }
-            if row > 54 {
-                fb.rect(px - 2, py, 34, 1, [46, 154, 174, 255]);
-                fb.rect(px + 32, py, 15, 1, [32, 110, 128, 255]);
-            } else {
-                fb.rect(px, py, 32, 1, [216, 168, 128, 255]);
-                fb.rect(px + 32, py, 14, 1, [168, 124, 90, 255]);
-            }
-        }
-        draw_item_icon(fb, bx, by, item, 88, tick);
-    } else {
-        // Larger 3D extruded tool / sword / item held in thick Steve hand
-        let bx = (376.0 + bob_x) as i32;
-        let by = (162.0 + bob_y) as i32;
-        for row in 0..80 {
-            let slant = ((row as f32) * 0.45) as i32;
-            let px = bx + 32 + slant;
-            let py = by + 34 + row;
-            if py >= H as i32 { break; }
-            if row > 52 {
-                fb.rect(px - 2, py, 32, 1, [46, 154, 174, 255]);
-                fb.rect(px + 30, py, 14, 1, [32, 110, 128, 255]);
-            } else {
-                fb.rect(px, py, 30, 1, [216, 168, 128, 255]);
-                fb.rect(px + 30, py, 13, 1, [168, 124, 90, 255]);
-            }
-        }
-        let sz = 58i32;
-        for depth in (1..=5).rev() {
-            for py in 0..sz {
-                for px in 0..sz {
-                    let c = item_pixel(item, (px as u32 * 16 / sz as u32).min(15), (py as u32 * 16 / sz as u32).min(15), tick);
+fn rot_3d_point(p: [f32; 3], yaw: f32, pitch: f32, roll: f32, t: [f32; 3]) -> [f32; 3] {
+    let (sr, cr) = (roll.sin(), roll.cos());
+    let (x1, y1, z1) = (p[0] * cr - p[1] * sr, p[0] * sr + p[1] * cr, p[2]);
+    let (sp, cp) = (pitch.sin(), pitch.cos());
+    let (x2, y2, z2) = (x1, y1 * cp - z1 * sp, y1 * sp + z1 * cp);
+    let (sy, cy) = (yaw.sin(), yaw.cos());
+    [x2 * cy + z2 * sy + t[0], y2 + t[1], -x2 * sy + z2 * cy + t[2]]
+}
+
+fn fill_textured_quad_3d<F: Fn(f32, f32) -> [u8; 4]>(
+    fb: &mut Framebuffer,
+    pts: [[f32; 3]; 4],
+    shade: f32,
+    sample: F,
+) {
+    let focal = 245.0;
+    let cx = W as f32 * 0.5;
+    let cy = H as f32 * 0.5;
+    let mut s = [[0.0f32; 2]; 4];
+    let mut min_x = W as i32;
+    let mut max_x = -1i32;
+    let mut min_y = H as i32;
+    let mut max_y = -1i32;
+    for i in 0..4 {
+        let z = pts[i][2].max(0.08);
+        let sx = cx + (pts[i][0] / z) * focal;
+        let sy = cy - (pts[i][1] / z) * focal;
+        s[i] = [sx, sy];
+        min_x = min_x.min(sx.floor() as i32);
+        max_x = max_x.max(sx.ceil() as i32);
+        min_y = min_y.min(sy.floor() as i32);
+        max_y = max_y.max(sy.ceil() as i32);
+    }
+    min_x = min_x.max(0);
+    max_x = max_x.min(W as i32 - 1);
+    min_y = min_y.max(0);
+    max_y = max_y.min(H as i32 - 1);
+    // Split quad (0,1,2,3) into triangles (0,1,2) with UVs (0,0),(1,0),(1,1) and (0,2,3) with (0,0),(1,1),(0,1)
+    let tris = [
+        (s[0], s[1], s[2], [0.0f32, 0.0], [1.0, 0.0], [1.0, 1.0]),
+        (s[0], s[2], s[3], [0.0f32, 0.0], [1.0, 1.0], [0.0, 1.0]),
+    ];
+    for (p0, p1, p2, uv0, uv1, uv2) in tris {
+        let area = (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0]);
+        if area.abs() < 0.001 { continue; }
+        let inv = 1.0 / area;
+        for py in min_y..=max_y {
+            let fy = py as f32 + 0.5;
+            for px in min_x..=max_x {
+                let fx = px as f32 + 0.5;
+                let w0 = ((p1[0] - fx) * (p2[1] - fy) - (p1[1] - fy) * (p2[0] - fx)) * inv;
+                let w1 = ((p2[0] - fx) * (p0[1] - fy) - (p2[1] - fy) * (p0[0] - fx)) * inv;
+                let w2 = 1.0 - w0 - w1;
+                if w0 >= -0.005 && w1 >= -0.005 && w2 >= -0.005 {
+                    let u = (w0 * uv0[0] + w1 * uv1[0] + w2 * uv2[0]).clamp(0.0, 0.999);
+                    let v = (w0 * uv0[1] + w1 * uv1[1] + w2 * uv2[1]).clamp(0.0, 0.999);
+                    let c = sample(u, v);
                     if c[3] > 20 {
-                        fb.set(bx + 2 + px + depth, by + 2 + py + depth, (c[0] as f32 * 0.56) as u8, (c[1] as f32 * 0.56) as u8, (c[2] as f32 * 0.56) as u8, c[3]);
+                        fb.set(
+                            px,
+                            py,
+                            (c[0] as f32 * shade).min(255.0) as u8,
+                            (c[1] as f32 * shade).min(255.0) as u8,
+                            (c[2] as f32 * shade).min(255.0) as u8,
+                            c[3],
+                        );
                     }
                 }
             }
         }
-        draw_item_icon(fb, bx + 2, by + 2, item, sz, tick);
+    }
+}
+
+fn draw_box_3d_screen<F: Fn(usize, f32, f32) -> [u8; 4]>(
+    fb: &mut Framebuffer,
+    hx: f32,
+    hy: f32,
+    hz: f32,
+    yaw: f32,
+    pitch: f32,
+    roll: f32,
+    t: [f32; 3],
+    sample_face: F,
+) {
+    let corners = [
+        [-hx, -hy, -hz], [ hx, -hy, -hz], [ hx,  hy, -hz], [-hx,  hy, -hz],
+        [-hx, -hy,  hz], [ hx, -hy,  hz], [ hx,  hy,  hz], [-hx,  hy,  hz],
+    ];
+    let v: Vec<[f32; 3]> = corners.iter().map(|&c| rot_3d_point(c, yaw, pitch, roll, t)).collect();
+    // 6 faces: (idx[4], shade, face_id)
+    let faces = [
+        ([3, 2, 6, 7], 1.00f32, 0usize), // +Y top
+        ([0, 1, 5, 4], 0.58f32, 1usize), // -Y bottom
+        ([7, 4, 0, 3], 0.84f32, 2usize), // -X left (facing player)
+        ([2, 1, 5, 6], 0.72f32, 3usize), // +X right
+        ([3, 2, 1, 0], 0.78f32, 4usize), // -Z front (toward camera)
+        ([6, 7, 4, 5], 0.65f32, 5usize), // +Z back
+    ];
+    let mut order: Vec<(f32, usize)> = Vec::with_capacity(6);
+    for (fi, (idx, _, _)) in faces.iter().enumerate() {
+        let cz = (v[idx[0]][2] + v[idx[1]][2] + v[idx[2]][2] + v[idx[3]][2]) * 0.25;
+        order.push((cz, fi));
+    }
+    order.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, fi) in order {
+        let (idx, shade, f_id) = faces[fi];
+        let pts = [v[idx[0]], v[idx[1]], v[idx[2]], v[idx[3]]];
+        fill_textured_quad_3d(fb, pts, shade, |u, vv| sample_face(f_id, u, vv));
+    }
+}
+
+fn steve_arm_texel(v_along: f32, u_across: f32, face_id: usize) -> [u8; 4] {
+    let tx = (u_across * 4.0).floor() as i32;
+    let ty = (v_along * 12.0).floor() as i32;
+    let n = (th(tx, ty + face_id as i32 * 13, 91) % 16) as i32 - 8;
+    if v_along > 0.62 {
+        // Cyan shirt sleeve on back 38% of arm
+        let r = (46 + n).clamp(24, 72) as u8;
+        let g = (156 + n).clamp(110, 185) as u8;
+        let b = (176 + n).clamp(130, 205) as u8;
+        [r, g, b, 255]
+    } else {
+        // Steve forearm skin with natural pixel variation
+        let r = (224 + n).clamp(175, 245) as u8;
+        let g = (172 + n).clamp(130, 198) as u8;
+        let b = (132 + n).clamp(95, 160) as u8;
+        [r, g, b, 255]
+    }
+}
+
+pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32, swing: f32) {
+    let sw = swing.sin();
+    let bob_x = (walk_bob * 0.85).cos() * 0.025;
+    let bob_y = (walk_bob * 1.7).sin().abs() * 0.024;
+    if item == 0 {
+        // Real 3D perspective-projected Steve arm in classic Minecraft Java bottom-right pose
+        let tx = 0.56 + bob_x - sw * 0.34;
+        let ty = -0.52 - bob_y + (swing * 0.6).sin() * 0.14 - sw * 0.08;
+        let tz = 1.06 - sw * 0.18;
+        let yaw = -0.72 - sw * 0.52;
+        let pitch = 0.52 - sw * 0.58;
+        let roll = 0.22 + sw * 0.26;
+        draw_box_3d_screen(fb, 0.14, 0.14, 0.44, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
+            // Map length along Z axis (v for side/top faces)
+            let v_along = match face_id {
+                0 | 1 => v,
+                2 | 3 => u,
+                _ => 0.0, // front fist end is skin
+            };
+            steve_arm_texel(v_along, u, face_id)
+        });
+    } else if item < 256 && !is_flat_block_icon(item) {
+        // Real 3D perspective-projected held block in Minecraft Java bottom-right pose
+        let atlas = Textures::atlas();
+        let anim = item == world::WATER || item == world::LAVA || item == world::NETHER_PORTAL;
+        let top_k = Textures::face_kind(item, 0, 1, 0);
+        let left_k = Textures::face_kind(item, -1, 0, 0);
+        let right_k = Textures::face_kind(item, 0, 0, 1);
+        let tx = 0.48 + bob_x - sw * 0.28;
+        let ty = -0.44 - bob_y - sw * 0.16;
+        let tz = 1.05 - sw * 0.16;
+        let yaw = -0.76 - sw * 0.44;
+        let pitch = 0.24 - sw * 0.42;
+        let roll = 0.04 + sw * 0.18;
+        draw_box_3d_screen(fb, 0.21, 0.21, 0.21, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
+            let k = match face_id {
+                0 | 1 => top_k,
+                2 | 3 => left_k,
+                _ => right_k,
+            };
+            atlas.sample_kind(k, u, v, tick, anim)
+        });
+    } else {
+        // Held tool/sword/item with subtle 3D arm grip + extruded item sprite
+        let tx = 0.64 + bob_x - sw * 0.30;
+        let ty = -0.60 - bob_y - sw * 0.12;
+        let tz = 1.12 - sw * 0.15;
+        draw_box_3d_screen(fb, 0.12, 0.12, 0.38, -0.68 - sw * 0.45, 0.48 - sw * 0.50, 0.20, [tx, ty, tz], |face_id, u, v| {
+            let v_along = match face_id { 0 | 1 => v, 2 | 3 => u, _ => 0.0 };
+            steve_arm_texel(v_along, u, face_id)
+        });
+        let bx = (370.0 + bob_x * 160.0 - sw * 28.0) as i32;
+        let by = (146.0 + bob_y * 160.0 + sw * 18.0) as i32;
+        let sz = 54i32;
+        for depth in (1..=4).rev() {
+            for py in 0..sz {
+                for px in 0..sz {
+                    let c = item_pixel(item, (px as u32 * 16 / sz as u32).min(15), (py as u32 * 16 / sz as u32).min(15), tick);
+                    if c[3] > 20 {
+                        fb.set(bx + px + depth, by + py + depth, (c[0] as f32 * 0.56) as u8, (c[1] as f32 * 0.56) as u8, (c[2] as f32 * 0.56) as u8, c[3]);
+                    }
+                }
+            }
+        }
+        draw_item_icon(fb, bx, by, item, sz, tick);
     }
 }
 
@@ -2717,70 +2839,84 @@ pub fn draw_hud(
     let hb_left = hotbar_x(0);
     if mode != GameMode::Spectator {
         if offhand != 0 {
-            let ox = hb_left - SLOT - 8;
-            fb.rect(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, [24, 24, 26, 220]);
-            fb.frame(ox - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, if shield_blocking { [220, 220, 255, 255] } else { [18, 18, 20, 255] });
-            draw_item_icon(fb, ox + 3, HOT_Y + 3, offhand, SLOT - 6, tick);
+            let ox = hb_left - 28;
+            fb.rect(ox - 1, HOT_Y - 1, 22, 22, [28, 28, 30, 220]);
+            fb.rect(ox, HOT_Y, 20, 20, [48, 48, 52, 175]);
+            fb.frame(ox - 1, HOT_Y - 1, 22, 22, if shield_blocking { [220, 220, 255, 255] } else { [20, 20, 22, 240] });
+            draw_item_icon(fb, ox + 2, HOT_Y + 2, offhand, 16, tick);
         }
-        // Classic Minecraft continuous hotbar frame
-        let bar_w = 9 * (SLOT + 2) + 2;
-        fb.rect(hb_left - 2, HOT_Y - 2, bar_w, SLOT + 4, [24, 24, 26, 210]);
-        fb.frame(hb_left - 2, HOT_Y - 2, bar_w, SLOT + 4, [72, 72, 76, 255]);
-        fb.frame(hb_left - 3, HOT_Y - 3, bar_w + 2, SLOT + 6, [18, 18, 20, 255]);
+        // 100% Classic Minecraft Java Edition 182x22 hotbar
+        let bar_x = hb_left - 1;
+        let bar_y = HOT_Y - 1;
+        let bar_w = 182;
+        fb.rect(bar_x, bar_y, bar_w, 22, [26, 26, 28, 215]);
+        fb.frame(bar_x, bar_y, bar_w, 22, [18, 18, 20, 245]);
+        fb.rect(bar_x + 1, bar_y + 1, bar_w - 2, 1, [68, 68, 72, 200]);
+        fb.rect(bar_x + 1, bar_y + 20, bar_w - 2, 1, [68, 68, 72, 200]);
         for i in 0..9 {
             let x = hotbar_x(i);
-            fb.rect(x, HOT_Y, SLOT, SLOT, [118, 118, 122, 165]);
-            fb.rect(x, HOT_Y, SLOT, 1, [42, 42, 44, 220]);
-            fb.rect(x, HOT_Y, 1, SLOT, [42, 42, 44, 220]);
-            fb.rect(x + SLOT - 1, HOT_Y, 1, SLOT, [160, 160, 166, 180]);
-            fb.rect(x, HOT_Y + SLOT - 1, SLOT, 1, [160, 160, 166, 180]);
-            if hot[i] != 0 { draw_item_icon(fb, x + 3, HOT_Y + 3, hot[i], SLOT - 6, tick); }
+            fb.rect(x + 1, HOT_Y + 1, 18, 18, [44, 44, 48, 165]);
+            if i > 0 {
+                fb.rect(x, HOT_Y + 1, 1, 18, [72, 72, 76, 210]);
+            }
+            if hot[i] != 0 { draw_item_icon(fb, x + 2, HOT_Y + 2, hot[i], 16, tick); }
             if counts[i] > 1 {
-                text_shadow(fb, x + SLOT - 11, HOT_Y + SLOT - 7, &counts[i].to_string(), [255, 255, 255, 255], 1);
+                let cs = counts[i].to_string();
+                text_shadow(fb, x + 19 - cs.len() as i32 * 6, HOT_Y + 13, &cs, [255, 255, 255, 255], 1);
             }
         }
-        // Draw active selector box on top so its crisp double-bevel overlaps cleanly
+        // Classic Java 24x24 white-bevelled active slot selector protruding 1px outside the hotbar
         let sx = hotbar_x(selected);
-        fb.frame(sx - 2, HOT_Y - 2, SLOT + 4, SLOT + 4, [238, 238, 240, 255]);
-        fb.frame(sx - 1, HOT_Y - 1, SLOT + 2, SLOT + 2, [196, 196, 200, 255]);
-        fb.frame(sx - 3, HOT_Y - 3, SLOT + 6, SLOT + 6, [34, 34, 38, 220]);
+        fb.frame(sx - 2, HOT_Y - 2, 24, 24, [22, 22, 24, 245]);
+        fb.frame(sx - 1, HOT_Y - 1, 22, 22, [234, 236, 240, 255]);
+        fb.frame(sx, HOT_Y, 20, 20, [190, 192, 196, 255]);
+        fb.frame(sx + 1, HOT_Y + 1, 18, 18, [48, 48, 52, 215]);
         if mode == GameMode::Survival {
             if armor > 0 {
                 for i in 0..10 {
                     let threshold = (i as u32 + 1) * 2;
                     let st = if armor >= threshold { 2 } else if armor >= threshold - 1 { 1 } else { 0 };
-                    armor_icon(fb, hb_left + i as i32 * 9, HOT_Y - 28, st);
+                    armor_icon(fb, bar_x + i as i32 * 8, HOT_Y - 28, st);
                 }
             }
             for i in 0..10 {
                 let threshold = (i as f32 + 1.0) * 2.0;
                 let st = if health >= threshold { 2 } else if health >= threshold - 1.0 { 1 } else { 0 };
-                heart(fb, hb_left + i * 9, HOT_Y - 18, st);
+                heart(fb, bar_x + i * 8, HOT_Y - 18, st);
             }
             for i in 0..10 {
                 let threshold = (i as f32 + 1.0) * 2.0;
                 let st = if hunger >= threshold { 2 } else if hunger >= threshold - 1.0 { 1 } else { 0 };
-                drumstick(fb, hb_left + 9 * (SLOT + 2) - 9 - i * 9, HOT_Y - 18, st);
+                drumstick(fb, bar_x + bar_w - 9 - i * 8, HOT_Y - 18, st);
             }
             if air < 9.95 {
                 let bubbles = air.ceil().clamp(0.0, 10.0) as i32;
                 for i in 0..bubbles {
-                    let bx = hb_left + 9 * (SLOT + 2) - 9 - i * 9;
+                    let bx = bar_x + bar_w - 9 - i * 8;
                     let by = HOT_Y - 28;
-                    fb.rect(bx, by, 6, 6, [40, 140, 240, 220]);
+                    fb.rect(bx, by, 7, 7, [40, 140, 240, 220]);
                     fb.rect(bx + 1, by + 1, 2, 2, [215, 245, 255, 240]);
                 }
             }
-            let xp_bar_w = 9 * (SLOT + 2) - 2;
             let needed = (7 + level * 2).max(1);
-            let xp_fill = ((xp as f32 / needed as f32).clamp(0.0, 1.0) * xp_bar_w as f32) as i32;
-            fb.rect(hb_left, HOT_Y - 6, xp_bar_w, 3, [20, 20, 20, 220]);
+            let xp_fill = ((xp as f32 / needed as f32).clamp(0.0, 1.0) * 180.0) as i32;
+            fb.rect(bar_x, HOT_Y - 7, bar_w, 5, [16, 22, 16, 235]);
+            fb.frame(bar_x, HOT_Y - 7, bar_w, 5, [14, 16, 14, 255]);
             if xp_fill > 0 {
-                fb.rect(hb_left, HOT_Y - 6, xp_fill, 3, [122, 232, 68, 255]);
+                fb.rect(bar_x + 1, HOT_Y - 6, xp_fill, 3, [128, 255, 32, 255]);
+                fb.rect(bar_x + 1, HOT_Y - 4, xp_fill, 1, [88, 200, 20, 255]);
+            }
+            for t in 1..18 {
+                fb.rect(bar_x + 1 + t * 10, HOT_Y - 6, 1, 3, [20, 28, 20, 140]);
             }
             if level > 0 {
                 let ls = level.to_string();
-                text_shadow(fb, W as i32 / 2 - (ls.len() as i32 * 3), HOT_Y - 14, &ls, [136, 246, 82, 255], 1);
+                let lx = W as i32 / 2 - (ls.len() as i32 * 3);
+                let ly = HOT_Y - 14;
+                for &(ox, oy) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                    text(fb, lx + ox, ly + oy, &ls, [0, 0, 0, 255], 1);
+                }
+                text(fb, lx, ly, &ls, [128, 255, 32, 255], 1);
             }
         }
         if shield_blocking {
@@ -3101,12 +3237,12 @@ pub fn craft_grid_idx(i: usize, grid_size: usize) -> usize {
 }
 
 pub fn recipe_slot_rect(i: usize) -> (i32, i32, i32, i32) {
-    (224 + (i % 3) as i32 * 24, 38 + (i / 3) as i32 * 24, 22, 22)
+    (274 + (i % 6) as i32 * 26, 52 + (i / 6) as i32 * 26, 24, 24)
 }
 
-pub fn recipe_prev_rect() -> (i32, i32, i32, i32) { (344, 22, 16, 13) }
-pub fn recipe_next_rect() -> (i32, i32, i32, i32) { (394, 22, 16, 13) }
-pub fn recipe_fill_rect() -> (i32, i32, i32, i32) { (352, 82, 54, 16) }
+pub fn recipe_prev_rect() -> (i32, i32, i32, i32) { (366, 32, 16, 13) }
+pub fn recipe_next_rect() -> (i32, i32, i32, i32) { (418, 32, 16, 13) }
+pub fn recipe_fill_rect() -> (i32, i32, i32, i32) { (374, 146, 52, 18) }
 
 pub fn recipe_fits_2x2(pat: &[u16; 9]) -> bool {
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (3usize, 3usize, 0usize, 0usize);
@@ -3124,10 +3260,135 @@ pub fn recipe_fits_2x2(pat: &[u16; 9]) -> bool {
 }
 
 pub fn armor_slot_rect(i: usize) -> (i32, i32, i32, i32) {
-    (22, 30 + i as i32 * 28, SLOT_PX, SLOT_PX)
+    (46, 34 + i as i32 * 22, 22, 22)
 }
 pub fn offhand_slot_rect() -> (i32, i32, i32, i32) {
-    (22, 152, SLOT_PX, SLOT_PX)
+    (136, 100, 22, 22)
+}
+pub fn inv_panel_slot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (46 + (i % 9) as i32 * 22, 134 + (i / 9) as i32 * 22, 22, 22)
+}
+pub fn inv_panel_hot_rect(i: usize) -> (i32, i32, i32, i32) {
+    (46 + i as i32 * 22, 208, 22, 22)
+}
+pub fn inv_craft_slot_rect(i: usize, grid_size: usize) -> (i32, i32, i32, i32) {
+    let (gx, gy) = if grid_size == 3 { (68, 44) } else { (160, 48) };
+    (gx + (i % grid_size) as i32 * 22, gy + (i / grid_size) as i32 * 22, 22, 22)
+}
+pub fn inv_craft_result_rect(grid_size: usize) -> (i32, i32, i32, i32) {
+    if grid_size == 3 { (172, 64, 26, 26) } else { (222, 58, 24, 24) }
+}
+
+fn armor_tint(id: u16) -> Option<[u8; 3]> {
+    match id {
+        crate::items::LEATHER_HELMET | crate::items::LEATHER_CHESTPLATE | crate::items::LEATHER_LEGGINGS | crate::items::LEATHER_BOOTS => Some([148, 92, 52]),
+        crate::items::IRON_HELMET | crate::items::IRON_CHESTPLATE | crate::items::IRON_LEGGINGS | crate::items::IRON_BOOTS => Some([208, 212, 218]),
+        crate::items::GOLD_HELMET | crate::items::GOLD_CHESTPLATE | crate::items::GOLD_LEGGINGS | crate::items::GOLD_BOOTS => Some([245, 210, 62]),
+        crate::items::DIAMOND_HELMET | crate::items::DIAMOND_CHESTPLATE | crate::items::DIAMOND_LEGGINGS | crate::items::DIAMOND_BOOTS => Some([88, 225, 232]),
+        crate::items::NETHERITE_HELMET | crate::items::NETHERITE_CHESTPLATE | crate::items::NETHERITE_LEGGINGS | crate::items::NETHERITE_BOOTS => Some([68, 62, 72]),
+        crate::items::ELYTRA => Some([128, 124, 146]),
+        _ => None,
+    }
+}
+
+fn draw_armor_silhouette(fb: &mut Framebuffer, x: i32, y: i32, kind: usize) {
+    let col = [98, 98, 102, 255];
+    match kind {
+        0 => {
+            fb.rect(x + 6, y + 6, 10, 4, col);
+            fb.rect(x + 6, y + 10, 3, 4, col);
+            fb.rect(x + 13, y + 10, 3, 4, col);
+        }
+        1 => {
+            fb.rect(x + 5, y + 6, 12, 4, col);
+            fb.rect(x + 7, y + 10, 8, 6, col);
+        }
+        2 => {
+            fb.rect(x + 6, y + 6, 10, 4, col);
+            fb.rect(x + 6, y + 10, 4, 6, col);
+            fb.rect(x + 12, y + 10, 4, 6, col);
+        }
+        3 => {
+            fb.rect(x + 6, y + 10, 4, 6, col);
+            fb.rect(x + 12, y + 10, 4, 6, col);
+            fb.rect(x + 5, y + 14, 5, 2, col);
+            fb.rect(x + 12, y + 14, 5, 2, col);
+        }
+        _ => {
+            // Shield silhouette
+            fb.rect(x + 6, y + 5, 10, 12, col);
+            fb.rect(x + 8, y + 17, 6, 1, col);
+        }
+    }
+}
+
+fn draw_steve_paperdoll(fb: &mut Framebuffer, bx: i32, by: i32, bw: i32, bh: i32, armor: &[crate::craft::Stack; 4], offhand: crate::craft::Stack) {
+    fb.rect(bx, by, bw, bh, [0, 0, 0, 255]);
+    fb.rect(bx, by, bw, 1, [55, 55, 55, 255]);
+    fb.rect(bx, by, 1, bh, [55, 55, 55, 255]);
+    fb.rect(bx + bw - 1, by, 1, bh, [255, 255, 255, 255]);
+    fb.rect(bx, by + bh - 1, bw, 1, [255, 255, 255, 255]);
+
+    let (mx, my) = fb.cursor;
+    let cx = bx + bw / 2;
+    let look_x = ((mx - cx) as f32 / 80.0).clamp(-1.0, 1.0);
+    let look_y = ((my - (by + 24)) as f32 / 80.0).clamp(-1.0, 1.0);
+    let hx_off = (look_x * 2.5).round() as i32;
+    let hy_off = (look_y * 1.5).round() as i32;
+
+    // Legs (dark indigo jeans) + optional leggings/boots
+    let leg_col = armor_tint(armor[2].id).unwrap_or([52, 54, 128]);
+    let boot_col = armor_tint(armor[3].id);
+    fb.rect(cx - 8, by + 54, 7, 22, [leg_col[0], leg_col[1], leg_col[2], 255]);
+    fb.rect(cx + 1, by + 54, 7, 22, [leg_col[0], leg_col[1], leg_col[2], 255]);
+    fb.rect(cx - 1, by + 54, 2, 22, [28, 30, 74, 255]);
+    if let Some(bc) = boot_col {
+        fb.rect(cx - 8, by + 69, 7, 7, [bc[0], bc[1], bc[2], 255]);
+        fb.rect(cx + 1, by + 69, 7, 7, [bc[0], bc[1], bc[2], 255]);
+    } else {
+        fb.rect(cx - 8, by + 72, 7, 4, [96, 96, 102, 255]);
+        fb.rect(cx + 1, by + 72, 7, 4, [96, 96, 102, 255]);
+    }
+
+    // Torso (Steve cyan shirt) + optional chestplate
+    let body_col = armor_tint(armor[1].id).unwrap_or([46, 154, 174]);
+    fb.rect(cx - 8, by + 30, 16, 24, [body_col[0], body_col[1], body_col[2], 255]);
+    fb.rect(cx - 8, by + 30, 16, 2, [(body_col[0] as f32 * 0.8) as u8, (body_col[1] as f32 * 0.8) as u8, (body_col[2] as f32 * 0.8) as u8, 255]);
+
+    // Arms (cyan shoulder + skin forearm)
+    let arm_top = armor_tint(armor[1].id).unwrap_or([46, 154, 174]);
+    fb.rect(cx - 15, by + 30, 7, 10, [arm_top[0], arm_top[1], arm_top[2], 255]);
+    fb.rect(cx - 15, by + 40, 7, 14, [214, 166, 126, 255]);
+    fb.rect(cx + 8, by + 30, 7, 10, [arm_top[0], arm_top[1], arm_top[2], 255]);
+    fb.rect(cx + 8, by + 40, 7, 14, [214, 166, 126, 255]);
+    if !offhand.is_empty() {
+        fb.rect(cx + 10, by + 38, 6, 14, [145, 106, 68, 255]);
+        fb.frame(cx + 10, by + 38, 6, 14, [190, 194, 204, 255]);
+    }
+
+    // Head (skin, hair, eyes, beard) + optional helmet
+    let head_x = cx - 9;
+    let head_y = by + 11;
+    fb.rect(head_x, head_y, 18, 18, [220, 172, 132, 255]);
+    fb.rect(head_x, head_y, 18, 5, [74, 46, 28, 255]);
+    fb.rect(head_x, head_y + 5, 2, 3, [74, 46, 28, 255]);
+    fb.rect(head_x + 16, head_y + 5, 2, 3, [74, 46, 28, 255]);
+    // Eyes looking subtly toward mouse cursor
+    let ex = head_x + 3 + hx_off;
+    let ey = head_y + 8 + hy_off;
+    fb.rect(ex, ey, 4, 2, [255, 255, 255, 255]);
+    fb.rect(ex + 2 + (hx_off > 0) as i32 - (hx_off < 0) as i32, ey, 2, 2, [64, 68, 152, 255]);
+    fb.rect(ex + 8, ey, 4, 2, [255, 255, 255, 255]);
+    fb.rect(ex + 8 + (hx_off > 0) as i32 - (hx_off < 0) as i32, ey, 2, 2, [64, 68, 152, 255]);
+    // Nose + beard
+    fb.rect(head_x + 7 + hx_off / 2, head_y + 11, 4, 2, [192, 138, 102, 255]);
+    fb.rect(head_x + 5, head_y + 14, 8, 4, [120, 74, 48, 255]);
+    fb.rect(head_x + 7, head_y + 14, 4, 2, [172, 102, 82, 255]);
+    if let Some(hc) = armor_tint(armor[0].id) {
+        fb.rect(head_x - 1, head_y - 1, 20, 7, [hc[0], hc[1], hc[2], 255]);
+        fb.rect(head_x - 1, head_y + 6, 3, 6, [hc[0], hc[1], hc[2], 255]);
+        fb.rect(head_x + 16, head_y + 6, 3, 6, [hc[0], hc[1], hc[2], 255]);
+    }
 }
 
 pub fn draw_inventory_screen(
@@ -3145,54 +3406,92 @@ pub fn draw_inventory_screen(
     recipe_page: usize,
     recipe_sel: usize,
 ) {
-    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 140]);
-    panel(fb, 14, 14, 40, 174);
-    text(fb, 18, 18, "GEAR", [60, 60, 60, 255], 1);
-    let mut tip = String::new();
-    for i in 0..4 {
-        let (x, y, w, _h) = armor_slot_rect(i);
-        let hv = hover == Some((4, i));
-        slot(fb, x, y, w, hv);
-        draw_item_icon(fb, x + 2, y + 2, armor[i].id, w - 4, tick);
-        if hv && !armor[i].is_empty() { tip = crate::items::name(armor[i].id).to_string(); }
-    }
-    let (ox, oy, ow, _oh) = offhand_slot_rect();
-    let ohv = hover == Some((4, 4));
-    slot(fb, ox, oy, ow, ohv);
-    draw_item_icon(fb, ox + 2, oy + 2, offhand.id, ow - 4, tick);
-    if ohv && !offhand.is_empty() { tip = crate::items::name(offhand.id).to_string(); }
+    fb.rect(0, 0, W as i32, H as i32, [0, 0, 0, 145]);
 
-    let (px, py, pw, ph) = (60, 14, 360, 242);
+    // Classic Java Main Inventory / Crafting Panel
+    let (px, py, pw, ph) = (36, 26, 218, 218);
     panel(fb, px, py, pw, ph);
-    text(fb, 76, 20, if grid_size == 3 { "CRAFTING (3x3)" } else { "CRAFTING (2x2)" }, [60, 60, 60, 255], 1);
+    let mut tip = String::new();
+
+    if grid_size == 2 {
+        // 4 Armor slots vertically + 3D Steve Preview Box + Offhand slot inside main panel
+        for i in 0..4 {
+            let (x, y, w, _h) = armor_slot_rect(i);
+            let hv = hover == Some((4, i));
+            slot(fb, x, y, w, hv);
+            if armor[i].is_empty() {
+                draw_armor_silhouette(fb, x, y, i);
+            } else {
+                draw_item_icon(fb, x + 3, y + 3, armor[i].id, w - 6, tick);
+            }
+            if hv && !armor[i].is_empty() { tip = crate::items::name(armor[i].id).to_string(); }
+        }
+        draw_steve_paperdoll(fb, 70, 34, 64, 88, armor, offhand);
+        let (ox, oy, ow, _oh) = offhand_slot_rect();
+        let ohv = hover == Some((4, 4));
+        slot(fb, ox, oy, ow, ohv);
+        if offhand.is_empty() {
+            draw_armor_silhouette(fb, ox, oy, 4);
+        } else {
+            draw_item_icon(fb, ox + 3, oy + 3, offhand.id, ow - 6, tick);
+        }
+        if ohv && !offhand.is_empty() { tip = crate::items::name(offhand.id).to_string(); }
+        text(fb, 160, 38, "Crafting", [64, 64, 64, 255], 1);
+    } else {
+        text(fb, 68, 34, "Crafting", [64, 64, 64, 255], 1);
+        text(fb, 46, 122, "Inventory", [64, 64, 64, 255], 1);
+    }
+
+    // Crafting grid & output
     for i in 0..grid_size * grid_size {
-        let (x, y, w, h) = craft_slot_rect(i, grid_size);
+        let (x, y, w, h) = inv_craft_slot_rect(i, grid_size);
         let hv = hover == Some((0, i));
         slot(fb, x, y, w, hv);
         let st = grid[craft_grid_idx(i, grid_size)];
-        draw_item_icon(fb, x + 2, y + 2, st.id, w - 4, tick);
+        draw_item_icon(fb, x + 3, y + 3, st.id, w - 6, tick);
         if st.count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", st.count), [255, 255, 255, 255], 1); }
         if hv && !st.is_empty() { tip = crate::items::name(st.id).to_string(); }
     }
-    let (rx, ry, rw, rh) = craft_result_rect(grid_size);
+    let (rx, ry, rw, rh) = inv_craft_result_rect(grid_size);
     let rhv = hover == Some((0, 99));
     slot(fb, rx, ry, rw, rhv);
-    draw_item_icon(fb, rx + 2, ry + 2, result.id, rw - 4, tick);
+    draw_item_icon(fb, rx + 3, ry + 3, result.id, rw - 6, tick);
     if result.count > 1 { text_shadow(fb, rx + rw - 9, ry + rh - 8, &format!("{}", result.count), [255, 255, 255, 255], 1); }
     if rhv && !result.is_empty() { tip = crate::items::name(result.id).to_string(); }
-    text(fb, rx - 18, ry + 9, "->", [60, 60, 60, 255], 1);
+    let (ax, ay) = if grid_size == 3 { (146, 73) } else { (206, 66) };
+    fb.rect(ax, ay, 8, 2, [130, 130, 130, 255]);
+    fb.rect(ax + 6, ay - 2, 2, 6, [130, 130, 130, 255]);
+    fb.rect(ax + 8, ay - 1, 2, 4, [130, 130, 130, 255]);
 
-    fb.rect(218, 20, 194, 90, [168, 168, 172, 255]);
-    fb.frame(218, 20, 194, 90, [95, 95, 100, 255]);
-    text(fb, 224, 24, "RECIPES", [50, 50, 55, 255], 1);
+    // 3x9 Main Inventory + 1x9 Hotbar inside the main panel
+    for i in 0..27 {
+        let (x, y, w, h) = inv_panel_slot_rect(i);
+        let hv = hover == Some((1, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 3, y + 3, store[i].id, w - 6, tick);
+        if store[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", store[i].count), [255, 255, 255, 255], 1); }
+        if hv && !store[i].is_empty() { tip = crate::items::name(store[i].id).to_string(); }
+    }
+    for i in 0..9 {
+        let (x, y, w, h) = inv_panel_hot_rect(i);
+        let hv = hover == Some((2, i));
+        slot(fb, x, y, w, hv);
+        draw_item_icon(fb, x + 3, y + 3, hot[i].id, w - 6, tick);
+        if hot[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
+        if hv && !hot[i].is_empty() { tip = crate::items::name(hot[i].id).to_string(); }
+    }
+
+    // Docked Java-style Recipe Book side panel
+    panel(fb, 260, 26, 184, 218);
+    text(fb, 272, 35, "Recipe Book", [64, 64, 64, 255], 1);
     let recs = crate::craft::recipes();
-    let per_page = 6usize;
+    let per_page = 12usize;
     let pages = (recs.len() + per_page - 1) / per_page;
     let page = recipe_page.min(pages.saturating_sub(1));
     let (pvx, pvy, pvw, pvh) = recipe_prev_rect();
     let (nvx, nvy, nvw, nvh) = recipe_next_rect();
     button(fb, pvx, pvy, pvw, pvh, "<", hover == Some((3, 100)));
-    text(fb, 363, 25, &format!("{}/{}", page + 1, pages), [50, 50, 55, 255], 1);
+    text(fb, 386, 35, &format!("{}/{}", page + 1, pages), [64, 64, 64, 255], 1);
     button(fb, nvx, nvy, nvw, nvh, ">", hover == Some((3, 101)));
 
     let start = page * per_page;
@@ -3204,52 +3503,40 @@ pub fn draw_inventory_screen(
         slot(fb, x, y, w, hv || selected);
         if selected { fb.frame(x, y, w, h, [255, 220, 60, 255]); }
         if idx < recs.len() {
-            draw_item_icon(fb, x + 2, y + 2, recs[idx].out, w - 4, tick);
+            draw_item_icon(fb, x + 3, y + 3, recs[idx].out, w - 6, tick);
             if recs[idx].count > 1 {
-                text_shadow(fb, x + w - 8, y + h - 8, &format!("{}", recs[idx].count), [255, 255, 255, 255], 1);
+                text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", recs[idx].count), [255, 255, 255, 255], 1);
             }
             if hv { tip = crate::items::name(recs[idx].out).to_string(); }
         }
     }
 
+    fb.rect(270, 110, 164, 122, [168, 168, 172, 255]);
+    fb.frame(270, 110, 164, 122, [95, 95, 100, 255]);
     if let Some(rec) = recs.get(recipe_sel) {
         for r in 0..3 {
             for c in 0..3 {
-                let sx = 302 + c as i32 * 14;
-                let sy = 38 + r as i32 * 14;
-                slot(fb, sx, sy, 13, false);
+                let sx = 280 + c as i32 * 18;
+                let sy = 122 + r as i32 * 18;
+                slot(fb, sx, sy, 18, false);
                 let id = rec.pattern[r * 3 + c];
-                if id != 0 { draw_item_icon(fb, sx + 1, sy + 1, id, 11, tick); }
+                if id != 0 { draw_item_icon(fb, sx + 2, sy + 2, id, 14, tick); }
             }
         }
+        fb.rect(338, 148, 8, 2, [110, 110, 114, 255]);
+        fb.rect(344, 146, 2, 6, [110, 110, 114, 255]);
+        slot(fb, 350, 138, 20, false);
+        draw_item_icon(fb, 352, 140, rec.out, 16, tick);
         let (fx, fy, fw, fh) = recipe_fill_rect();
-        button(fb, fx, fy, fw, fh, "FILL", hover == Some((3, 102)));
+        button(fb, fx, fy, fw, fh, "Fill", hover == Some((3, 102)));
         let out_name = crate::items::name(rec.out);
-        let short = if out_name.len() > 21 { &out_name[..21] } else { out_name };
-        text(fb, 224, 90, short, [40, 40, 45, 255], 1);
+        let short = if out_name.len() > 24 { &out_name[..24] } else { out_name };
+        text(fb, 280, 186, short, [50, 50, 55, 255], 1);
         if grid_size == 2 && !recipe_fits_2x2(&rec.pattern) {
-            text(fb, 224, 100, "NEEDS CRAFTING TABLE", [175, 40, 40, 255], 1);
+            text(fb, 280, 198, "Needs Crafting Table", [175, 40, 40, 255], 1);
         }
     }
 
-    text(fb, 76, 112, "INVENTORY", [60, 60, 60, 255], 1);
-    for i in 0..27 {
-        let (x, y, w, h) = inv_slot_rect(i);
-        let hv = hover == Some((1, i));
-        slot(fb, x, y, w, hv);
-        draw_item_icon(fb, x + 2, y + 2, store[i].id, w - 4, tick);
-        if store[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", store[i].count), [255, 255, 255, 255], 1); }
-        if hv && !store[i].is_empty() { tip = crate::items::name(store[i].id).to_string(); }
-    }
-    for i in 0..9 {
-        let (x, y, w, h) = hot_slot_rect(i);
-        let hv = hover == Some((2, i));
-        slot(fb, x, y, w, hv);
-        draw_item_icon(fb, x + 2, y + 2, hot[i].id, w - 4, tick);
-        if hot[i].count > 1 { text_shadow(fb, x + w - 9, y + h - 8, &format!("{}", hot[i].count), [255, 255, 255, 255], 1); }
-        if hv && !hot[i].is_empty() { tip = crate::items::name(hot[i].id).to_string(); }
-    }
-    text(fb, 76, 240, "E / ESC CLOSE   -   CLICK RECIPE TO VIEW / FILL", [60, 60, 60, 255], 1);
     draw_cursor_stack(fb, cursor, tick);
     if cursor.is_empty() && !tip.is_empty() { draw_tooltip(fb, &tip); }
 }

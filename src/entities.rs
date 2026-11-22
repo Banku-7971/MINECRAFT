@@ -763,11 +763,12 @@ impl Mob {
         self.ranged_cd = (self.ranged_cd - dt).max(0.0);
         self.breed_cd = (self.breed_cd - dt).max(0.0);
         self.hurt = (self.hurt - dt).max(0.0);
-        let kb_decay = (1.0 - 6.0 * dt).max(0.0);
+        let kb_drag = if self.on_ground { 0.015f32 } else { 0.08f32 };
+        let kb_decay = kb_drag.powf(dt);
         self.kb_vx *= kb_decay;
         self.kb_vz *= kb_decay;
-        if self.kb_vx.abs() < 0.05 { self.kb_vx = 0.0; }
-        if self.kb_vz.abs() < 0.05 { self.kb_vz = 0.0; }
+        if self.kb_vx.abs() < 0.04 { self.kb_vx = 0.0; }
+        if self.kb_vz.abs() < 0.04 { self.kb_vz = 0.0; }
 
         let dx = px - self.x;
         let dz = pz - self.z;
@@ -875,6 +876,10 @@ impl Mob {
                     self.vz = ang.cos() * sp;
                     self.yaw = ang;
                 }
+            } else if self.kb_vx.abs() + self.kb_vz.abs() > 0.6 {
+                // While experiencing knockback, do not let AI chase override the knockback impulse
+                self.vx *= (0.05f32).powf(dt);
+                self.vz *= (0.05f32).powf(dt);
             } else if !self.kind.hostile() && !ignore_player && Self::is_attracted_to(self.kind, held_item) && dist < 11.0 {
                 // Passive animal follows player holding its corresponding food!
                 let target_yaw = dx.atan2(dz);
@@ -1086,15 +1091,37 @@ pub struct Drop {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+    pub vx: f32,
     pub vy: f32,
+    pub vz: f32,
+    pub age: f32,
     pub item: u16,
 }
 
 impl Drop {
     pub fn new(x: f32, y: f32, z: f32, item: u16) -> Self {
-        Self { x, y, z, vy: 2.0, item }
+        Self { x, y, z, vx: 0.0, vy: 3.0, vz: 0.0, age: 0.0, item }
+    }
+    pub fn with_scatter(x: f32, y: f32, z: f32, item: u16, vx: f32, vz: f32) -> Self {
+        Self { x, y, z, vx, vy: 3.4, vz, age: 0.0, item }
     }
     pub fn update(&mut self, world: &mut World, dt: f32) {
+        self.age += dt;
+        let drag = (0.04f32).powf(dt);
+        self.vx *= drag;
+        self.vz *= drag;
+        let nx = self.x + self.vx * dt;
+        if !world::is_solid(world.get(nx.floor() as i32, self.y.floor() as i32, self.z.floor() as i32)) {
+            self.x = nx;
+        } else {
+            self.vx = 0.0;
+        }
+        let nz = self.z + self.vz * dt;
+        if !world::is_solid(world.get(self.x.floor() as i32, self.y.floor() as i32, nz.floor() as i32)) {
+            self.z = nz;
+        } else {
+            self.vz = 0.0;
+        }
         self.vy -= 18.0 * dt;
         let ny = self.y + self.vy * dt;
         if self.vy < 0.0 && world::is_solid(world.get(self.x.floor() as i32, ny.floor() as i32, self.z.floor() as i32)) {
