@@ -809,7 +809,20 @@ pub fn execute<P: Platform>(game: &mut Game<P>, cmd: &str) -> bool {
         }
 
         "/seed" => {
-            game.push_chat("Seed: [79712026]");
+            if let Some(arg) = parts.get(1) {
+                let new_seed = if arg.eq_ignore_ascii_case("random") {
+                    (game.tick as i32).wrapping_mul(1664525).wrapping_add(1013904223) ^ (game.plat.now() * 1000.0) as i32
+                } else if let Ok(v) = arg.parse::<i32>() {
+                    v
+                } else {
+                    game.push_chat("Usage: /seed [<number>|random]");
+                    return true;
+                };
+                game.reseed_world(new_seed);
+                game.push_chat(&format!("Generated new world with seed [{}]", new_seed));
+            } else {
+                game.push_chat(&format!("Seed: [{}]", world::seed()));
+            }
             true
         }
 
@@ -996,8 +1009,21 @@ pub fn execute<P: Platform>(game: &mut Game<P>, cmd: &str) -> bool {
         }
 
         "/particle" => {
-            let name = parts.get(1).copied().unwrap_or("spark");
-            game.push_chat(&format!("Spawned particle {}", name));
+            let name = parts.get(1).copied().unwrap_or("flame");
+            let px = parts.get(2).and_then(|s| parse_rel_f32(s, game.player.x)).unwrap_or(game.player.x);
+            let py = parts.get(3).and_then(|s| parse_rel_f32(s, game.player.y + 1.0)).unwrap_or(game.player.y + 1.0);
+            let pz = parts.get(4).and_then(|s| parse_rel_f32(s, game.player.z - 2.0)).unwrap_or(game.player.z - 2.0);
+            let col = match name.to_ascii_lowercase().as_str() {
+                "flame" | "lava" => [255, 155, 45],
+                "smoke" | "large_smoke" => [130, 130, 135],
+                "heart" => [235, 50, 65],
+                "crit" => [255, 215, 75],
+                "portal" => [180, 65, 245],
+                "splash" | "bubble" => [90, 175, 255],
+                _ => [245, 245, 255],
+            };
+            game.spawn_particle_burst(px, py, pz, col, 14, 2.2, 1.5);
+            game.push_chat(&format!("Spawned particle {} at {:.1}, {:.1}, {:.1}", name, px, py, pz));
             true
         }
 

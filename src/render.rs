@@ -733,7 +733,7 @@ fn is_model_block(b: u16) -> bool {
             | world::TORCH | world::REDSTONE_TORCH | world::BREWING_STAND | world::LANTERN
             | world::HOPPER | world::PRESSURE_PLATE | world::CAKE | world::FARMLAND
             | world::DOOR | world::DOOR_OPEN | world::IRON_DOOR | world::IRON_DOOR_OPEN
-            | world::BUTTON | world::SNOW_LAYER
+            | world::BUTTON | world::SNOW_LAYER | world::BED | world::CHEST | world::SIGN
     )
 }
 
@@ -832,6 +832,26 @@ fn hit_model_boxes(
         world::DOOR_OPEN | world::IRON_DOOR_OPEN => {
             boxes[0] = [0.0, 0.0, 0.0, 3.0*p, 1.0, 1.0]; nb = 1;
         }
+        world::BED => {
+            // Mattress + 4 wooden corner legs (authentic Minecraft bed height 9/16)
+            boxes[0] = [0.0, 3.0*p, 0.0, 1.0, 9.0*p, 1.0];
+            boxes[1] = [0.0, 0.0, 0.0, 3.0*p, 3.0*p, 3.0*p];
+            boxes[2] = [13.0*p, 0.0, 0.0, 1.0, 3.0*p, 3.0*p];
+            boxes[3] = [0.0, 0.0, 13.0*p, 3.0*p, 3.0*p, 1.0];
+            boxes[4] = [13.0*p, 0.0, 13.0*p, 1.0, 3.0*p, 1.0];
+            nb = 5;
+        }
+        world::CHEST => {
+            // Official 14/16 x 14/16 x 14/16 Minecraft chest + latch
+            boxes[0] = [1.0*p, 0.0, 1.0*p, 15.0*p, 14.0*p, 15.0*p];
+            boxes[1] = [7.0*p, 7.0*p, 15.0*p, 9.0*p, 11.0*p, 1.0];
+            nb = 2;
+        }
+        world::SIGN => {
+            boxes[0] = [7.0*p, 0.0, 7.0*p, 9.0*p, 9.0*p, 9.0*p];
+            boxes[1] = [1.0*p, 9.0*p, 7.0*p, 15.0*p, 1.0, 9.0*p];
+            nb = 2;
+        }
         _ => {}
     }
 
@@ -919,9 +939,16 @@ fn shade_voxel(
     shader: &ShaderConfig,
     dyn_light: Option<(f32, f32, f32, f32)>,
 ) -> ([f32; 3], u8) {
-    let t = tex.sample_face(b, nx, ny, nz, u, v, tick);
+    let mut t = tex.sample_face(b, nx, ny, nz, u, v, tick);
     if t[3] == 0 {
         return ([0.0, 0.0, 0.0], 0);
+    }
+    if b == world::BED {
+        if ny > 0 && v < 0.34 {
+            t = [242, 242, 245, 255]; // crisp white pillow
+        } else if ny != 0 && ny < 0 || (ny == 0 && v > 0.78) {
+            t = [152, 114, 70, 255]; // oak frame & legs
+        }
     }
     let fl = face_light(nx, ny, nz, day);
     let ao_v = if apply_ao { ao_smooth(cache, bx, by, bz, nx, ny, nz, u, v) } else { 0.94 };
@@ -1856,6 +1883,47 @@ pub fn draw_drop_sprite(fb: &mut Framebuffer, cam: &Cam, x: f32, y: f32, z: f32,
             let c = item_pixel(item, (px as u32 * 16 / size as u32).min(15), (py as u32 * 16 / size as u32).min(15), tick);
             if c[3] == 0 { continue; }
             fb.set(ix, iy, (c[0] as f32 * light) as u8, (c[1] as f32 * light) as u8, (c[2] as f32 * light) as u8, c[3]);
+        }
+    }
+}
+
+pub fn block_particle_color(b: u16) -> [u8; 3] {
+    let atlas = Textures::atlas();
+    let px = atlas.sample_face(b, 0, 1, 0, 0.42, 0.42, 0);
+    if px[3] > 20 {
+        [px[0], px[1], px[2]]
+    } else {
+        [150, 150, 150]
+    }
+}
+
+pub fn draw_particle_3d(
+    fb: &mut Framebuffer,
+    cam: &Cam,
+    x: f32,
+    y: f32,
+    z: f32,
+    size: f32,
+    color: [u8; 3],
+    day: f32,
+) {
+    let (sx, sy, dist) = match project(cam, x, y, z, fb) { Some(v) => v, None => return };
+    if dist > 42.0 { return; }
+    let ps = ((size / dist * focal_len(fb, cam)).round() as i32).clamp(1, 10);
+    let left = sx as i32 - ps / 2;
+    let top = sy as i32 - ps / 2;
+    let light = 0.45 + day * 0.55;
+    let r = (color[0] as f32 * light).min(255.0) as u8;
+    let g = (color[1] as f32 * light).min(255.0) as u8;
+    let b = (color[2] as f32 * light).min(255.0) as u8;
+    for py in 0..ps {
+        let iy = top + py;
+        if iy < 0 || iy >= fb.h as i32 { continue; }
+        for px in 0..ps {
+            let ix = left + px;
+            if ix < 0 || ix >= fb.w as i32 { continue; }
+            if dist >= fb.depth[iy as usize * fb.w + ix as usize] { continue; }
+            fb.set(ix, iy, r, g, b, 255);
         }
     }
 }
