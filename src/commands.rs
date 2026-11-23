@@ -90,6 +90,9 @@ pub fn resolve_item_or_block(raw: &str) -> Option<u16> {
         "gold_block" | "block_of_gold" => return Some(world::GOLD_BLOCK),
         "emerald_block" | "block_of_emerald" => return Some(world::EMERALD_BLOCK),
         "lapis_block" | "lapis_lazuli_block" => return Some(world::LAPIS_BLOCK),
+        "mushroom_stem" => return Some(world::MUSHROOM_STEM),
+        "red_mushroom_block" => return Some(world::RED_MUSHROOM_BLOCK),
+        "brown_mushroom_block" => return Some(world::BROWN_MUSHROOM_BLOCK),
         _ => {}
     }
     for id in 1..=375u16 {
@@ -151,6 +154,7 @@ pub fn resolve_mob(raw: &str) -> Option<MobKind> {
         "wandering_trader" | "trader" => Some(MobKind::WanderingTrader),
         "guardian" => Some(MobKind::Guardian),
         "warden" => Some(MobKind::Warden),
+        "mooshroom" => Some(MobKind::Mooshroom),
         _ => None,
     }
 }
