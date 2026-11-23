@@ -35,6 +35,7 @@ pub enum MobKind {
     WanderingTrader,
     Guardian,
     Warden,
+    Mooshroom,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -103,7 +104,7 @@ impl MobKind {
             MobKind::Wither => 22, MobKind::Squid => 23, MobKind::Fox => 24,
             MobKind::Bee => 25, MobKind::Phantom => 26,
             MobKind::Panda => 27, MobKind::Allay => 28, MobKind::WanderingTrader => 29,
-            MobKind::Guardian => 30, MobKind::Warden => 31,
+            MobKind::Guardian => 30, MobKind::Warden => 31, MobKind::Mooshroom => 32,
         }
     }
 
@@ -119,7 +120,7 @@ impl MobKind {
             22 => MobKind::Wither, 23 => MobKind::Squid, 24 => MobKind::Fox,
             25 => MobKind::Bee, 26 => MobKind::Phantom,
             27 => MobKind::Panda, 28 => MobKind::Allay, 29 => MobKind::WanderingTrader,
-            30 => MobKind::Guardian, 31 => MobKind::Warden,
+            30 => MobKind::Guardian, 31 => MobKind::Warden, 32 => MobKind::Mooshroom,
             _ => MobKind::Sheep,
         }
     }
@@ -158,6 +159,7 @@ impl MobKind {
             MobKind::WanderingTrader => "Wandering Trader",
             MobKind::Guardian => "Guardian",
             MobKind::Warden => "Warden",
+            MobKind::Mooshroom => "Mooshroom",
         }
     }
 
@@ -234,6 +236,7 @@ impl MobKind {
             MobKind::WanderingTrader => 269, // Emerald
             MobKind::Guardian => 278,        // Fish / Prismarine
             MobKind::Warden => 268,          // Diamond
+            MobKind::Mooshroom => 273,       // Raw Beef
         }
     }
 
@@ -244,7 +247,7 @@ impl MobKind {
             MobKind::Slime | MobKind::Squid | MobKind::Guardian => 1.0,
             MobKind::Panda => 1.25,
             MobKind::PolarBear => 1.4,
-            MobKind::Sheep | MobKind::Cow => 1.35,
+            MobKind::Sheep | MobKind::Cow | MobKind::Mooshroom => 1.35,
             MobKind::SnowGolem => 1.9,
             MobKind::WitherSkeleton => 2.4,
             MobKind::IronGolem => 2.7,
@@ -260,7 +263,7 @@ impl MobKind {
         match self {
             MobKind::Chicken | MobKind::Parrot | MobKind::Allay => 0.22,
             MobKind::Pig | MobKind::Wolf => 0.36,
-            MobKind::Cow | MobKind::Sheep | MobKind::Villager | MobKind::WanderingTrader | MobKind::PolarBear | MobKind::Panda => 0.42,
+            MobKind::Cow | MobKind::Mooshroom | MobKind::Sheep | MobKind::Villager | MobKind::WanderingTrader | MobKind::PolarBear | MobKind::Panda => 0.42,
             MobKind::Spider => 0.52,
             MobKind::IronGolem | MobKind::Warden => 0.58,
             MobKind::Slime | MobKind::Guardian => 0.46,
@@ -510,6 +513,25 @@ pub fn mob_parts(kind: MobKind, walk: f32, airborne: bool) -> Vec<Part3D> {
             Part3D { cx: -0.18, cy: 0.31, cz: -0.32, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: -s, col: [68, 48, 34], col_alt: [215, 215, 210], face: FaceArt::None },
             Part3D { cx: 0.18, cy: 0.31, cz: -0.32, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: s, col: [68, 48, 34], col_alt: [215, 215, 210], face: FaceArt::None },
         ],
+        MobKind::Mooshroom => vec![
+            Part3D { cx: 0.0, cy: 1.06, cz: 0.48, hx: 0.22, hy: 0.22, hz: 0.18, pivot_y: 1.06, swing: 0.0, col: [162, 34, 30], col_alt: [236, 232, 224], face: FaceArt::Cow },
+            Part3D { cx: -0.22, cy: 1.29, cz: 0.48, hx: 0.04, hy: 0.08, hz: 0.04, pivot_y: 1.29, swing: 0.0, col: [216, 206, 186], col_alt: [176, 166, 148], face: FaceArt::None },
+            Part3D { cx: 0.22, cy: 1.29, cz: 0.48, hx: 0.04, hy: 0.08, hz: 0.04, pivot_y: 1.29, swing: 0.0, col: [216, 206, 186], col_alt: [176, 166, 148], face: FaceArt::None },
+            // Red mushrooms sprouting from head & back
+            Part3D { cx: -0.04, cy: 1.34, cz: 0.48, hx: 0.03, hy: 0.06, hz: 0.03, pivot_y: 1.34, swing: 0.0, col: [216, 208, 192], col_alt: [190, 180, 164], face: FaceArt::None },
+            Part3D { cx: -0.04, cy: 1.42, cz: 0.48, hx: 0.09, hy: 0.05, hz: 0.09, pivot_y: 1.42, swing: 0.0, col: [196, 36, 32], col_alt: [238, 232, 224], face: FaceArt::None },
+            Part3D { cx: 0.08, cy: 1.24, cz: 0.06, hx: 0.03, hy: 0.06, hz: 0.03, pivot_y: 1.24, swing: 0.0, col: [216, 208, 192], col_alt: [190, 180, 164], face: FaceArt::None },
+            Part3D { cx: 0.08, cy: 1.32, cz: 0.06, hx: 0.09, hy: 0.05, hz: 0.09, pivot_y: 1.32, swing: 0.0, col: [196, 36, 32], col_alt: [238, 232, 224], face: FaceArt::None },
+            Part3D { cx: -0.10, cy: 1.24, cz: -0.22, hx: 0.03, hy: 0.06, hz: 0.03, pivot_y: 1.24, swing: 0.0, col: [216, 208, 192], col_alt: [190, 180, 164], face: FaceArt::None },
+            Part3D { cx: -0.10, cy: 1.32, cz: -0.22, hx: 0.09, hy: 0.05, hz: 0.09, pivot_y: 1.32, swing: 0.0, col: [196, 36, 32], col_alt: [238, 232, 224], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.90, cz: -0.04, hx: 0.30, hy: 0.28, hz: 0.44, pivot_y: 0.90, swing: 0.0, col: [158, 32, 28], col_alt: [234, 230, 222], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.58, cz: -0.22, hx: 0.13, hy: 0.06, hz: 0.14, pivot_y: 0.58, swing: 0.0, col: [236, 174, 186], col_alt: [208, 144, 158], face: FaceArt::None },
+            Part3D { cx: 0.0, cy: 0.86, cz: -0.50, hx: 0.04, hy: 0.22, hz: 0.04, pivot_y: 1.06, swing: s * 0.25, col: [132, 26, 22], col_alt: [90, 18, 16], face: FaceArt::None },
+            Part3D { cx: -0.18, cy: 0.31, cz: 0.28, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: s, col: [148, 30, 26], col_alt: [228, 224, 218], face: FaceArt::None },
+            Part3D { cx: 0.18, cy: 0.31, cz: 0.28, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: -s, col: [148, 30, 26], col_alt: [228, 224, 218], face: FaceArt::None },
+            Part3D { cx: -0.18, cy: 0.31, cz: -0.32, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: -s, col: [148, 30, 26], col_alt: [228, 224, 218], face: FaceArt::None },
+            Part3D { cx: 0.18, cy: 0.31, cz: -0.32, hx: 0.10, hy: 0.31, hz: 0.10, pivot_y: 0.62, swing: s, col: [148, 30, 26], col_alt: [228, 224, 218], face: FaceArt::None },
+        ],
         MobKind::Sheep => vec![
             Part3D { cx: 0.0, cy: 0.98, cz: 0.44, hx: 0.20, hy: 0.19, hz: 0.20, pivot_y: 0.98, swing: 0.0, col: [228, 198, 174], col_alt: [238, 238, 232], face: FaceArt::Sheep },
             // Fluffy wool hood + ears + thick wool coat + tail
@@ -734,7 +756,7 @@ impl Mob {
     pub fn is_attracted_to(kind: MobKind, held: u16) -> bool {
         if held == 0 { return false; }
         match kind {
-            MobKind::Cow | MobKind::Sheep => held == world::WHEAT || held == world::HAY,
+            MobKind::Cow | MobKind::Mooshroom | MobKind::Sheep => held == world::WHEAT || held == world::HAY,
             MobKind::Pig => matches!(held, crate::items::APPLE | crate::items::GOLDEN_APPLE | crate::items::BREAD) || held == crate::items::CARROT || held == crate::items::BEETROOT,
             MobKind::Chicken => held == world::WHEAT || matches!(held, crate::items::BREAD | crate::items::WHEAT_SEEDS),
             MobKind::Wolf => matches!(held, crate::items::BONE | crate::items::RAW_BEEF | crate::items::STEAK | crate::items::RAW_PORK | crate::items::COOKED_PORK),
@@ -868,7 +890,7 @@ impl Mob {
                     let ang = away + jitter;
                     let sp = match self.kind {
                         MobKind::Wolf => 3.4,
-                        MobKind::Cow | MobKind::Pig | MobKind::Sheep => 2.9,
+                        MobKind::Cow | MobKind::Mooshroom | MobKind::Pig | MobKind::Sheep => 2.9,
                         MobKind::Chicken => 2.6,
                         _ => 2.8,
                     };
@@ -1060,7 +1082,7 @@ pub fn biome_mob(biome: Biome, dim: Dimension, seed: u32, day: f32) -> MobKind {
                     3 => MobKind::Sheep,
                     _ => MobKind::Bee,
                 },
-                Biome::MushroomIsland => MobKind::Cow,
+                Biome::MushroomIsland => MobKind::Mooshroom,
                 Biome::Desert | Biome::Badlands => {
                     if day < 0.42 {
                         if seed % 2 == 0 { MobKind::Skeleton } else { MobKind::Spider }

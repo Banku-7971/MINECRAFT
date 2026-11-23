@@ -444,6 +444,66 @@ impl Textures {
 
     #[inline(always)]
     pub fn sample_face(&self, block: u16, nx: i32, ny: i32, nz: i32, u: f32, v: f32, tick: u32) -> [u8; 4] {
+        let tx = ((u.rem_euclid(1.0) * TEX as f32) as u32) & 15;
+        let ty = ((v.rem_euclid(1.0) * TEX as f32) as u32) & 15;
+        match block {
+            world::BROWN_MUSHROOM => return self.sample_item(88, tx, ty),
+            world::RED_MUSHROOM => return self.sample_item(89, tx, ty),
+            world::MUSHROOM_STEM => {
+                let n = (th(tx as i32, ty as i32, 31) % 14) as i32 - 7;
+                if ny != 0 {
+                    // Tan porous inside on top/bottom
+                    let r = (200 + n).clamp(165, 224) as u8;
+                    let g = (188 + n).clamp(155, 212) as u8;
+                    let b = (156 + n).clamp(125, 180) as u8;
+                    return [r, g, b, 255];
+                }
+                let r = (222 + n).clamp(196, 240) as u8;
+                let g = (218 + n).clamp(192, 236) as u8;
+                let b = (204 + n).clamp(178, 224) as u8;
+                return [r, g, b, 255];
+            }
+            world::RED_MUSHROOM_BLOCK => {
+                let n = (th(tx as i32, ty as i32, 47) % 16) as i32 - 8;
+                if ny < 0 {
+                    let r = (200 + n).clamp(165, 224) as u8;
+                    let g = (188 + n).clamp(155, 212) as u8;
+                    let b = (156 + n).clamp(125, 180) as u8;
+                    return [r, g, b, 255];
+                }
+                // Iconic white spots on crimson red mushroom cap
+                let spot = ((2..=4).contains(&tx) && (2..=4).contains(&ty))
+                    || ((10..=12).contains(&tx) && (3..=5).contains(&ty))
+                    || ((6..=9).contains(&tx) && (9..=12).contains(&ty))
+                    || ((1..=2).contains(&tx) && (11..=13).contains(&ty))
+                    || ((13..=14).contains(&tx) && (10..=12).contains(&ty));
+                if spot {
+                    let r = (232 + n / 2).clamp(210, 248) as u8;
+                    let g = (226 + n / 2).clamp(204, 242) as u8;
+                    let b = (218 + n / 2).clamp(196, 234) as u8;
+                    return [r, g, b, 255];
+                }
+                let r = (186 + n).clamp(150, 212) as u8;
+                let g = (38 + n / 2).clamp(24, 58) as u8;
+                let b = (34 + n / 2).clamp(20, 54) as u8;
+                return [r, g, b, 255];
+            }
+            world::BROWN_MUSHROOM_BLOCK => {
+                let n = (th(tx as i32, ty as i32, 61) % 18) as i32 - 9;
+                if ny < 0 {
+                    let r = (200 + n).clamp(165, 224) as u8;
+                    let g = (188 + n).clamp(155, 212) as u8;
+                    let b = (156 + n).clamp(125, 180) as u8;
+                    return [r, g, b, 255];
+                }
+                let fleck = if (tx * 7 + ty * 13) % 11 == 0 { 12 } else { 0 };
+                let r = (148 + n + fleck).clamp(114, 178) as u8;
+                let g = (108 + n + fleck / 2).clamp(80, 136) as u8;
+                let b = (76 + n).clamp(54, 102) as u8;
+                return [r, g, b, 255];
+            }
+            _ => {}
+        }
         let k = if block == world::DOOR && ny == 0 {
             86 // door lower/panel look on side
         } else {
@@ -1736,9 +1796,10 @@ fn face_pixel(face: FaceArt, u: f32, v: f32, base: [u8; 3], alt: [u8; 3]) -> [u8
         }
         FaceArt::Cow => {
             if y <= 1 && (x == 0 || x == 7) { return [210, 206, 196]; } // horns
-            if y == 3 && (x == 1 || x == 6) { return [24, 22, 24]; }
-            if y >= 5 && x >= 2 && x <= 5 { return [192, 166, 152]; } // muzzle
-            if x + y < 4 { alt } else { base }
+            if y == 3 && (x == 1 || x == 6) { return [24, 22, 24]; }    // eyes
+            if y == 3 && (x == 0 || x == 7) { return [242, 242, 242]; } // sclera
+            if y >= 5 && x >= 2 && x <= 5 { return [192, 166, 152]; }   // muzzle
+            if y <= 2 && x >= 2 && x <= 4 { alt } else { base }
         }
         FaceArt::Sheep => {
             if y <= 1 { return alt; }
@@ -1939,7 +2000,7 @@ fn raster_tri(
                     // Hair on top, back, and upper sides of Steve's head
                     if shade < 0.75 && v > 0.72 { part.col } else { part.col_alt }
                 } else if part.face == FaceArt::Cow
-                    && (((u * 4.0) as i32 + (v * 4.0) as i32 * 2) % 3 == 0)
+                    && (((u * 3.0) as i32 + (v * 3.0) as i32) % 4 == 0)
                 {
                     part.col_alt
                 } else if part.face == FaceArt::Creeper && (((u * 6.0) as i32 + (v * 6.0) as i32) % 3 == 0) {
@@ -2009,7 +2070,7 @@ pub fn draw_entity_3d(
                 if sx_i < 0 || sx_i >= fb.w as i32 { continue; }
                 if xx * xx + yy * yy * 6 > (rw * rw) as i32 { continue; }
                 let td = fb.depth[sy_i as usize * fb.w + sx_i as usize];
-                if td >= 74.0 || (gd - td).abs() > 0.45 { continue; }
+                if td >= 74.0 || td < gd - 0.14 || (gd - td).abs() > 0.45 { continue; }
                 let a = ((1.0 - day * 0.40) * 48.0) as u8;
                 fb.set(sx_i, sy_i, 10, 12, 16, a);
             }
@@ -2043,7 +2104,7 @@ pub fn draw_entity_3d(
             world_p[idx] = wp;
             let rx = wp.0 - cam.x; let ry = wp.1 - cam.y; let rz = wp.2 - cam.z;
             let d = rx * cam.fx + ry * cam.fy + rz * cam.fz;
-            if d < 0.25 { behind = true; break; }
+            if d < 0.08 { behind = true; break; }
             let s = rx * cam.rx + ry * cam.ry + rz * cam.rz;
             let u = rx * cam.ux + ry * cam.uy + rz * cam.uz;
             let inv_z = 1.0 / d;
@@ -2347,8 +2408,7 @@ pub fn item_pixel(item: u16, x: u32, y: u32, tick: u32) -> [u8; 4] {
         if x >= 4 && x <= 11 && y >= 6 && y <= 10 { return [140, 140, 144, 255]; }
         return [0, 0, 0, 0];
     }
-    let k = Textures::face_kind(item, 0, 0, 1);
-    atlas.sample_kind(k, x as f32 / 16.0, y as f32 / 16.0, tick, false)
+    atlas.sample_face(item, 0, 0, 1, x as f32 / 16.0, y as f32 / 16.0, tick)
 }
 
 fn is_flat_block_icon(item: u16) -> bool {
@@ -2367,10 +2427,6 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
     if item == 0 || size <= 0 { return; }
     let atlas = Textures::atlas();
     if item < 256 && !is_flat_block_icon(item) && size >= 10 {
-        let top_k = Textures::face_kind(item, 0, 1, 0);
-        let left_k = Textures::face_kind(item, 0, 0, 1);
-        let right_k = Textures::face_kind(item, 1, 0, 0);
-        let anim = item == world::WATER || item == world::LAVA;
         let cx = size as f32 * 0.5;
         let cy = size as f32 * 0.5;
         let rx = size as f32 * 0.44;
@@ -2386,7 +2442,7 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
                 if (fx / rx).abs() + (ty / ry).abs() <= 1.0 {
                     let u = ((fx / rx + ty / ry) * 0.5 + 0.5).clamp(0.0, 0.999);
                     let v = ((ty / ry - fx / rx) * 0.5 + 0.5).clamp(0.0, 0.999);
-                    let c = atlas.sample_kind(top_k, u, v, tick, anim);
+                    let c = atlas.sample_face(item, 0, 1, 0, u, v, tick);
                     if c[3] > 20 {
                         let shade = 1.06;
                         fb.set(
@@ -2406,7 +2462,7 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
                     if fy >= top_edge && fy <= top_edge + h {
                         let u = ((fx + rx) / rx).clamp(0.0, 0.999);
                         let v = ((fy - top_edge) / h).clamp(0.0, 0.999);
-                        let c = atlas.sample_kind(left_k, u, v, tick, anim);
+                        let c = atlas.sample_face(item, 0, 0, 1, u, v, tick);
                         if c[3] > 20 {
                             let shade = 0.84;
                             fb.set(
@@ -2427,7 +2483,7 @@ pub fn draw_item_icon(fb: &mut Framebuffer, fb_x: i32, fb_y: i32, item: u16, siz
                     if fy >= top_edge && fy <= top_edge + h {
                         let u = (fx / rx).clamp(0.0, 0.999);
                         let v = ((fy - top_edge) / h).clamp(0.0, 0.999);
-                        let c = atlas.sample_kind(right_k, u, v, tick, anim);
+                        let c = atlas.sample_face(item, 1, 0, 0, u, v, tick);
                         if c[3] > 20 {
                             let shade = 0.66;
                             fb.set(
@@ -2669,36 +2725,28 @@ fn draw_box_3d_screen<F: Fn(usize, f32, f32) -> [u8; 4]>(
 
 fn steve_arm_texel(v_along: f32, u_across: f32, face_id: usize) -> [u8; 4] {
     let tx = (u_across * 4.0).floor() as i32;
-    let ty = (v_along * 12.0).floor() as i32;
-    let n = (th(tx, ty + face_id as i32 * 13, 91) % 16) as i32 - 8;
-    if v_along > 0.80 {
-        // Cyan shirt sleeve cuff near shoulder edge
-        let r = (46 + n).clamp(24, 72) as u8;
-        let g = (156 + n).clamp(110, 185) as u8;
-        let b = (176 + n).clamp(130, 205) as u8;
-        [r, g, b, 255]
-    } else {
-        // Steve forearm skin with natural pixel variation
-        let r = (224 + n).clamp(175, 245) as u8;
-        let g = (172 + n).clamp(130, 198) as u8;
-        let b = (132 + n).clamp(95, 160) as u8;
-        [r, g, b, 255]
-    }
+    let ty = (v_along * 10.0).floor() as i32;
+    let n = (th(tx, ty + face_id as i32 * 13, 91) % 14) as i32 - 7;
+    // Authentic Steve forearm skin with subtle pixel variation (no exposed cyan sleeve in resting FOV)
+    let r = (224 + n).clamp(182, 244) as u8;
+    let g = (172 + n).clamp(134, 196) as u8;
+    let b = (132 + n).clamp(98, 158) as u8;
+    [r, g, b, 255]
 }
 
 pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32, swing: f32) {
     let sw = swing.sin();
-    let bob_x = (walk_bob * 0.85).cos() * 0.025;
-    let bob_y = (walk_bob * 1.7).sin().abs() * 0.024;
+    let bob_x = (walk_bob * 0.85).cos() * 0.022;
+    let bob_y = (walk_bob * 1.7).sin().abs() * 0.022;
     if item == 0 {
-        // Real 3D perspective-projected Steve arm rising diagonally up-left from bottom-right like Java Edition
-        let tx = 0.62 + bob_x - sw * 0.34;
-        let ty = -0.38 - bob_y + (swing * 0.6).sin() * 0.14 - sw * 0.06;
-        let tz = 0.94 - sw * 0.16;
-        let yaw = -0.44 - sw * 0.52;
-        let pitch = 0.78 - sw * 0.56;
-        let roll = 0.44 + sw * 0.24;
-        draw_box_3d_screen(fb, 0.145, 0.145, 0.48, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
+        // Chunky, short, foreshortened Minecraft Java Edition right arm in lower-right corner
+        let tx = 0.64 + bob_x - sw * 0.30;
+        let ty = -0.50 - bob_y + (swing * 0.6).sin() * 0.14 - sw * 0.06;
+        let tz = 0.90 - sw * 0.14;
+        let yaw = -0.54 - sw * 0.48;
+        let pitch = 0.40 - sw * 0.48;
+        let roll = 0.24 + sw * 0.22;
+        draw_box_3d_screen(fb, 0.16, 0.16, 0.33, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
             let v_along = match face_id {
                 0 | 1 => v,
                 2 | 3 => u,
@@ -2709,10 +2757,6 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
     } else if item < 256 && !is_flat_block_icon(item) {
         // Real 3D perspective-projected held block in Minecraft Java bottom-right pose
         let atlas = Textures::atlas();
-        let anim = item == world::WATER || item == world::LAVA || item == world::NETHER_PORTAL;
-        let top_k = Textures::face_kind(item, 0, 1, 0);
-        let left_k = Textures::face_kind(item, -1, 0, 0);
-        let right_k = Textures::face_kind(item, 0, 0, 1);
         let tx = 0.48 + bob_x - sw * 0.28;
         let ty = -0.44 - bob_y - sw * 0.16;
         let tz = 1.05 - sw * 0.16;
@@ -2720,12 +2764,15 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
         let pitch = 0.24 - sw * 0.42;
         let roll = 0.04 + sw * 0.18;
         draw_box_3d_screen(fb, 0.21, 0.21, 0.21, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
-            let k = match face_id {
-                0 | 1 => top_k,
-                2 | 3 => left_k,
-                _ => right_k,
+            let (nx, ny, nz) = match face_id {
+                0 => (0, 1, 0),
+                1 => (0, -1, 0),
+                2 => (-1, 0, 0),
+                3 => (1, 0, 0),
+                4 => (0, 0, 1),
+                _ => (0, 0, -1),
             };
-            atlas.sample_kind(k, u, v, tick, anim)
+            atlas.sample_face(item, nx, ny, nz, u, v, tick)
         });
     } else {
         // Held tool/sword/item with subtle 3D arm grip + extruded item sprite

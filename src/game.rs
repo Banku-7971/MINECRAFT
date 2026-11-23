@@ -316,6 +316,9 @@ fn block_drop(b: u16, tick: u32) -> Stack {
         REDSTONE_ORE => Stack::new(REDSTONE_DUST, 4),
         NETHER_QUARTZ_ORE => Stack::new(items::NETHER_QUARTZ, 1),
         CRIMSON_NYLIUM | WARPED_NYLIUM => Stack::new(NETHERRACK, 1),
+        RED_MUSHROOM_BLOCK => if tick % 2 == 0 { Stack::new(RED_MUSHROOM, 1) } else { Stack::EMPTY },
+        BROWN_MUSHROOM_BLOCK => if tick % 2 == 0 { Stack::new(BROWN_MUSHROOM, 1) } else { Stack::EMPTY },
+        MUSHROOM_STEM => Stack::EMPTY,
         END_PORTAL_FRAME | END_PORTAL_FRAME_EYE | NETHER_PORTAL | END_PORTAL => Stack::EMPTY,
         IRON_ORE | GOLD_ORE => Stack::new(b, 1),
         CLAY => Stack::new(CLAY, 4),
@@ -2093,7 +2096,7 @@ fn step_sfx_for(b: u16) -> Sfx {
 
 fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
     match kind {
-        MobKind::Cow => Some(Sfx::Cow),
+        MobKind::Cow | MobKind::Mooshroom => Some(Sfx::Cow),
         MobKind::Sheep => Some(Sfx::Sheep),
         MobKind::Pig => Some(Sfx::Pig),
         MobKind::Chicken => Some(Sfx::Chicken),
@@ -2317,6 +2320,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
             _ if is_dirt => 0.65,
             world::LEAVES | world::BIRCH_LEAVES | world::SPRUCE_LEAVES | world::JUNGLE_LEAVES
                 | world::DARK_LEAVES | world::CRIMSON_WART | world::WARPED_WART
+                | world::MUSHROOM_STEM | world::RED_MUSHROOM_BLOCK | world::BROWN_MUSHROOM_BLOCK
                 | world::GLASS | world::WOOL_WHITE | world::WOOL_RED | world::WOOL_BLUE
                 | world::WOOL_GREEN | world::WOOL_YELLOW => 0.30,
             world::TALL_GRASS | world::FLOWER_RED | world::FLOWER_YELLOW | world::SAPLING
@@ -2503,7 +2507,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                         return;
                     }
                 }
-                if matches!(m.kind, MobKind::Cow | MobKind::Sheep | MobKind::Pig | MobKind::Chicken)
+                if matches!(m.kind, MobKind::Cow | MobKind::Mooshroom | MobKind::Sheep | MobKind::Pig | MobKind::Chicken)
                     && matches!(held.id, world::WHEAT | items::CARROT) && m.breed_cd <= 0.0
                 {
                     m.breed_cd = 20.0;

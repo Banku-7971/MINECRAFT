@@ -156,7 +156,10 @@ pub const IRON_DOOR: u16 = 134;
 pub const IRON_DOOR_OPEN: u16 = 135;
 pub const JUKEBOX: u16 = 136;
 pub const SOUL_TORCH: u16 = 137;
-pub const MAX_BLOCK: u16 = 137;
+pub const MUSHROOM_STEM: u16 = 138;
+pub const RED_MUSHROOM_BLOCK: u16 = 139;
+pub const BROWN_MUSHROOM_BLOCK: u16 = 140;
+pub const MAX_BLOCK: u16 = 140;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Dimension {
@@ -432,13 +435,26 @@ fn tree_block(x: i32, y: i32, z: i32) -> Option<u16> {
             let (b, h) = match tree_center(x - dx, z - dz) { Some(v) => v, None => continue };
             let (lx, lz) = (dx, dz);
             if b == Biome::MushroomIsland {
-                let top = h + 5;
-                if lx == 0 && lz == 0 && y >= h + 1 && y < top { return Some(QUARTZ); }
-                if y == top && lx.abs() <= 2 && lz.abs() <= 2 && (lx.abs() + lz.abs() <= 3) {
-                    return Some(RED_MUSHROOM);
-                }
-                if y == top - 1 && (lx.abs() == 2 || lz.abs() == 2) && lx.abs() <= 2 && lz.abs() <= 2 && !(lx.abs() == 2 && lz.abs() == 2) {
-                    return Some(RED_MUSHROOM);
+                let is_brown = (hash2(x - dx, z - dz) & 1) == 0;
+                let height = if is_brown { 5 } else { 5 + (hash2(x - dx, z - dz) % 2) as i32 };
+                let top = h + height;
+                if lx == 0 && lz == 0 && y >= h + 1 && y < top { return Some(MUSHROOM_STEM); }
+                if is_brown {
+                    // Wide flat umbrella Brown Mushroom cap
+                    if y == top && lx.abs() <= 2 && lz.abs() <= 2 && !(lx.abs() == 2 && lz.abs() == 2) {
+                        return Some(BROWN_MUSHROOM_BLOCK);
+                    }
+                } else {
+                    // Classic domed Red Mushroom cap
+                    if y == top && lx.abs() <= 1 && lz.abs() <= 1 {
+                        return Some(RED_MUSHROOM_BLOCK);
+                    }
+                    if (y == top - 1 || y == top - 2) && lx.abs() <= 2 && lz.abs() <= 2
+                        && (lx.abs() == 2 || lz.abs() == 2)
+                        && !(lx.abs() == 2 && lz.abs() == 2)
+                    {
+                        return Some(RED_MUSHROOM_BLOCK);
+                    }
                 }
                 continue;
             }
@@ -753,6 +769,9 @@ pub fn block_name(id: u16) -> &'static str {
         SPAWNER => "Monster Spawner", SAPLING => "Oak Sapling", NETHER_WART => "Nether Wart",
         BUTTON => "Stone Button", IRON_DOOR | IRON_DOOR_OPEN => "Iron Door",
         JUKEBOX => "Jukebox", SOUL_TORCH => "Soul Torch",
+        MUSHROOM_STEM => "Mushroom Stem",
+        RED_MUSHROOM_BLOCK => "Red Mushroom Block",
+        BROWN_MUSHROOM_BLOCK => "Brown Mushroom Block",
         _ => "Unknown",
     }
 }
@@ -760,10 +779,10 @@ pub fn block_name(id: u16) -> &'static str {
 pub fn is_solid(id: u16) -> bool {
     !matches!(
         id,
-        AIR | WATER | LAVA | TALL_GRASS | FLOWER_RED | FLOWER_YELLOW | COBWEB | VINE | WHEAT
-            | TORCH | SOUL_TORCH | SNOW_LAYER | RAIL | REDSTONE_DUST | LEVER | PRESSURE_PLATE | REDSTONE_TORCH
-            | NETHER_PORTAL | END_PORTAL | DOOR_OPEN | IRON_DOOR_OPEN | SAPLING | NETHER_WART
-            | BUTTON | REPEATER | COMPARATOR
+        AIR | WATER | LAVA | TALL_GRASS | FLOWER_RED | FLOWER_YELLOW | BROWN_MUSHROOM | RED_MUSHROOM
+            | COBWEB | VINE | WHEAT | TORCH | SOUL_TORCH | SNOW_LAYER | RAIL | REDSTONE_DUST
+            | LEVER | PRESSURE_PLATE | REDSTONE_TORCH | NETHER_PORTAL | END_PORTAL
+            | DOOR_OPEN | IRON_DOOR_OPEN | SAPLING | NETHER_WART | BUTTON | REPEATER | COMPARATOR
     )
 }
 
@@ -1448,6 +1467,7 @@ impl World {
                     b,
                     LEAVES | SPRUCE_LEAVES | JUNGLE_LEAVES | BIRCH_LEAVES | DARK_LEAVES
                         | CRIMSON_WART | WARPED_WART
+                        | MUSHROOM_STEM | RED_MUSHROOM_BLOCK | BROWN_MUSHROOM_BLOCK
                 )
             {
                 return y + 1;
