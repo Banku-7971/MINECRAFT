@@ -3581,7 +3581,7 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                 if self.auto_jump && self.player.on_ground && !sneaking && (bx_hit || bz_hit)
                     && !collides(&mut self.world, nx, self.player.y + 1.05, nz)
                 {
-                    self.player.vy = 9.0;
+                    self.player.vy = 8.05;
                     self.player.on_ground = false;
                 }
                 if self.flying {
@@ -3612,11 +3612,10 @@ fn mob_ambient_sfx(kind: MobKind) -> Option<Sfx> {
                     }
                 } else {
                     if self.keys.contains(&plat::VK_SPACE) && self.player.on_ground {
-                        self.player.vy = if self.potion_jump > 0.0 { 11.8 } else { 8.95 };
+                        self.player.vy = if self.potion_jump > 0.0 { 10.6 } else { 8.05 };
                         self.player.on_ground = false;
-                        self.plat.play(Sfx::Jump);
                     }
-                    self.player.vy -= (if in_cobweb { 5.0 } else { 32.0 }) * dt;
+                    self.player.vy -= (if in_cobweb { 5.0 } else { 23.5 }) * dt;
                 }
                 let ny = self.player.y + self.player.vy * dt;
                 if collides(&mut self.world, self.player.x, ny, self.player.z) {

@@ -647,15 +647,22 @@ pub fn mob_parts(kind: MobKind, walk: f32, airborne: bool) -> Vec<Part3D> {
             ]
         }
         MobKind::Panda => vec![
-            Part3D { cx: 0.0, cy: 0.64, cz: -0.04, hx: 0.36, hy: 0.28, hz: 0.44, pivot_y: 0.64, swing: 0.0, col: [238, 238, 236], col_alt: [30, 30, 34], face: FaceArt::None },
-            Part3D { cx: 0.0, cy: 0.68, cz: 0.24, hx: 0.37, hy: 0.29, hz: 0.16, pivot_y: 0.64, swing: 0.0, col: [32, 32, 36], col_alt: [24, 24, 28], face: FaceArt::None },
-            Part3D { cx: 0.0, cy: 0.72, cz: 0.56, hx: 0.28, hy: 0.24, hz: 0.24, pivot_y: 0.68, swing: 0.0, col: [242, 242, 240], col_alt: [24, 24, 28], face: FaceArt::Panda },
-            Part3D { cx: -0.22, cy: 0.98, cz: 0.52, hx: 0.08, hy: 0.08, hz: 0.04, pivot_y: 0.92, swing: 0.0, col: [28, 28, 32], col_alt: [18, 18, 20], face: FaceArt::None },
-            Part3D { cx: 0.22, cy: 0.98, cz: 0.52, hx: 0.08, hy: 0.08, hz: 0.04, pivot_y: 0.92, swing: 0.0, col: [28, 28, 32], col_alt: [18, 18, 20], face: FaceArt::None },
-            Part3D { cx: -0.20, cy: 0.20, cz: 0.24, hx: 0.12, hy: 0.20, hz: 0.12, pivot_y: 0.40, swing: s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
-            Part3D { cx: 0.20, cy: 0.20, cz: 0.24, hx: 0.12, hy: 0.20, hz: 0.12, pivot_y: 0.40, swing: -s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
-            Part3D { cx: -0.20, cy: 0.20, cz: -0.28, hx: 0.12, hy: 0.20, hz: 0.12, pivot_y: 0.40, swing: -s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
-            Part3D { cx: 0.20, cy: 0.20, cz: -0.28, hx: 0.12, hy: 0.20, hz: 0.12, pivot_y: 0.40, swing: s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
+            // White rear torso (-0.44..+0.22)
+            Part3D { cx: 0.0, cy: 0.56, cz: -0.11, hx: 0.34, hy: 0.25, hz: 0.33, pivot_y: 0.56, swing: 0.0, col: [238, 238, 236], col_alt: [30, 30, 34], face: FaceArt::None },
+            // Black chest/shoulder band cleanly in front of rear torso (0.22..0.42)
+            Part3D { cx: 0.0, cy: 0.56, cz: 0.32, hx: 0.34, hy: 0.25, hz: 0.10, pivot_y: 0.56, swing: 0.0, col: [32, 32, 36], col_alt: [24, 24, 28], face: FaceArt::None },
+            // White head cleanly forward of chest (0.42..0.82) and higher than shoulders
+            Part3D { cx: 0.0, cy: 0.76, cz: 0.62, hx: 0.26, hy: 0.22, hz: 0.20, pivot_y: 0.72, swing: 0.0, col: [242, 242, 240], col_alt: [24, 24, 28], face: FaceArt::Panda },
+            // Snout
+            Part3D { cx: 0.0, cy: 0.66, cz: 0.85, hx: 0.11, hy: 0.07, hz: 0.03, pivot_y: 0.72, swing: 0.0, col: [228, 228, 224], col_alt: [28, 28, 32], face: FaceArt::None },
+            // Round black ears on top corners of head
+            Part3D { cx: -0.20, cy: 1.03, cz: 0.60, hx: 0.07, hy: 0.06, hz: 0.04, pivot_y: 0.96, swing: 0.0, col: [28, 28, 32], col_alt: [18, 18, 20], face: FaceArt::None },
+            Part3D { cx: 0.20, cy: 1.03, cz: 0.60, hx: 0.07, hy: 0.06, hz: 0.04, pivot_y: 0.96, swing: 0.0, col: [28, 28, 32], col_alt: [18, 18, 20], face: FaceArt::None },
+            // Chunky black legs
+            Part3D { cx: -0.20, cy: 0.17, cz: 0.26, hx: 0.11, hy: 0.17, hz: 0.11, pivot_y: 0.34, swing: s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
+            Part3D { cx: 0.20, cy: 0.17, cz: 0.26, hx: 0.11, hy: 0.17, hz: 0.11, pivot_y: 0.34, swing: -s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
+            Part3D { cx: -0.20, cy: 0.17, cz: -0.26, hx: 0.11, hy: 0.17, hz: 0.11, pivot_y: 0.34, swing: -s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
+            Part3D { cx: 0.20, cy: 0.17, cz: -0.26, hx: 0.11, hy: 0.17, hz: 0.11, pivot_y: 0.34, swing: s, col: [30, 30, 34], col_alt: [20, 20, 22], face: FaceArt::None },
         ],
         MobKind::Allay => {
             let hover = (walk * 1.4).sin() * 0.08;
@@ -1067,7 +1074,13 @@ pub fn biome_mob(biome: Biome, dim: Dimension, seed: u32, day: f32) -> MobKind {
             match biome {
                 Biome::Snowy => if seed % 3 == 0 { MobKind::PolarBear } else { MobKind::Wolf },
                 Biome::Taiga => match (seed >> 3) % 4 { 0 => MobKind::Wolf, 1 => MobKind::Fox, 2 => MobKind::Sheep, _ => MobKind::Pig },
-                Biome::Jungle => match (seed >> 3) % 4 { 0 => MobKind::Panda, 1 => MobKind::Parrot, 2 => MobKind::Chicken, _ => MobKind::Pig },
+                Biome::Jungle => match (seed >> 3) % 16 {
+                    0 => MobKind::Panda,
+                    1..=4 => MobKind::Parrot,
+                    5..=9 => MobKind::Chicken,
+                    10..=12 => MobKind::Pig,
+                    _ => MobKind::Sheep,
+                },
                 Biome::Ocean => if (seed >> 3) % 3 == 0 { MobKind::Guardian } else { MobKind::Squid },
                 Biome::Swamp => match (seed >> 3) % 4 {
                     0 => if day < 0.42 { MobKind::Slime } else { MobKind::Squid },

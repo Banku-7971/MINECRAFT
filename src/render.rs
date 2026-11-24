@@ -2739,14 +2739,14 @@ pub fn draw_held_item(fb: &mut Framebuffer, item: u16, tick: u32, walk_bob: f32,
     let bob_x = (walk_bob * 0.85).cos() * 0.022;
     let bob_y = (walk_bob * 1.7).sin().abs() * 0.022;
     if item == 0 {
-        // Chunky, short, foreshortened Minecraft Java Edition right arm in lower-right corner
-        let tx = 0.64 + bob_x - sw * 0.30;
-        let ty = -0.50 - bob_y + (swing * 0.6).sin() * 0.14 - sw * 0.06;
-        let tz = 0.90 - sw * 0.14;
-        let yaw = -0.54 - sw * 0.48;
-        let pitch = 0.40 - sw * 0.48;
-        let roll = 0.24 + sw * 0.22;
-        draw_box_3d_screen(fb, 0.16, 0.16, 0.33, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
+        // Compact, chunky Minecraft Java Edition right arm in lower-right corner
+        let tx = 0.62 + bob_x - sw * 0.30;
+        let ty = -0.46 - bob_y + (swing * 0.6).sin() * 0.14 - sw * 0.06;
+        let tz = 1.08 - sw * 0.16;
+        let yaw = -0.55 - sw * 0.48;
+        let pitch = 0.56 - sw * 0.48;
+        let roll = 0.26 + sw * 0.22;
+        draw_box_3d_screen(fb, 0.115, 0.115, 0.28, yaw, pitch, roll, [tx, ty, tz], |face_id, u, v| {
             let v_along = match face_id {
                 0 | 1 => v,
                 2 | 3 => u,
